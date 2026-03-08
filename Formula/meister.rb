@@ -20,7 +20,7 @@ class Meister < Formula
   license "MIT"
 
   url "file:///Users/a321/Documents/Tech/Scripts/homebrew-meister/dist/meister-0.01.tar.gz"
-  sha256 "1816816841de8834e968fc02033e2f363bc8d75a03089b7616d817624cb887c7"
+  sha256 "00022a2263ec559ddc575bca8d4d669c9c3d3dce53a0358e0651eb6826e23233"
 
   depends_on "jq"
   depends_on "mas"
