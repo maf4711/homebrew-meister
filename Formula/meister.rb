@@ -16,11 +16,11 @@
 class Meister < Formula
   desc "macOS Maintenance, Update & Self-Healing Script mit Ollama AI"
   homepage "file:///Users/a321/Documents/Tech/Scripts/bin"
-  version "13.0"
+  version "0.01"
   license "MIT"
 
-  url "file:///Users/a321/Documents/Tech/Scripts/homebrew-meister/dist/meister-13.0.tar.gz"
-  sha256 "812908d1667e0bdfc78170ff883ce580a8f562629e742a695766adfa724bbe63"
+  url "file:///Users/a321/Documents/Tech/Scripts/homebrew-meister/dist/meister-0.01.tar.gz"
+  sha256 "1816816841de8834e968fc02033e2f363bc8d75a03089b7616d817624cb887c7"
 
   depends_on "jq"
   depends_on "mas"
