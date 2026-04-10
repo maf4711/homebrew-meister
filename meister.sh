@@ -4,8 +4,13 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 1.0
+# Version: 1.1
 # Date: 2026-04-10
+#
+# NEW in v1.1:
+#  - Dotfiles Sync: meister push/pull/setup/init/scan/clone/bootstrap/status
+#    Syncs AI configs (Claude, Gemini, Codex), shell, git, terminal across machines
+#    manifest.txt driven — auto-detects configs via `meister scan`
 #
 # NEW in v1.0:
 #  - AI-Heal: Ollama as fallback when known-fix fails
@@ -3415,11 +3420,22 @@ PLISTEOF
     fi
 }
 
+# ── Dotfiles Sync Subcommands ──
+# If first arg is a sync subcommand, delegate to meister-dotfiles and exit
+_MEISTER_DOTFILES_SCRIPT="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/tools/dotfiles.sh"
+if [ -f "$_MEISTER_DOTFILES_SCRIPT" ]; then
+    case "${1:-}" in
+        push|up|u|pull|down|d|setup|init|scan|clone|bootstrap|boot|status|st|edit)
+            exec bash "$_MEISTER_DOTFILES_SCRIPT" "$@"
+            ;;
+    esac
+fi
+
 # Fix #117: Long-Options before getopts abfangen (getopts kann only Short-Options)
 for arg in "$@"; do
     case "$arg" in
         --help)    set -- "-h"; break ;;
-        --version) echo "meister v1.0"; exit 0 ;;
+        --version) echo "meister v1.1"; exit 0 ;;
         --dry-run) set -- "-n"; break ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
     esac
@@ -3444,9 +3460,9 @@ while getopts ":aAXTSCLhcHnIPGq" opt; do
     q) QUIET_MODE=true ;;
     I) INSTALL_LAUNCHAGENT=true ;;
     h) cat << 'HELPEOF'
-Meister - macOS Maintenance & Self-Healing
+Meister - macOS Maintenance, Self-Healing & Dotfiles Sync
 
-USAGE:
+MAINTENANCE:
   meister              Auto-detect (default)
   meister -a           Force all modules
   meister -n           Dry-run
@@ -3454,8 +3470,18 @@ USAGE:
   meister -H           Health dashboard
   meister -I           Install LaunchAgent
 
-OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
-            -L Large files  -P Performance  -G Git
+  OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
+              -L Large files  -P Performance  -G Git
+
+DOTFILES SYNC:
+  meister push         Collect configs, commit, push
+  meister pull         Pull latest, create symlinks
+  meister setup [url]  Clone dotfiles repo (auto-detects from gh)
+  meister init [name]  Create private GitHub repo + push
+  meister scan         Auto-detect configs, generate manifest
+  meister clone        Clone ~/Developer repos
+  meister bootstrap    Full setup: pull + brew + npm + clone + defaults
+  meister status       Check symlinks
 
 Config: ~/.meister/config
 HELPEOF

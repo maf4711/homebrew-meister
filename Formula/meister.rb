@@ -1,5 +1,5 @@
 class Meister < Formula
-  desc "macOS Maintenance, Update & Self-Healing"
+  desc "macOS Maintenance, Self-Healing & Dotfiles Sync"
   homepage "https://github.com/maf4711/meister"
   url "https://github.com/maf4711/meister/archive/refs/tags/v1.0.tar.gz"
   sha256 "3c0fcd543d4f3bbfc4565530b9ce39fd15a4de75ebdb6250d4a68e988763c7f0"
@@ -21,14 +21,18 @@ class Meister < Formula
     <<~EOS
       meister v#{version} installed!
 
-      Usage:
+      Maintenance:
         meister          Auto-detect maintenance
         meister -a       All modules
-        meister -n       Dry-run
         meister -h       Help
 
+      Dotfiles Sync:
+        meister push     Collect + commit + push
+        meister pull     Pull + symlink
+        meister setup    First-time clone (auto-detects repo)
+        meister bootstrap Full machine setup
+
       Config: ~/.meister/config
-      Logs:   ~/.meister/meister.log
     EOS
   end
 
