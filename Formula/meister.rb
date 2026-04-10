@@ -9,7 +9,7 @@ class Meister < Formula
   depends_on :macos
 
   def install
-    bin.install "meister2026.sh" => "meister"
+    bin.install "meister.sh" => "meister"
     (libexec/"tools").install Dir["tools/*"]
     # Symlink tools into bin with meister- prefix
     (libexec/"tools").children.each do |tool|
@@ -33,6 +33,6 @@ class Meister < Formula
   end
 
   test do
-    assert_match "meister2026", shell_output("#{bin}/meister -h 2>&1", 0)
+    assert_match "meister", shell_output("#{bin}/meister -h 2>&1", 0)
   end
 end

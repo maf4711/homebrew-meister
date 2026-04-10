@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2155,SC2329
 # ==============================================================================
-# meister2026.sh
+# meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
 # Version: 1.0
@@ -32,7 +32,7 @@
 #   15. ClamAV: better exclude patterns
 #   16. Run history in ~/.meister/history.log
 #
-# Usage: ./meister2026.sh [flags]
+# Usage: ./meister.sh [flags]
 #   (no flags)  AUTO-DETECT: analyzes Mac, enables whas is needed
 #   -a  Force ALL modules     -A  ClamAV (sudo)
 #   -X  Xcode clean               -M  Monolingual

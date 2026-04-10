@@ -1,7 +1,7 @@
 #!/bin/bash
 # release.sh - Create a new Homebrew release (single-repo)
 #
-# 1. Reads version from meister2026.sh
+# 1. Reads version from meister.sh
 # 2. Creates GitHub Release with tag
 # 3. Updates SHA256 in Formula
 # 4. Pushes everything
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE="$SCRIPT_DIR/meister2026.sh"
+SOURCE="$SCRIPT_DIR/meister.sh"
 FORMULA="$SCRIPT_DIR/Formula/meister.rb"
 REPO="maf4711/meister"
 
@@ -28,7 +28,7 @@ echo ""
 # 1. Commit and push all changes
 echo "--- Step 1: Update repo ---"
 cd "$SCRIPT_DIR"
-git add meister2026.sh tools/ Formula/ LICENSE .gitignore
+git add meister.sh tools/ Formula/ LICENSE .gitignore
 if git diff --cached --quiet; then
     echo "No changes"
 else
