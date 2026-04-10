@@ -372,7 +372,7 @@ cmd_push() {
   if command -v brew &>/dev/null; then
     log "Dumping Brewfile (15s timeout)..."
     mkdir -p "$DOTFILES/homebrew"
-    if timeout 15 brew bundle dump --file="$DOTFILES/homebrew/Brewfile" --force --no-lock 2>/dev/null; then
+    if timeout 30 brew bundle dump --file="$DOTFILES/homebrew/Brewfile" --force 2>/dev/null; then
       ok "homebrew/Brewfile"
     else
       skip "Brewfile (timed out)"
@@ -487,7 +487,7 @@ cmd_bootstrap() {
   if [ -f "$DOTFILES/homebrew/Brewfile" ]; then
     if command -v brew &>/dev/null; then
       log "Installing Homebrew packages..."
-      brew bundle --file="$DOTFILES/homebrew/Brewfile" --no-lock
+      brew bundle --file="$DOTFILES/homebrew/Brewfile" --force
     else
       log "${Y}Install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${N}"
     fi
