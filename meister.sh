@@ -708,7 +708,7 @@ ensure_tool() {
         return 0
     fi
 
-    log WARN "Tool '$cmd' fehlt. Installiere $pkg..."
+    log WARN "Tool '$cmd' missing. Installing $pkg..."
     ensure_brew || return 1
 
     if run_or_dry brew install $is_cask "$pkg"; then
@@ -2943,7 +2943,7 @@ benchmark_compare() {
     # Letzten vorherigen Benchmark finden
     local prev_file
     prev_file=$(ls -1t "$BENCHMARK_DIR"/*.json 2>/dev/null | grep -v "$(basename "$current_file")" | head -1)
-    [ -z "$prev_file" ] && { log STEP "   Erster Benchmark - no Vergleich possible"; return; }
+    [ -z "$prev_file" ] && { log STEP "   First benchmark - no comparison available"; return; }
 
     if ! command_exists jq; then return; fi
 
@@ -2988,6 +2988,8 @@ module_benchmark() {
         return
     fi
 
+    ensure_tool "jq" "jq" || { log WARN "jq not available, skipping benchmark"; return; }
+    command_exists gdate || ensure_tool "gdate" "coreutils" 2>/dev/null
     log INFO "System-Benchmark & Security-Audit..."
     local ts=$(date +'%Y-%m-%d %H:%M:%S')
 
