@@ -50,6 +50,7 @@
 #############################
 
 MEISTER_DIR="$HOME/.meister"
+HEAL_LOG="$MEISTER_DIR/heal.log"
 mkdir -p "$MEISTER_DIR/patches" "$MEISTER_DIR/output" 2>/dev/null
 
 # Defaults
@@ -477,7 +478,13 @@ ollama_list_invalidate() {
     _OLLAMA_LIST_CACHE=""
 }
 
-# AI-Heal: Ollama als Fallback wenn known_fix() versagt
+# Heal telemetry: append to ~/.meister/heal.log
+log_heal_event() {
+    local type="$1" module="$2" result="$3" detail="${4:-}"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | $type | $module | $result | $detail" >> "$HEAL_LOG"
+}
+
+# AI-Heal: Ollama fallback when known_fix() fails
 ai_heal() {
     local module_name="$1"
     local error_output="$2"
@@ -485,92 +492,102 @@ ai_heal() {
     if ! ollama_available; then return 1; fi
 
     log HEAL "AI-Heal: Asking Ollama for fix for $module_name..."
-    local prompt="Du bist ein macOS-Systemadmin. Ein Maintenancesscript-Modul '$module_name' ist failed.
-Errormeldung: $error_output
-Antworte NUR mit einem einzigen Shell-Command der das Problem fixt. No Erklaerungstext, only der Command. Wenn no Fix possible ist, antworte mit: KEIN_FIX"
+    local prompt="You are a macOS sysadmin. A maintenance script module '$module_name' has failed.
+Error: $error_output
+Reply ONLY with a single shell command that fixes the problem. No explanation, just the command. If no fix is possible, reply with: NO_FIX"
 
     local ai_response
     ai_response=$(curl -sf --max-time 30 "${OLLAMA_URL}/api/generate" \
         -d "$(printf '{"model":"%s","prompt":"%s","stream":false}' "$OLLAMA_MODEL" "$(echo "$prompt" | sed 's/"/\\"/g; s/$/\\n/' | tr -d '\n')")" \
         2>/dev/null | sed -n 's/.*"response":"\([^"]*\)".*/\1/p' | sed 's/\\n/\n/g; s/\\t/\t/g' | head -3)
 
-    if [ -z "$ai_response" ] || echo "$ai_response" | grep -q "KEIN_FIX"; then
+    if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
+        log_heal_event "ai-heal" "$module_name" "no-fix" ""
         return 1
     fi
 
-    # Securityscheck: gefaehrliche Commande blocken
+    # Security check: block dangerous commands
     if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|mkfs|dd if=|:(){ :|> /dev/sd|shutdown|reboot|halt"; then
         log WARN "AI-Heal: Dangerous command blocked: $ai_response"
-        log STEP "   AI-Heal blockiert (gefaehrlicher Command)"
+        log_heal_event "ai-heal" "$module_name" "blocked" "$ai_response"
         return 1
     fi
 
-    log HEAL "AI-Heal Vorschlag: $ai_response"
+    log HEAL "AI-Heal suggestion: $ai_response"
 
     if $DRY_RUN; then
-        log STEP "   [DRY-RUN] Wuerde execute: $ai_response"
+        log STEP "   [DRY-RUN] Would execute: $ai_response"
         return 0
     fi
 
-    # Ausfuehren mit timeout
+    # Execute with timeout
     local ai_fix_output
     ai_fix_output=$(timeout 30 bash -c "$ai_response" 2>&1)
     local ai_rc=$?
 
     if [ $ai_rc -eq 0 ]; then
-        log FIX "AI-Heal: Command successful fromgefuehrt"
+        log FIX "AI-Heal: Command successful"
         [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
         report_add FIX "$module_name via AI-Heal repaired"
+        log_heal_event "ai-heal" "$module_name" "success" "$ai_response"
         return 0
     else
         log WARN "AI-Heal: Command failed (Exit: $ai_rc)"
+        log_heal_event "ai-heal" "$module_name" "failed" "$ai_response"
         [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
         return 1
     fi
 }
 
-# Known-Fix Patterns: schnelle Fixes ohne Ollama
+# Known-Fix Patterns: fast fixes without Ollama
 known_fix() {
     local module_name="$1"
     local error_output="$2"
 
     case "$error_output" in
         *"Could not resolve host"*|*"Failed to connect"*|*"Network is unreachable"*)
-            log HEAL "Known-Fix: DNS/Network-Reset..."
+            log HEAL "Known-Fix: DNS/Network reset..."
+            log_heal_event "known-fix" "$module_name" "applied" "dns-reset"
             sudo -n dscacheutil -flushcache 2>/dev/null
             sudo -n killall -HUP mDNSResponder 2>/dev/null
             sleep 2
             return 0
             ;;
         *"No space left on device"*)
-            log HEAL "Known-Fix: Platz schaffen..."
+            log HEAL "Known-Fix: Free disk space..."
+            log_heal_event "known-fix" "$module_name" "applied" "disk-space"
             rm -rf "$HOME/Library/Caches"/* 2>/dev/null
             brew cleanup -s 2>/dev/null
             return 0
             ;;
         *"shallow"*|*"fetch-pack"*|*"Could not resolve HEAD"*)
-            log HEAL "Known-Fix: Homebrew Repo reparieren..."
+            log HEAL "Known-Fix: Repair Homebrew repo..."
+            log_heal_event "known-fix" "$module_name" "applied" "brew-repo"
             git -C "$(brew --repo)" fetch --unshallow 2>/dev/null
             brew update-reset 2>/dev/null
             return 0
             ;;
         *"already installed"*|*"is already an installed"*)
             log HEAL "Known-Fix: Already installed, OK"
+            log_heal_event "known-fix" "$module_name" "applied" "already-installed"
             return 0
             ;;
         *"Couldn't find remote ref"*|*"fatal: bad object"*)
-            log HEAL "Known-Fix: Git-Repository Reset..."
+            log HEAL "Known-Fix: Git repository reset..."
+            log_heal_event "known-fix" "$module_name" "applied" "git-reset"
             brew update-reset 2>/dev/null
             return 0
             ;;
         *"Error: Your CLT"*|*"xcode-select"*)
-            log HEAL "Known-Fix: Xcode CLT reparieren..."
+            log HEAL "Known-Fix: Repair Xcode CLT..."
+            log_heal_event "known-fix" "$module_name" "applied" "xcode-clt"
             sudo -n xcode-select --reset 2>/dev/null
             return 0
             ;;
         *"SIGTERM"*|*"Terminated"*|*"kill"*)
-            log HEAL "Known-Fix: Prozess wurde beendet, Retry..."
+            log HEAL "Known-Fix: Process terminated, retrying..."
+            log_heal_event "known-fix" "$module_name" "applied" "process-killed"
             sleep 3
             return 0
             ;;
@@ -578,7 +595,7 @@ known_fix() {
     return 1
 }
 
-# Fix #6: Logfile-Diff instead of leerer stderr-File
+# Fix #6: Logfile diff instead of empty stderr
 run_module_safe() {
     local module_name="$1"
     local module_func="$2"
@@ -598,19 +615,19 @@ run_module_safe() {
     log ERROR "$module_name failed (Exit: $rc)"
     local module_output=$(tail -n +$((log_lines_before + 1)) "$LOGFILE" 2>/dev/null | head -"$LOG_CAPTURE_LINES")
 
-    # Known-Fix probieren + 1x Retry
+    # Try known-fix + 1x retry
     if known_fix "$module_name" "Exit: $rc. $module_output"; then
-        log HEAL "Known-Fix angewendet, Retry..."
+        log HEAL "Known-Fix applied, retrying..."
         sleep 1
         $module_func
         rc=$?
         [ $rc -eq 0 ] && report_add FIX "$module_name via Known-Fix repaired"
     fi
 
-    # AI-Heal Fallback: Ask Ollama wenn Known-Fix not geholfen has
+    # AI-Heal Fallback: Ask Ollama if Known-Fix didn't help
     if [ $rc -ne 0 ] && $OLLAMA_ENABLED; then
         if ai_heal "$module_name" "Exit: $rc. $module_output"; then
-            log HEAL "AI-Heal angewendet, Retry..."
+            log HEAL "AI-Heal applied, retrying..."
             sleep 1
             $module_func
             rc=$?
