@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 1.6
+# Version: 1.7
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3440,7 +3440,7 @@ fi
 for arg in "$@"; do
     case "$arg" in
         --help)    set -- "-h"; break ;;
-        --version) echo "meister v1.6"; exit 0 ;;
+        --version) echo "meister v1.7"; exit 0 ;;
         --dry-run) set -- "-n"; break ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
     esac
