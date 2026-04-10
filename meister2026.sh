@@ -3,46 +3,46 @@
 # ==============================================================================
 # meister2026.sh
 #
-# Meister - macOS Wartung, Update & Self-Healing
-# Version: 0.09
-# Stand: 2026-03-22
+# Meister - macOS Maintenance, Update & Self-Healing
+# Version: 1.0
+# Date: 2026-04-10
 #
-# NEU in v0.09:
-#  - AI-Heal: Ollama als Fallback wenn Known-Fix versagt
-#    (Modul fehlgeschlagen → Known-Fix? → nein → Ollama fragen → Fix ausfuehren → Retry)
-#    Sicherheitscheck blockt gefaehrliche Befehle (rm -rf /, mkfs, dd, etc.)
-#  - ENTFERNT: Git-Backup nach iCloud (iCloud + .git = Sync-Konflikte, GitHub ist das Backup)
+# NEW in v1.0:
+#  - AI-Heal: Ollama as fallback when known-fix fails
+#    (Module failed → Known fix? → no → Ask Ollama → Execute fix → Retry)
+#    Safety check blocks dangerous commands (rm -rf /, mkfs, dd, etc.)
+#  - REMOVED: Git backup to iCloud (iCloud + .git = sync conflicts, GitHub is the backup)
 #
-# v0.09 (Elon-Algorithmus Cleanup):
-#  - Gestrichen: Lynis, RAM Purge, TCP/sysctl Tuning, fdupes, Mail-Check,
+# v0.09 (Elon Algorithm Cleanup):
+#  - Removed: Lynis, RAM Purge, TCP/sysctl Tuning, fdupes, Mail-Check,
 #    Recent Items, Launch Services rebuild, GUI-Animationen, Power-Override,
 #    AI-Summary, AI-Performance-Tipps, doppelter Spotlight-Check
-#  - Config-Parser vereinfacht (case/esac → Loop)
-#  - LaunchAgent: 1 Template statt 2
-#  - Deep Clean: 14 statt 20 Sub-Tasks
-#  - Performance: 11 statt 16 Sub-Tasks
-#  - ~1000 Zeilen weniger, gleiche Funktionalitaet
+#  - Config parser simplified (case/esac → Loop)
+#  - LaunchAgent: 1 template instead of 2
+#  - Deep Clean: 14 instead of 20 sub-tasks
+#  - Performance: 11 instead of 16 sub-tasks
+#  - ~1000 lines less, same functionality
 #
-# Aeltere Versionen: siehe git log
-#   10. Dry-Run-Modus (-n Flag)
-#   11. Netzwerk-Check mit mehreren Endpunkten
-#   12. brew --greedy statt --force
-#   13. Config-Datei (~/.meister/config)
-#   14. Logfile nach ~/.meister/meister.log verschoben
-#   15. ClamAV: bessere Exclude-Patterns
-#   16. Run-History in ~/.meister/history.log
+# Older versions: see git log
+#   10. Dry-run mode (-n flag)
+#   11. Network check with multiple endpoints
+#   12. brew --greedy instead of --force
+#   13. Config file (~/.meister/config)
+#   14. Logfile moved to ~/.meister/meister.log
+#   15. ClamAV: better exclude patterns
+#   16. Run history in ~/.meister/history.log
 #
 # Usage: ./meister2026.sh [flags]
-#   (ohne Flags)  AUTO-DETECT: analysiert Mac, aktiviert was noetig ist
-#   -a  ALLE Module erzwingen     -A  ClamAV (sudo)
+#   (no flags)  AUTO-DETECT: analyzes Mac, enables whas is needed
+#   -a  Force ALL modules     -A  ClamAV (sudo)
 #   -X  Xcode clean               -M  Monolingual
-#   -T  Trash leeren              -S  Sudo tasks
-#   -C  Caches (sudo)             -L  Grosse Dateien
-#   -O  LM Studio sync            -c  NUR ClamAV
-#   -P  Performance-Tuning        -G  Git Repos
-#   -H  Health Dashboard          -n  Dry-Run
-#   -q  Quiet (nur Warns/Fixes)  -I  LaunchAgent install
-#   -h  Hilfe
+#   -T  Empty trash              -S  Sudo tasks
+#   -C  Caches (sudo)             -L  Large files
+#   -O  LM Studio sync            -c  ClamAV only
+#   -P  Performance tuning        -G  Git repos
+#   -H  Health dashboard          -n  Dry-Run
+#   -q  Quiet (warnings/fixes only)  -I  LaunchAgent install
+#   -h  Help
 # ==============================================================================
 
 #############################
@@ -64,77 +64,77 @@ OLLAMA_ENABLED=true
 NET_CHECK_HOSTS="google.com apple.com cloudflare.com"
 
 # Fix #78: Deep Clean Config-Gating (via ~/.meister/config steuerbar)
-CLEAN_PKG_CACHES=true         # npm/pip/yarn/gem Caches
+CLEAN_PKG_CACHES=true         # npm/pip/yarn/gem caches
 CLEAN_DEV_CACHES=true         # CocoaPods/SPM/Carthage
-CLEAN_PARALLELS_LOGS=true     # Parallels VM-Logs
-CLEAN_FONT_CACHE=true         # Font-Cache + QuickLook-Cache
+CLEAN_PARALLELS_LOGS=true     # Parallls VM logs
+CLEAN_FONT_CACHE=true         # Font cache + QuickLook cache
 
-# Fix #93: macOS Performance-Optimierung (via ~/.meister/config steuerbar)
-PERF_SPOTLIGHT_EXCLUDE=true    # Dev-Verzeichnisse von Spotlight ausschliessen
-PERF_DISABLE_AGENTS=true       # Unnoetige User LaunchAgents deaktivieren
-PERF_CLEAN_OLLAMA=true         # Unbenutzte Ollama-Modelle loeschen
-OLLAMA_KEEP_MODELS="qwen3-coder:30b llama3.2:latest"  # Modelle die behalten werden
+# Fix #93: macOS Performance-Optimization (via ~/.meister/config steuerbar)
+PERF_SPOTLIGHT_EXCLUDE=true    # Exclude dev directories from Spotlight
+PERF_DISABLE_AGENTS=true       # Disable unnecessary user LaunchAgents
+PERF_CLEAN_OLLAMA=true         # Remove unused Ollama models
+OLLAMA_KEEP_MODELS="qwen3-coder:30b llama3.2:latest"  # Models to keep
 
-# Spotlight Fix (automatisch bei jedem Lauf)
-SPOTLIGHT_FIX_ENABLED=true         # Spotlight-Diagnose und Reparatur
-SPOTLIGHT_MDS_CPU_THRESHOLD=30     # mds CPU-Schwelle fuer Neustart (%)
-SPOTLIGHT_REINDEX_ON_ERROR=true    # Automatisch reindexieren bei Fehler
+# Spotlight Fix (automatisch at jedem Lauf)
+SPOTLIGHT_FIX_ENABLED=true         # Spotlight diagnosis and repair
+SPOTLIGHT_MDS_CPU_THRESHOLD=30     # mds CPU threshold for restart (%)
+SPOTLIGHT_REINDEX_ON_ERROR=true    # Auto-reindex on error
 
-# iCloud Sync Fix (automatisch bei jedem Lauf)
-ICLOUD_FIX_ENABLED=true            # iCloud-Diagnose und Reparatur
-ICLOUD_GHOST_DIRS_CLEAN=true       # Leere Geister-Ordner in HOME entfernen
-ICLOUD_STUBS_SCAN=true             # Korrupte iCloud-Stubs erkennen (65535 links)
-ICLOUD_STUBS_DELETE=false          # Korrupte Stubs automatisch loeschen (default: aus, Sicherheit)
-ICLOUD_RESTART_BIRD=true           # bird-Daemon neustarten bei Problemen
-ICLOUD_ORPHAN_CONTAINERS_WARN=true # Verwaiste CloudKit-Container melden
+# iCloud Sync Fix (automatisch at jedem Lauf)
+ICLOUD_FIX_ENABLED=true            # iCloud diagnosis and repair
+ICLOUD_GHOST_DIRS_CLEAN=true       # Leere Geister-Folder in HOME entfernen
+ICLOUD_STUBS_SCAN=true             # Corrupt iCloud-Stubs erkennen (65535 links)
+ICLOUD_STUBS_DELETE=false          # Corrupt Stubs automatisch deletingn (default: from, Security)
+ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
+ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
 
-# Self-Healing v0.06: Automatische Reparatur fuer alle Warnings
-SELFHEAL_APPSTORE_OPEN=true        # App Store oeffnen bei fehlendem Login
-SELFHEAL_FDA_OPEN=true             # Datenschutz-Einstellungen oeffnen fuer FDA
-SELFHEAL_ORPHAN_PREFS=true         # Verwaiste Preferences sichern + loeschen
-SELFHEAL_ICLOUD_CONTAINERS=true    # Verwaiste iCloud-Container loeschen
-SELFHEAL_GIT_AUTOCOMMIT=true       # Uncommitted changes auto-committen
-SELFHEAL_PERF_AUTO=true            # Performance-Optimierungen automatisch anwenden
+# Self-Healing v0.06: Automatische Repair for all Warnings
+SELFHEAL_APPSTORE_OPEN=true        # Open App Store on missing login
+SELFHEAL_FDA_OPEN=true             # Open privacy settings for FDA
+SELFHEAL_ORPHAN_PREFS=true         # Backup + delete orphaned preferences
+SELFHEAL_ICLOUD_CONTAINERS=true    # Delete orphaned iCloud containers
+SELFHEAL_GIT_AUTOCOMMIT=true       # Auto-commit uncommitted changes
+SELFHEAL_PERF_AUTO=true            # Auto-apply performance optimizations
 
-# Git Repo Management (via -G Flag aktiviert)
-GIT_AUTO_PUSH=true                          # Unpushed Commits automatisch pushen
-GIT_REPO_SEARCH_PATHS="$HOME/Documents $HOME/Developer"  # Suchpfade fuer Repos
-GIT_REPO_MAXDEPTH=5                         # Max Tiefe fuer Repo-Suche
-# GIT_BACKUP_DIR/RETENTION/EXCLUDE entfernt (v0.09) - GitHub ist das Backup
+# Git Repo Management (via -G Flag enabled)
+GIT_AUTO_PUSH=true                          # Auto-push unpushed commits
+GIT_REPO_SEARCH_PATHS="$HOME/Documents $HOME/Developer"  # Search paths for repos
+GIT_REPO_MAXDEPTH=5                         # Max depth for repo search
+# GIT_BACKUP_DIR/RETENTION/EXCLUDE removed (v0.09) - GitHub ist das Backup
 
-# LaunchAgents die deaktiviert werden sollen (Teilmatch auf plist-Name)
+# LaunchAgents to disable (partial match on plist name)
 PERF_DISABLE_AGENT_PATTERNS="com.google.GoogleUpdater com.google.keystone com.macpaw.CleanMyMac com.bluebubbles.server"
 
 # Benannte Konstanten (Fix #40)
 LOG_MAX_SIZE=1048576          # 1MB - Log-Rotation Schwelle
 LOG_GENERATIONS=3             # Anzahl rotierter Logs
 OLLAMA_STARTUP_WAIT=15        # Sekunden Warten auf Ollama-Server
-LOG_CAPTURE_LINES=50          # Zeilen fuer Fehleranalyse aus Log
+LOG_CAPTURE_LINES=50          # Zeilen for Erroranalyse from Log
 DISK_CRITICAL_THRESHOLD=95    # Prozent - Notfall-Cleanup Schwelle
 
-# Fix #141: Tracken ob Meister Ollama selbst gestartet hat
+# Fix #141: Tracken ob Meister Ollama selbst startingd has
 OLLAMA_STARTED_BY_US=false
 
 # Fix #144: Auto-Detect Schwellwerte (via ~/.meister/config steuerbar)
 # Security Suite Konfiguration
 SECURITY_PERSISTENCE_AUDIT=true        # LaunchAgent/Daemon Integritaetscheck
-SECURITY_TCC_AUDIT=true                # Datenschutz-Berechtigungen pruefen
+SECURITY_TCC_AUDIT=true                # Datenschutz-Berechtigungen checking
 
 # Docker + LaunchAgent Defaults
 CLEAN_DOCKER=true                      # Docker Cleanup
 LAUNCHAGENT_SCHEDULE="weekly"          # daily/weekly/monthly
 
-AUTO_DETECT=true                       # Automatische Erkennung aktiviert
-AUTO_XCODE_THRESHOLD_MB=500            # DerivedData ab dieser Groesse loeschen
-AUTO_TRASH_THRESHOLD_ITEMS=50          # Papierkorb ab X Elementen leeren
-AUTO_TRASH_THRESHOLD_MB=500            # Papierkorb ab X MB leeren
-AUTO_CACHE_THRESHOLD_MB=5000           # User Caches ab X MB loeschen
-AUTO_PERIODIC_INTERVAL_DAYS=7          # periodic scripts wenn letzter > X Tage her
+AUTO_DETECT=true                       # Automatische Erkennung enabled
+AUTO_XCODE_THRESHOLD_MB=500            # Delete DerivedData above this size
+AUTO_TRASH_THRESHOLD_ITEMS=50          # Empty trash above X items
+AUTO_TRASH_THRESHOLD_MB=500            # Empty trash above X MB
+AUTO_CACHE_THRESHOLD_MB=5000           # Delete user caches above X MB
+AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X days ago
 
-# Config-Datei laden (ueberschreibt Defaults)
+# Load config file (overrides defaults)
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
-    # Erlaubte Config-Keys nach Typ
+    # Allowed config keys by type
     _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS PERF_CLEAN_OLLAMA SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH "
     _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH "
     _STR_KEYS=" OLLAMA_MODEL OLLAMA_FALLBACK_MODEL OLLAMA_URL NET_CHECK_HOSTS OLLAMA_KEEP_MODELS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE "
@@ -153,14 +153,14 @@ if [ -f "$MEISTER_CONFIG" ]; then
     done < "$MEISTER_CONFIG"
 fi
 
-# Report Arrays
+# Report arrays
 declare -a REPORT_SUCCESS
 declare -a REPORT_FIXED
 declare -a REPORT_WARNINGS
 declare -a REPORT_ERRORS
 SCRIPT_START_TIME=$(date +%s)
 
-# Fix #84/#89: Gecachte Werte (einmaliger Aufruf, spart wiederholte Forks)
+# Fix #84/#89: Cached values (single call, saves repeated forks)
 _OLLAMA_LIST_CACHE=""
 
 MODULE_STEP=0
@@ -174,7 +174,7 @@ EMPTY_TRASH=false
 RUN_SUDO_TASKS=false
 CLEAN_CACHES=false
 LIST_LARGE_FILES=false
-NEEDS_SUDO=true  # Fix #145: Always-on Self-Healing - Sudo immer anfordern
+NEEDS_SUDO=true  # Fix #145: Always-on self-healing - always request sudo
 SHOW_HEALTH=false
 DRY_RUN=false
 INSTALL_LAUNCHAGENT=false
@@ -202,7 +202,7 @@ _LOG_TS_SEC=-1
 
 log() {
     local level="$1"; shift; local msg="$*"
-    # Timestamp nur neu berechnen wenn sich die Sekunde aendert ($SECONDS ist builtin, kein Fork)
+    # Only recalculate timestamp when the second changes ($SECONDS is builtin, no fork)
     if [ "$SECONDS" != "$_LOG_TS_SEC" ]; then
         _LOG_TS_CACHE=$(date +'%Y-%m-%d %H:%M:%S')
         _LOG_TS_SEC=$SECONDS
@@ -217,11 +217,11 @@ log() {
         HEAL)  color=$MAGENTA ;;
         STEP)  color=$DIM ;;
     esac
-    # Quiet-Modus: nur WARN/ERROR/FIX auf Terminal
+    # Quiet-Modus: only WARN/ERROR/FIX auf Terminal
     if ! $QUIET_MODE || [[ "$level" =~ ^(WARN|ERROR|FIX)$ ]]; then
         echo -e "${color}[${level}]${NC} ${msg}"
     fi
-    # Fix #91: ANSI-Strip nur wenn noetig (spart sed-Fork in ~95% der Aufrufe)
+    # Fix #91: ANSI-Strip only wenn needed (spart sed-Fork in ~95% der Aufrufe)
     if [[ "$msg" == *$'\033'* ]]; then
         echo "$ts - $level - $(echo "$msg" | sed 's/\x1b\[[0-9;]*m//g')" >> "$LOGFILE"
     else
@@ -249,9 +249,9 @@ module_timer_stop() {
     local mins=$((elapsed / 60))
     local secs=$((elapsed % 60))
     if [ $mins -gt 0 ]; then
-        log STEP "   ${name} abgeschlossen in ${mins}m ${secs}s"
+        log STEP "   ${name} completed in ${mins}m ${secs}s"
     else
-        log STEP "   ${name} abgeschlossen in ${secs}s"
+        log STEP "   ${name} completed in ${secs}s"
     fi
 }
 
@@ -279,14 +279,14 @@ rotate_logs() {
             done
             [ -f "${LOGFILE}.old" ] && mv "${LOGFILE}.old" "${LOGFILE}.1"
             mv "$LOGFILE" "${LOGFILE}.old"
-            log INFO "Logfile rotiert (war $(( size / 1024 ))KB)"
+            log INFO "Logfile rotated (war $(( size / 1024 ))KB)"
         fi
     fi
     touch "$LOGFILE"
 }
 
-# Fuehrt Befehl aus, zeigt Output zeilenweise, gibt echten Exit-Code zurueck
-# Fix #68: tmpfile statt PIPESTATUS (Subshell-Bug vermieden)
+# Fuehrt Command from, zeigt Output zeilenweise, gibt echten Exit-Code zurueck
+# Fix #68: tmpfile instead of PIPESTATUS (Subshell-Bug vermieden)
 run_verbose() {
     if $DRY_RUN; then
         log STEP "   [DRY-RUN] $*"
@@ -317,10 +317,10 @@ acquire_lock() {
     if [ -f "$LOCKFILE" ]; then
         local old_pid=$(cat "$LOCKFILE" 2>/dev/null)
         if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-            log ERROR "Meister laeuft bereits (PID: $old_pid)"
+            log ERROR "Meister is already running (PID: $old_pid)"
             exit 1
         else
-            log WARN "Stale Lockfile entfernt (PID $old_pid nicht mehr aktiv)"
+            log WARN "Stale lockfile removed (PID $old_pid no longer active)"
             rm -f "$LOCKFILE"
         fi
     fi
@@ -331,36 +331,36 @@ release_lock() {
     rm -f "$LOCKFILE" 2>/dev/null
 }
 
-# Fix #141: Ollama stoppen wenn von Meister gestartet
+# Fix #141: Ollama stoppen wenn von Meister startingd
 shutdown_ollama() {
     if $OLLAMA_STARTED_BY_US; then
-        log INFO "Ollama wird gestoppt (von Meister gestartet)..."
+        log INFO "Stopping Ollama (startingd by Meister)..."
         pkill -f "ollama serve" 2>/dev/null
-        # Kurz warten und pruefen ob gestoppt
+        # Kurz warten and checking ob stopped
         local w=0
         while [ $w -lt 5 ] && pgrep -f "ollama serve" >/dev/null 2>&1; do
             sleep 1
             w=$((w + 1))
         done
         if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
-            log FIX "   Ollama-Server gestoppt (RAM freigegeben)"
+            log FIX "   Ollama server stopped (RAM freed)"
         else
-            log WARN "   Ollama-Server konnte nicht gestoppt werden"
+            log WARN "   Failed to stop Ollama server"
         fi
         OLLAMA_STARTED_BY_US=false
     fi
 }
 
-# Fix #35: Vereinheitlichter Trap fuer INT/TERM/EXIT
+# Fix #35: Vereinheitlichter Trap for INT/TERM/EXIT
 cleanup() {
     if $INTERRUPTED; then return; fi
     INTERRUPTED=true
-    # Fix #141: Ollama stoppen bevor wir aufraumen
+    # Fix #141: Ollama stoppen bebefore wir aufraumen
     shutdown_ollama 2>/dev/null
-    # Bei Signal (nicht normalem Exit) Report ausgeben
+    # Bei Signal (not normalem Exit) Report fromgeben
     if [ -n "$CLEANUP_SIGNAL" ]; then
         echo ""
-        log WARN "Meister unterbrochen ($CLEANUP_SIGNAL), raeume auf..."
+        log WARN "Meister interrupted ($CLEANUP_SIGNAL), cleaning up..."
         print_report 2>/dev/null
         save_history 2>/dev/null
     fi
@@ -381,16 +381,16 @@ ollama_available() {
     [ "$OLLAMA_ENABLED" = "true" ] && curl -sf --max-time 5 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1
 }
 
-# Fix #41: Zentraler Ollama-Starter (ersetzt doppelten Code in module_ollama + main)
+# Fix #41: Central Ollama startingr (replaces duplicate code in module_ollama + main)
 ensure_ollama_running() {
-    local context="${1:-}"  # optionaler Kontext fuer Log-Meldungen
+    local context="${1:-}"  # optional context for log messages
     if ollama_available; then
         return 0
     fi
     if ! command_exists ollama; then
         return 1
     fi
-    log WARN "${context}Ollama offline - starte Server..."
+    log WARN "${context}Ollama offline - starting server..."
     ollama serve &>/dev/null &
     local ollama_pid=$!
     local wait_count=0
@@ -400,22 +400,22 @@ ensure_ollama_running() {
         if curl -sf --max-time 2 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
             break
         fi
-        [ $((wait_count % 5)) -eq 0 ] && log STEP "${context}   Warte auf Ollama-Server... (${wait_count}s)"
+        [ $((wait_count % 5)) -eq 0 ] && log STEP "${context}   Waiting for Ollama server... (${wait_count}s)"
     done
     if ollama_available; then
-        log FIX "${context}Ollama-Server gestartet (nach ${wait_count}s)"
+        log FIX "${context}Ollama server started (after ${wait_count}s)"
         OLLAMA_ENABLED=true
-        OLLAMA_STARTED_BY_US=true  # Fix #141: Merken dass wir Ollama gestartet haben
+        OLLAMA_STARTED_BY_US=true  # Fix #141: Merken dass wir Ollama startingd haben
         return 0
     else
-        log WARN "${context}Ollama-Server antwortet nicht nach ${OLLAMA_STARTUP_WAIT}s"
+        log WARN "${context}Ollama server not responding after ${OLLAMA_STARTUP_WAIT}s"
         if kill -0 "$ollama_pid" 2>/dev/null; then
-            log STEP "${context}   Prozess laeuft (PID: $ollama_pid) aber API nicht erreichbar"
+            log STEP "${context}   Process running (PID: $ollama_pid) but API not reachable"
         else
-            log WARN "${context}   Ollama-Prozess sofort beendet"
+            log WARN "${context}   Ollama process terminated immediately"
             local ollama_log="$HOME/.ollama/logs/server.log"
             if [ -f "$ollama_log" ]; then
-                log STEP "${context}   Letzte Logzeilen:"
+                log STEP "${context}   Last log lines:"
                 tail -5 "$ollama_log" 2>/dev/null | while IFS= read -r line; do
                     log STEP "${context}     $line"
                 done
@@ -426,53 +426,53 @@ ensure_ollama_running() {
     fi
 }
 
-# Fix #45: Modell-Verfuegbarkeit pruefen, Auto-Pull oder Fallback
+# Fix #45: Model-Verfuegbarkeit checking, Auto-Pull or Fallback
 ensure_ollama_model() {
     if ! ollama_available; then return 1; fi
     local model="$OLLAMA_MODEL"
-    # Modellname ohne Tag fuer grep (z.B. "qwen3-coder" aus "qwen3-coder:30b")
+    # Model name without tag for grep (e.g. "qwen3-coder" from "qwen3-coder:30b")
     if ollama_list_cached | awk 'NR>1 {print $1}' | grep -q "^${model}$"; then
-        log STEP "   Modell $model verfuegbar"
+        log STEP "   Model $model available"
         return 0
     fi
-    # Modell nicht vorhanden - versuche Auto-Pull
-    log WARN "   Modell $model nicht lokal verfuegbar, starte Pull..."
+    # Model not present - versuche Auto-Pull
+    log WARN "   Model $model not locally available, starting pull..."
     if ollama pull "$model" 2>/dev/null; then
         ollama_list_invalidate
-        log FIX "   Modell $model erfolgreich heruntergeladen"
-        report_add FIX "Ollama: Modell $model auto-pulled"
+        log FIX "   Model $model successfully downloaded"
+        report_add FIX "Ollama: Model $model auto-pulled"
         return 0
     fi
-    # Pull fehlgeschlagen - Fallback-Modell pruefen
+    # Pull failed - Fallback-Model checking
     if [ -n "$OLLAMA_FALLBACK_MODEL" ] && [ "$OLLAMA_FALLBACK_MODEL" != "$model" ]; then
         if ollama_list_cached | awk 'NR>1 {print $1}' | grep -q "^${OLLAMA_FALLBACK_MODEL}$"; then
-            log WARN "   Fallback auf $OLLAMA_FALLBACK_MODEL (statt $model)"
+            log WARN "   Fallback to $OLLAMA_FALLBACK_MODEL (instead of $model)"
             OLLAMA_MODEL="$OLLAMA_FALLBACK_MODEL"
-            log STEP "   Ollama: Fallback auf $OLLAMA_FALLBACK_MODEL"
+            log STEP "   Ollama: Fallback to $OLLAMA_FALLBACK_MODEL"
             return 0
         fi
     fi
-    # Letzter Versuch: erstes verfuegbares Modell nehmen
+    # Last Versuch: erstes availablees Model nehmen
     local first_model=$(ollama_list_cached | awk 'NR==2 {print $1}')
     if [ -n "$first_model" ]; then
-        log WARN "   Fallback auf erstes verfuegbares Modell: $first_model"
+        log WARN "   Fallback to erstes availablees Model: $first_model"
         OLLAMA_MODEL="$first_model"
-        log STEP "   Ollama: Fallback auf $first_model"
+        log STEP "   Ollama: Fallback to $first_model"
         return 0
     fi
-    log ERROR "   Kein Ollama-Modell verfuegbar"
+    log ERROR "   No Ollama model available"
     OLLAMA_ENABLED=false
     return 1
 }
 
-# Fix #89: ollama list gecacht (wird nur 1x abgefragt)
+# Fix #89: ollama list gecacht (wird only 1x abgefragt)
 ollama_list_cached() {
     if [ -z "$_OLLAMA_LIST_CACHE" ]; then
         _OLLAMA_LIST_CACHE=$(ollama list 2>/dev/null)
     fi
     echo "$_OLLAMA_LIST_CACHE"
 }
-# Cache invalidieren (z.B. nach pull)
+# Cache invalidieren (z.B. after pull)
 ollama_list_invalidate() {
     _OLLAMA_LIST_CACHE=""
 }
@@ -484,10 +484,10 @@ ai_heal() {
 
     if ! ollama_available; then return 1; fi
 
-    log HEAL "AI-Heal: Frage Ollama nach Fix fuer $module_name..."
-    local prompt="Du bist ein macOS-Systemadmin. Ein Wartungsscript-Modul '$module_name' ist fehlgeschlagen.
-Fehlermeldung: $error_output
-Antworte NUR mit einem einzigen Shell-Befehl der das Problem fixt. Kein Erklaerungstext, nur der Befehl. Wenn kein Fix moeglich ist, antworte mit: KEIN_FIX"
+    log HEAL "AI-Heal: Asking Ollama for fix for $module_name..."
+    local prompt="Du bist ein macOS-Systemadmin. Ein Maintenancesscript-Modul '$module_name' ist failed.
+Errormeldung: $error_output
+Antworte NUR mit einem einzigen Shell-Command der das Problem fixt. No Erklaerungstext, only der Command. Wenn no Fix possible ist, antworte mit: KEIN_FIX"
 
     local ai_response
     ai_response=$(curl -sf --max-time 30 "${OLLAMA_URL}/api/generate" \
@@ -495,21 +495,21 @@ Antworte NUR mit einem einzigen Shell-Befehl der das Problem fixt. Kein Erklaeru
         2>/dev/null | sed -n 's/.*"response":"\([^"]*\)".*/\1/p' | sed 's/\\n/\n/g; s/\\t/\t/g' | head -3)
 
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -q "KEIN_FIX"; then
-        log WARN "AI-Heal: Kein Fix gefunden"
+        log WARN "AI-Heal: No fix found"
         return 1
     fi
 
-    # Sicherheitscheck: gefaehrliche Befehle blocken
+    # Securityscheck: gefaehrliche Commande blocken
     if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|mkfs|dd if=|:(){ :|> /dev/sd|shutdown|reboot|halt"; then
-        log WARN "AI-Heal: Gefaehrlicher Befehl blockiert: $ai_response"
-        log STEP "   AI-Heal blockiert (gefaehrlicher Befehl)"
+        log WARN "AI-Heal: Dangerous command blocked: $ai_response"
+        log STEP "   AI-Heal blockiert (gefaehrlicher Command)"
         return 1
     fi
 
     log HEAL "AI-Heal Vorschlag: $ai_response"
 
     if $DRY_RUN; then
-        log STEP "   [DRY-RUN] Wuerde ausfuehren: $ai_response"
+        log STEP "   [DRY-RUN] Wuerde execute: $ai_response"
         return 0
     fi
 
@@ -519,12 +519,12 @@ Antworte NUR mit einem einzigen Shell-Befehl der das Problem fixt. Kein Erklaeru
     local ai_rc=$?
 
     if [ $ai_rc -eq 0 ]; then
-        log FIX "AI-Heal: Befehl erfolgreich ausgefuehrt"
+        log FIX "AI-Heal: Command successful fromgefuehrt"
         [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
-        report_add FIX "$module_name via AI-Heal repariert"
+        report_add FIX "$module_name via AI-Heal repaired"
         return 0
     else
-        log WARN "AI-Heal: Befehl fehlgeschlagen (Exit: $ai_rc)"
+        log WARN "AI-Heal: Command failed (Exit: $ai_rc)"
         [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
         return 1
     fi
@@ -537,7 +537,7 @@ known_fix() {
 
     case "$error_output" in
         *"Could not resolve host"*|*"Failed to connect"*|*"Network is unreachable"*)
-            log HEAL "Known-Fix: DNS/Netzwerk-Reset..."
+            log HEAL "Known-Fix: DNS/Network-Reset..."
             sudo -n dscacheutil -flushcache 2>/dev/null
             sudo -n killall -HUP mDNSResponder 2>/dev/null
             sleep 2
@@ -556,7 +556,7 @@ known_fix() {
             return 0
             ;;
         *"already installed"*|*"is already an installed"*)
-            log HEAL "Known-Fix: Bereits installiert, OK"
+            log HEAL "Known-Fix: Already installed, OK"
             return 0
             ;;
         *"Couldn't find remote ref"*|*"fatal: bad object"*)
@@ -578,7 +578,7 @@ known_fix() {
     return 1
 }
 
-# Fix #6: Logfile-Diff statt leerer stderr-Datei
+# Fix #6: Logfile-Diff instead of leerer stderr-File
 run_module_safe() {
     local module_name="$1"
     local module_func="$2"
@@ -595,7 +595,7 @@ run_module_safe() {
         return 0
     fi
 
-    log ERROR "$module_name fehlgeschlagen (Exit: $rc)"
+    log ERROR "$module_name failed (Exit: $rc)"
     local module_output=$(tail -n +$((log_lines_before + 1)) "$LOGFILE" 2>/dev/null | head -"$LOG_CAPTURE_LINES")
 
     # Known-Fix probieren + 1x Retry
@@ -604,10 +604,10 @@ run_module_safe() {
         sleep 1
         $module_func
         rc=$?
-        [ $rc -eq 0 ] && report_add FIX "$module_name via Known-Fix repariert"
+        [ $rc -eq 0 ] && report_add FIX "$module_name via Known-Fix repaired"
     fi
 
-    # AI-Heal Fallback: Ollama fragen wenn Known-Fix nicht geholfen hat
+    # AI-Heal Fallback: Ask Ollama wenn Known-Fix not geholfen has
     if [ $rc -ne 0 ] && $OLLAMA_ENABLED; then
         if ai_heal "$module_name" "Exit: $rc. $module_output"; then
             log HEAL "AI-Heal angewendet, Retry..."
@@ -617,7 +617,7 @@ run_module_safe() {
         fi
     fi
 
-    [ $rc -ne 0 ] && report_add ERROR "$module_name fehlgeschlagen"
+    [ $rc -ne 0 ] && report_add ERROR "$module_name failed"
     module_timer_stop "$module_name"
     return $rc
 }
@@ -626,11 +626,11 @@ run_module_safe() {
 # 4. INFRASTRUCTURE
 #############################
 
-# Fix #11: Mehrere Endpunkte
+# Fix #11: Moreere Endpunkte
 check_net() {
-    log INFO "Pruefe Netzwerk..."
-    # Fix #114: Parallele Ping-Checks statt sequentiell (bis 6s gespart bei Fehler)
-    # Fix #138: Nur Ping-PIDs abwarten, nicht ollama serve & (haengt sonst endlos)
+    log INFO "Checking Network..."
+    # Fix #114: Parallle Ping-Checks instead of sequentiell (bis 6s gespart at Error)
+    # Fix #138: Nur Ping-PIDs abwarten, not ollama serve & (haengt sonst endlos)
     local _net_ok_file _ping_pids=""
     _net_ok_file=$(mktemp)
     rm -f "$_net_ok_file"
@@ -643,20 +643,20 @@ check_net() {
         local ok_host
         ok_host=$(cat "$_net_ok_file")
         rm -f "$_net_ok_file"
-        log INFO "   Netzwerk OK (ping $ok_host)"
+        log INFO "   Network OK (ping $ok_host)"
         return 0
     fi
     rm -f "$_net_ok_file" 2>/dev/null
 
-    log STEP "   Ping fehlgeschlagen, versuche HTTPS..."
+    log STEP "   Ping failed, versuche HTTPS..."
     for host in $NET_CHECK_HOSTS; do
         if curl -sf --max-time 5 "https://$host" >/dev/null 2>&1; then
-            log INFO "   Netzwerk OK (HTTPS $host)"
+            log INFO "   Network OK (HTTPS $host)"
             return 0
         fi
     done
 
-    log ERROR "Keine Internet-Verbindung!"
+    log ERROR "No Internet-Connection!"
 
     report_add ERROR "No Internet connection"
     return 1
@@ -676,7 +676,7 @@ ensure_brew() {
             return 1
         fi
     else
-        log STEP "   Homebrew gefunden: $(brew --prefix)"
+        log STEP "   Homebrew found: $(brew --prefix)"
     fi
     return 0
 }
@@ -687,7 +687,7 @@ ensure_tool() {
     local is_cask="${3:-}"
 
     if command_exists "$cmd"; then
-        log STEP "   Tool '$cmd' vorhanden"
+        log STEP "   Tool '$cmd' present"
         return 0
     fi
 
@@ -712,7 +712,7 @@ ensure_tool() {
 # ── HOMEBREW (Fix #4: korrekte Exit-Codes) ──
 
 module_homebrew() {
-    log INFO "Homebrew Wartung..."
+    log INFO "Homebrew Maintenance..."
     ensure_brew || return 1
 
     local brew_version=$(brew --version 2>/dev/null | head -1)
@@ -723,50 +723,50 @@ module_homebrew() {
     run_verbose brew update
     local update_rc=$?
     if [ $update_rc -ne 0 ]; then
-        log WARN "brew update fehlgeschlagen (Exit: $update_rc). Trying unshallow..."
+        log WARN "brew update failed (Exit: $update_rc). Trying unshallow..."
         git -C "$(brew --repo)" fetch --unshallow &>/dev/null
         run_verbose brew update
         if [ $? -eq 0 ]; then
             report_add FIX "Fixed Homebrew repo (unshallow)"
         else
-            log ERROR "brew update weiterhin fehlgeschlagen"
+            log ERROR "brew update weiterhin failed"
         fi
     fi
 
     # Outdated formulae
-    log INFO "   Pruefe veraltete Formulae..."
+    log INFO "   Checking veraltete formulae..."
     local outdated_formulae=$(brew outdated --formula 2>/dev/null)
     if [ -n "$outdated_formulae" ]; then
         local formula_count=$(( $(echo "$outdated_formulae" | wc -l) ))
-        log INFO "   ${formula_count} veraltete Formulae:"
+        log INFO "   ${formula_count} veraltete formulae:"
         echo "$outdated_formulae" | while IFS= read -r line; do
             log STEP "     - $line"
         done
     else
-        log INFO "   Alle Formulae aktuell"
+        log INFO "   All formulae current"
     fi
 
-    # Pinned Packages loggen (kein Warning - bewusst gepinnt)
+    # Pinned Packages loggen (no Warning - bewusst gepinnt)
     local pinned=$(brew list --pinned 2>/dev/null)
     if [ -n "$pinned" ]; then
         local pin_count=$(( $(echo "$pinned" | wc -l) ))
-        log STEP "   ${pin_count} gepinnte Formulae (bewusst uebersprungen)"
+        log STEP "   ${pin_count} gepinnte formulae (bewusst skipped)"
     fi
 
     # brew upgrade mit korrektem Exit-Code
     log INFO "   brew upgrade..."
     run_verbose brew upgrade
     if [ $? -eq 0 ]; then
-        report_add SUCCESS "Homebrew Formulae upgraded"
+        report_add SUCCESS "Homebrew formulae upgraded"
     else
-        log STEP "   Homebrew upgrade hatte Probleme (siehe Log)"
+        log STEP "   Homebrew upgrade haste Probleme (siehe Log)"
     fi
 
-    # Fix #142: Post-Upgrade Verifikation - sind noch Formulae veraltet?
+    # Fix #142: Post-Upgrade Verifikation - sind still formulae veraltet?
     local still_outdated_formulae=$(brew outdated --formula 2>/dev/null)
     if [ -n "$still_outdated_formulae" ]; then
         local still_count=$(( $(echo "$still_outdated_formulae" | wc -l) ))
-        log WARN "   ${still_count} Formulae nach Upgrade noch veraltet - versuche Einzel-Upgrade..."
+        log WARN "   ${still_count} formulae still outdated after upgrade - trying individual upgrade..."
         echo "$still_outdated_formulae" | while IFS= read -r pkg; do
             [ -z "$pkg" ] && continue
             local pkg_name=$(echo "$pkg" | awk '{print $1}')
@@ -774,54 +774,54 @@ module_homebrew() {
             local upgrade_out
             upgrade_out=$(brew upgrade "$pkg_name" 2>&1)
             if [ $? -eq 0 ]; then
-                log FIX "     $pkg_name erfolgreich aktualisiert"
+                log FIX "     $pkg_name successful updated"
                 report_add FIX "brew upgrade (Retry): $pkg_name"
             else
-                log WARN "     $pkg_name Upgrade fehlgeschlagen:"
+                log WARN "     $pkg_name Upgrade failed:"
                 echo "$upgrade_out" | tail -3 | while IFS= read -r errline; do
                     log STEP "       $errline"
                 done
-                log STEP "     brew upgrade fehlgeschlagen: $pkg_name (siehe Log)"
+                log STEP "     brew upgrade failed: $pkg_name (siehe Log)"
             fi
         done
     fi
 
     # Outdated casks
-    log INFO "   Pruefe veraltete Casks..."
+    log INFO "   Checking veraltete casks..."
     local outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
     if [ -n "$outdated_casks" ]; then
         local cask_count=$(( $(echo "$outdated_casks" | wc -l) ))
-        log INFO "   ${cask_count} veraltete Casks:"
+        log INFO "   ${cask_count} veraltete casks:"
         echo "$outdated_casks" | while IFS= read -r line; do
             log STEP "     - $line"
         done
     else
-        log INFO "   Alle Casks aktuell"
+        log INFO "   All casks current"
     fi
 
-    # Fix #12: --greedy statt --force
-    log INFO "   Upgrading Casks (--greedy)..."
+    # Fix #12: --greedy instead of --force
+    log INFO "   Upgrading casks (--greedy)..."
     run_verbose brew upgrade --cask --greedy
 
     # Fix #142: Post-Upgrade Cask-Verifikation
     local still_outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
     if [ -n "$still_outdated_casks" ]; then
         local still_cask_count=$(( $(echo "$still_outdated_casks" | wc -l) ))
-        log STEP "   ${still_cask_count} Casks noch veraltet (Auto-Update Apps, normal)"
+        log STEP "   ${still_cask_count} casks still outdated (auto-update apps, normal)"
         echo "$still_outdated_casks" | while IFS= read -r line; do
             log STEP "     - $line"
         done
     fi
 
-    # Fix #23: autoremove nach upgrade
+    # Fix #23: autoremove after upgrade
     log INFO "   Autoremove ungenutzter Dependencies..."
     local removed=$(brew autoremove 2>&1)
     if echo "$removed" | grep -q "Uninstalling"; then
         local rm_count=$(echo "$removed" | grep -c "Uninstalling")
-        log FIX "   ${rm_count} ungenutzte Dependencies entfernt"
-        report_add FIX "brew autoremove: ${rm_count} Pakete entfernt"
+        log FIX "   ${rm_count} ungenutzte Dependencies removed"
+        report_add FIX "brew autoremove: ${rm_count} Pakete removed"
     else
-        log STEP "   Keine ungenutzten Dependencies"
+        log STEP "   No ungenutzten Dependencies"
     fi
 
     log INFO "   Cleanup..."
@@ -832,7 +832,7 @@ module_homebrew() {
     log INFO "   brew doctor..."
     local doctor_output=$(brew doctor 2>&1)
     if echo "$doctor_output" | grep -q "ready to brew"; then
-        log INFO "   Homebrew ist gesund"
+        log INFO "   Homebrew ist healthy"
     else
         local warn_count=$(echo "$doctor_output" | grep -c "Warning" 2>/dev/null || echo 0)
         log WARN "   brew doctor: ${warn_count} Warnings"
@@ -853,7 +853,7 @@ module_homebrew() {
                     log FIX "     Linked: $keg_name"
                     report_add FIX "brew link: $keg_name"
                 else
-                    log WARN "     Link fehlgeschlagen: $keg_name (versuche --overwrite)"
+                    log WARN "     Link failed: $keg_name (versuche --overwrite)"
                     run_or_dry brew link --overwrite "$keg_name" 2>/dev/null && \
                         report_add FIX "brew link --overwrite: $keg_name"
                 fi
@@ -870,18 +870,18 @@ module_homebrew() {
 
         # Auto-Fix: Broken symlinks
         if echo "$doctor_output" | grep -qi "broken symlinks"; then
-            log HEAL "   Auto-Fix: Broken Symlinks bereinigen..."
+            log HEAL "   Auto-Fix: Broken Symlinks bersomen..."
             did_autofix=true
             brew cleanup -s 2>/dev/null
-            report_add FIX "brew cleanup: Broken Symlinks bereinigt"
+            report_add FIX "brew cleanup: Broken Symlinks cleaned up"
         fi
 
-        # Fix #42: Re-check nur wenn tatsaechlich Auto-Fixes angewendet wurden
+        # Fix #42: Re-check only wenn tatsaechlich Auto-Fixes angewendet wurden
         if $did_autofix; then
             local doctor_recheck=$(brew doctor 2>&1)
             if echo "$doctor_recheck" | grep -q "ready to brew"; then
-                log FIX "   Homebrew nach Auto-Fix gesund!"
-                report_add FIX "brew doctor: Alle Warnings behoben"
+                log FIX "   Homebrew healthy after auto-fix!"
+                report_add FIX "brew doctor: All Warnings behoben"
             else
                 local warn_remain=$(echo "$doctor_recheck" | grep -c "Warning" 2>/dev/null || echo 0)
                 if [ "$warn_remain" -lt "$warn_count" ]; then
@@ -894,7 +894,7 @@ module_homebrew() {
                 fi
             fi
         else
-            log STEP "   brew doctor: ${warn_count} Warnings (kein Auto-Fix moeglich, siehe Log)"
+            log STEP "   brew doctor: ${warn_count} warnings (no auto-fix possible, see log)"
         fi
     fi
 }
@@ -902,19 +902,19 @@ module_homebrew() {
 # ── MAS (APP STORE) ──
 
 module_mas() {
-    log INFO "Pruefe Mac App Store..."
+    log INFO "Checking Mac App Store..."
     ensure_tool "mas" "mas" || return 1
 
-    # Fix #43: Pruefen ob User im App Store eingeloggt ist
+    # Fix #43: Checkingn ob User im App Store eingeloggt ist
     if ! mas account &>/dev/null; then
-        log WARN "   Nicht im App Store eingeloggt"
-        # Fix #124: App Store oeffnen zum Anmelden
+        log WARN "   Not logged into App Store"
+        # Fix #124: App Store oeffnen for Anmelden
         if $SELFHEAL_APPSTORE_OPEN && ! $DRY_RUN; then
-            log HEAL "   Oeffne App Store zum Anmelden..."
+            log HEAL "   Opening App Store for login..."
             open -a "App Store" 2>/dev/null
-            report_add FIX "App Store: zum Anmelden geoeffnet (manuell einloggen)"
+            report_add FIX "App Store: opened for login (log in manually)"
         else
-            log STEP "   App Store: Nicht eingeloggt (wird bei naechstem Lauf geoeffnet)"
+            log STEP "   App Store: Not logged in (will open on next run)"
         fi
         return 0
     fi
@@ -923,7 +923,7 @@ module_mas() {
 
     local spotlight_marker="$MEISTER_DIR/spotlight_fixed"
     if [ ! -f "$spotlight_marker" ]; then
-        log INFO "   Indexiere MAS-Apps fuer Spotlight (einmalig)..."
+        log INFO "   Indexing MAS apps for Spotlight (one-time)..."
         local idx_count=0
         for app_dir in /Applications/*.app; do
             [ -d "$app_dir/Contents/_MASReceipt" ] || continue
@@ -932,18 +932,18 @@ module_mas() {
             log STEP "   Indexiert: $(basename "$app_dir")"
         done
         touch "$spotlight_marker"
-        log FIX "Spotlight-Index fuer ${idx_count} MAS-Apps rebuilt"
-        report_add FIX "Spotlight-Index fuer ${idx_count} App Store Apps repariert"
+        log FIX "Spotlight index for ${idx_count} MAS apps rebuilt"
+        report_add FIX "Spotlight index for ${idx_count} App Store apps repaired"
     fi
 
-    log INFO "   Pruefe MAS-Updates..."
+    log INFO "   Checking MAS-Updates..."
     local outdated=$(mas outdated 2>/dev/null)
     if [ -z "$outdated" ]; then
-        log INFO "   Alle App Store Apps aktuell"
+        log INFO "   All App Store Apps current"
         report_add SUCCESS "App Store apps up to date"
     else
         local count=$(( $(echo "$outdated" | wc -l) ))
-        log INFO "   ${count} Updates verfuegbar:"
+        log INFO "   ${count} Updates available:"
         echo "$outdated" | while IFS= read -r line; do
             log STEP "     - $line"
         done
@@ -960,38 +960,38 @@ module_mas() {
 # ── OLLAMA (Fix #5: Subshell-Counter-Bug) ──
 
 module_ollama() {
-    log INFO "Pruefe Ollama..."
+    log INFO "Checking Ollama..."
 
     if ! command_exists ollama; then
         if command_exists brew && brew list --cask ollama &>/dev/null; then
             ensure_tool "ollama" "ollama" "--cask"
         else
-            log INFO "   Ollama nicht installiert. Ueberspringe."
+            log INFO "   Ollama not installed. Skipping."
             return 0
         fi
     fi
 
     if ! command_exists ollama; then return 0; fi
 
-    # Fix #41: Zentralen Starter verwenden
+    # Fix #41: Use central startingr
     if ollama_available; then
-        log INFO "   Ollama-Server laeuft"
+        log INFO "   Ollama server running"
     elif ensure_ollama_running "   "; then
-        report_add FIX "Ollama-Server automatisch gestartet"
+        report_add FIX "Ollama-Server automatisch startingd"
     else
         log STEP "   Ollama-Server offline"
     fi
 
     local models=$(ollama_list_cached | awk 'NR>1 {print $1}')
     if [ -z "$models" ]; then
-        log INFO "   Keine Ollama-Modelle installiert"
+        log INFO "   No Ollama-Modele installed"
         return 0
     fi
 
     local model_count=$(( $(echo "$models" | wc -l) ))
-    log INFO "   ${model_count} Modelle gefunden"
+    log INFO "   ${model_count} Modele found"
 
-    # Fix #5: Kein Pipe, kein Subshell-Problem
+    # Fix #5: No Pipe, no Subshell-Problem
     local updated=0
     local failed=0
     for model in $models; do
@@ -1004,14 +1004,14 @@ module_ollama() {
             log STEP "     OK"
         else
             failed=$((failed + 1))
-            log WARN "   Pull fehlgeschlagen: $model"
+            log WARN "   Pull failed: $model"
             [ -n "$pull_output" ] && log STEP "     $(echo "$pull_output" | tail -1)"
         fi
     done
 
     [ $updated -gt 0 ] && ollama_list_invalidate
-    log INFO "   ${updated}/${model_count} Modelle aktualisiert"
-    [ $failed -gt 0 ] && log WARN "   ${failed} Pulls fehlgeschlagen"
+    log INFO "   ${updated}/${model_count} Modele updated"
+    [ $failed -gt 0 ] && log WARN "   ${failed} Pulls failed"
     report_add FIX "Updated $updated/$model_count Ollama models"
 
 }
@@ -1019,10 +1019,10 @@ module_ollama() {
 # ── GIT REPO MANAGEMENT (Fix #101-102) ──
 
 module_git_repos() {
-    log INFO "Git Repository Management..."
+    log INFO "Git repository Management..."
     local repos_found=0
 
-    # Git-Repo-Cache: find nur 1x/Woche, danach Cache verwenden (spart 10-30s)
+    # Git-Repo-Cache: find only 1x/Woche, daafter Cache verwenden (spart 10-30s)
     local repo_cache="$MEISTER_DIR/git_repos.cache"
     local repo_list=$(mktemp)
     local cache_max_age=$((7 * 86400))  # 7 Tage
@@ -1031,7 +1031,7 @@ module_git_repos() {
     if [ -f "$repo_cache" ]; then
         local cache_age=$(( $(date +%s) - $(stat -f%m "$repo_cache" 2>/dev/null || echo 0) ))
         if [ "$cache_age" -lt "$cache_max_age" ]; then
-            # Cache gueltig - nur pruefen ob Pfade noch existieren
+            # Cache valid - only checking ob Pfade still existieren
             while IFS= read -r gitdir; do
                 [ -d "$gitdir" ] && echo "$gitdir"
             done < "$repo_cache" > "$repo_list"
@@ -1057,9 +1057,9 @@ module_git_repos() {
 
     repos_found=$(wc -l < "$repo_list")
     repos_found=${repos_found##* }
-    log INFO "   ${repos_found} Repos gefunden"
+    log INFO "   ${repos_found} Repos found"
 
-    # ── [1/2] Unpushed Repos finden und pushen ──
+    # ── [1/2] Unpushed Repos finden and pushen ──
     log STEP "   [1/2] Unpushed Repos synchronisieren..."
     local repos_pushed=0
     local repos_dirty=0
@@ -1071,18 +1071,18 @@ module_git_repos() {
         local repo_dir=$(dirname "$gitdir")
         local repo_name=$(basename "$repo_dir")
 
-        # Fix #105/#115: timeout 5 vor ALLE git-Befehle (auch "lokale" koennen auf iCloud-Repos haengen)
-        # Fix #115: KEIN Pipe nach timeout — head -1 frisst den Exit-Code 124
+        # Fix #105/#115: timeout 5 before ALLE git-Commande (also "lokale" koennen auf iCloud-Repos haengen)
+        # Fix #115: KEIN Pipe after timeout — head -1 frisst den Exit-Code 124
         local remote
         remote=$(timeout 5 git -C "$repo_dir" remote 2>/dev/null)
         if [ $? -eq 124 ]; then
-            log WARN "     ${repo_name}: TIMEOUT bei git remote"
+            log WARN "     ${repo_name}: TIMEOUT on git remote"
             continue
         fi
-        # Nur erste Zeile verwenden (falls mehrere Remotes)
+        # Nur erste Zeile verwenden (falls moreere Remotes)
         remote=$(echo "$remote" | head -1)
         if [ -z "$remote" ]; then
-            log STEP "     ${repo_name}: kein Remote, uebersprungen"
+            log STEP "     ${repo_name}: no remote, skipped"
             continue
         fi
 
@@ -1090,7 +1090,7 @@ module_git_repos() {
         branch=$(timeout 5 git -C "$repo_dir" symbolic-ref --short HEAD 2>/dev/null)
         [ -z "$branch" ] && continue
 
-        # Fix #107: git status --porcelain einmal cachen statt 2x aufrufen
+        # Fix #107: git status --porcelain einmal cachen instead of 2x aufrufen
         local dirty_output
         dirty_output=$(timeout 5 git -C "$repo_dir" status --porcelain 2>/dev/null)
         if [ -n "$dirty_output" ]; then
@@ -1103,10 +1103,10 @@ module_git_repos() {
                 local commit_msg="[meister] auto-commit: ${dirty_count} changes in ${repo_name}"
                 timeout 10 git -C "$repo_dir" add -A 2>/dev/null
                 if timeout 10 git -C "$repo_dir" commit -m "$commit_msg" 2>/dev/null; then
-                    log FIX "     ${repo_name}: Auto-Commit erfolgreich"
+                    log FIX "     ${repo_name}: Auto-Commit successful"
                     repos_autocommitted=$((repos_autocommitted + 1))
                 else
-                    log WARN "     ${repo_name}: Auto-Commit fehlgeschlagen"
+                    log WARN "     ${repo_name}: Auto-Commit failed"
                     repos_dirty=$((repos_dirty + 1))
                 fi
             else
@@ -1114,7 +1114,7 @@ module_git_repos() {
             fi
         fi
 
-        # Fix #105: Upstream-Check mit timeout (kann Netzwerk brauchen)
+        # Fix #105: Upstream-Check mit timeout (kann Network brauchen)
         local upstream
         upstream=$(timeout 5 git -C "$repo_dir" rev-parse --abbrev-ref "${branch}@{upstream}" 2>/dev/null)
         if [ -z "$upstream" ]; then
@@ -1135,32 +1135,32 @@ module_git_repos() {
             if $GIT_AUTO_PUSH; then
                 log STEP "     ${repo_name}: ${unpushed} Commits pushen (${branch} -> ${remote})..."
                 local push_output
-                # Fix #105: Push mit timeout 30 (braucht mehr Zeit als Check)
+                # Fix #105: Push mit timeout 30 (braucht more Zeit als Check)
                 push_output=$(run_or_dry timeout 30 git -C "$repo_dir" push "$remote" "$branch" 2>&1)
                 local push_rc=$?
                 if [ $push_rc -eq 0 ]; then
-                    log FIX "     ${repo_name}: ${unpushed} Commits erfolgreich gepusht"
+                    log FIX "     ${repo_name}: ${unpushed} Commits successful pushed"
                     repos_pushed=$((repos_pushed + 1))
                 elif [ $push_rc -eq 124 ]; then
                     log ERROR "     ${repo_name}: Push Timeout (>30s)"
                 else
-                    log ERROR "     ${repo_name}: Push fehlgeschlagen"
+                    log ERROR "     ${repo_name}: Push failed"
                     [ -n "$push_output" ] && log STEP "       $(echo "$push_output" | tail -1)"
                 fi
             else
-                log WARN "     ${repo_name}: ${unpushed} unpushed Commits (${branch}) [-G zum Pushen]"
+                log WARN "     ${repo_name}: ${unpushed} unpushed commits (${branch}) [-G to push]"
             fi
         fi
     done < "$repo_list"
 
-    log INFO "   Push-Ergebnis: ${repos_pushed} gepusht, ${repos_unpushed} hatten Aenderungen, ${repos_dirty} dirty, ${repos_autocommitted} auto-committed"
-    [ "$repos_pushed" -gt 0 ] && report_add FIX "Git: ${repos_pushed} Repos gepusht"
+    log INFO "   Push-Result: ${repos_pushed} pushed, ${repos_unpushed} hasten Changes, ${repos_dirty} dirty, ${repos_autocommitted} auto-committed"
+    [ "$repos_pushed" -gt 0 ] && report_add FIX "Git: ${repos_pushed} Repos pushed"
     [ "$repos_autocommitted" -gt 0 ] && report_add FIX "Git: ${repos_autocommitted} Repos auto-committed"
     [ "$repos_dirty" -gt 0 ] && log INFO "   Git: ${repos_dirty} Repos mit uncommitted changes"
     [ "$repos_unpushed" -gt "$repos_pushed" ] && \
-        log INFO "   Git: $((repos_unpushed - repos_pushed)) Repos noch unpushed"
+        log INFO "   Git: $((repos_unpushed - repos_pushed)) repos still unpushed"
 
-    # iCloud Git Backup entfernt (v0.09): Git Repos gehoeren auf GitHub, nicht in iCloud.
+    # iCloud Git Backup removed (v0.09): Git repos gehoeren auf GitHub, not in iCloud.
     # iCloud + .git = Sync-Konflikte, Lock-Files, kaputte Repos.
 
     rm -f "$repo_list"
@@ -1169,8 +1169,8 @@ module_git_repos() {
 # ── CLAMAV (Fix #15: bessere Excludes) ──
 
 # Fix #147: ClamAV durch macOS-Bordmittel ersetzt (XProtect, Gatekeeper, MRT)
-# ClamAV duplizierte nur was macOS seit Ventura nativ macht, brauchte 20+ Minuten,
-# hatte staendig Permission-Probleme und fand praktisch nie was Neues.
+# ClamAV duplizierte only was macOS seit Ventura nativ macht, brauchte 20+ Minuten,
+# haste staendig Permission-Probleme and fand praktisch nie was Neues.
 module_xprotect() {
     log INFO "macOS Security Check (XProtect/Gatekeeper/MRT)..."
     local issues=0
@@ -1184,30 +1184,30 @@ module_xprotect() {
         log ERROR "   Gatekeeper: DEAKTIVIERT!"
         issues=$((issues + 1))
         if ! $DRY_RUN; then
-            sudo spctl --master-enable 2>/dev/null && log FIX "   Gatekeeper reaktiviert" && \
-                report_add FIX "Gatekeeper reaktiviert"
+            sudo spctl --master-enable 2>/dev/null && log FIX "   Gatekeeper reenabled" && \
+                report_add FIX "Gatekeeper reenabled"
         fi
     fi
 
-    # 2. XProtect-Version und Aktualitaet
+    # 2. XProtect-Version and Aktualitaet
     local xp_bundle="/Library/Apple/System/Library/CoreServices/XProtect.bundle"
     if [ -d "$xp_bundle" ]; then
         local xp_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$xp_bundle/Contents/Info.plist" 2>/dev/null)
         log STEP "   XProtect: Version ${xp_version:-unbekannt}"
 
-        # Alter der Signaturen pruefen
+        # Alter der Signaturen checking
         local xp_mod=$(stat -f %m "$xp_bundle/Contents/Resources/XProtect.yara" 2>/dev/null || echo 0)
         local now=$(date +%s)
         local xp_age_days=$(( (now - xp_mod) / 86400 ))
         if [ "$xp_age_days" -gt 14 ]; then
-            log WARN "   XProtect-Signaturen: ${xp_age_days} Tage alt (>14)"
+            log WARN "   XProtect-Signaturen: ${xp_age_days} days old (>14)"
             issues=$((issues + 1))
-            log INFO "   XProtect-Signaturen ${xp_age_days} Tage alt"
+            log INFO "   XProtect-Signaturen ${xp_age_days} days old"
         else
-            log STEP "   XProtect-Signaturen: ${xp_age_days} Tage alt (OK)"
+            log STEP "   XProtect-Signaturen: ${xp_age_days} days old (OK)"
         fi
     else
-        log ERROR "   XProtect-Bundle nicht gefunden!"
+        log ERROR "   XProtect bundle not found!"
         issues=$((issues + 1))
         report_add ERROR "XProtect-Bundle fehlt"
     fi
@@ -1218,15 +1218,15 @@ module_xprotect() {
         local xpr_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$xpr_dir/Contents/Info.plist" 2>/dev/null)
         log STEP "   XProtect Remediator: Version ${xpr_version:-unbekannt}"
 
-        # Letzter Scan via XProtect Remediator
+        # Last Scan via XProtect Remediator
         local xpr_last=$(log show --predicate 'subsystem == "com.apple.XProtectFramework"' --last 24h --style compact 2>/dev/null | tail -1)
         if [ -n "$xpr_last" ]; then
-            log STEP "   XProtect Remediator: Scan in letzten 24h gefunden"
+            log STEP "   XProtect Remediator: Scan in letzten 24h found"
         else
-            log STEP "   XProtect Remediator: kein Scan in letzten 24h (normal bei niedrigem Risiko)"
+            log STEP "   XProtect Remediator: no scan in last 24h (normal at low risk)"
         fi
     else
-        log WARN "   XProtect Remediator nicht vorhanden (macOS < Ventura?)"
+        log WARN "   XProtect Remediator not present (macOS < Ventura?)"
     fi
 
     # 4. MRT (Malware Removal Tool)
@@ -1235,7 +1235,7 @@ module_xprotect() {
         local mrt_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$mrt_path/Contents/Info.plist" 2>/dev/null)
         log STEP "   MRT: Version ${mrt_version:-unbekannt}"
     else
-        log STEP "   MRT: nicht vorhanden (durch XProtect Remediator ersetzt)"
+        log STEP "   MRT: not present (replaced by XProtect Remediator)"
     fi
 
     # 5. SIP (System Integrity Protection)
@@ -1246,7 +1246,7 @@ module_xprotect() {
     else
         log ERROR "   SIP: DEAKTIVIERT!"
         issues=$((issues + 1))
-        report_add ERROR "SIP deaktiviert - Sicherheitsrisiko!"
+        report_add ERROR "SIP disabled - Securitysrisiko!"
     fi
 
     # 6. Firewall
@@ -1255,11 +1255,11 @@ module_xprotect() {
     if echo "$fw_status" | grep -q "enabled"; then
         log STEP "   Firewall: aktiv"
     else
-        log WARN "   Firewall: deaktiviert"
+        log WARN "   Firewall: disabled"
         if ! $DRY_RUN; then
             sudo -n /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on 2>/dev/null && \
-                log FIX "   Firewall aktiviert" && \
-                report_add FIX "macOS Firewall aktiviert"
+                log FIX "   Firewall enabled" && \
+                report_add FIX "macOS Firewall enabled"
         fi
     fi
 
@@ -1285,9 +1285,9 @@ module_persistence_audit() {
 
     # Bekannte Apple/System Bundle-IDs (Whitelist)
     local apple_pattern="^com\.apple\."
-    local known_safe="com.meister|com.google.keystone|com.microsoft|com.docker|com.parallels|com.adobe|com.spotify|com.dropbox|com.1password|com.jetbrains|com.brew|homebrew|com.valvesoftware|com.jamf|com.nordvpn|com.bluebubbles|com.gytpol"
+    local known_safe="com.meister|com.google.keystone|com.microsoft|com.docker|com.parallls|com.adobe|com.spotify|com.dropbox|com.1password|com.jetbrains|com.brew|homebrew|com.valvesoftware|com.jamf|com.nordvpn|com.bluebubbles|com.gytpol"
 
-    # Alle LaunchAgent/Daemon Verzeichnisse pruefen
+    # All LaunchAgent/Daemon Directories checking
     local -a plist_dirs=(
         "$HOME/Library/LaunchAgents"
         "/Library/LaunchAgents"
@@ -1296,7 +1296,7 @@ module_persistence_audit() {
 
     for plist_dir in "${plist_dirs[@]}"; do
         [ ! -d "$plist_dir" ] && continue
-        log STEP "   Pruefe: $plist_dir"
+        log STEP "   Checking: $plist_dir"
 
         while IFS= read -r -d '' plist; do
             total_checked=$((total_checked + 1))
@@ -1304,17 +1304,17 @@ module_persistence_audit() {
             local label=""
             local program=""
 
-            # Label und ProgramArguments extrahieren
+            # Label and ProgramArguments extrahieren
             label=$(/usr/libexec/PlistBuddy -c "Print :Label" "$plist" 2>/dev/null)
             program=$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$plist" 2>/dev/null)
             [ -z "$program" ] && program=$(/usr/libexec/PlistBuddy -c "Print :Program" "$plist" 2>/dev/null)
 
-            # Apple-eigene ueberspringen
+            # Skip Apple-owned
             if [[ "$label" =~ $apple_pattern ]]; then
                 continue
             fi
 
-            # Bekannte sichere ueberspringen
+            # Skip known safe
             if echo "$label" | grep -qE "$known_safe"; then
                 continue
             fi
@@ -1326,15 +1326,15 @@ module_persistence_audit() {
                 issues="${issues}Binary fehlt ($program); "
             fi
 
-            # Check 2: Binary an verdaechtigem Ort?
+            # Check 2: Binary an suspiciousem Ort?
             if [ -n "$program" ]; then
                 case "$program" in
                     /tmp/*|/var/tmp/*|/private/tmp/*)
-                        issues="${issues}Binary in /tmp (verdaechtig); " ;;
+                        issues="${issues}Binary in /tmp (suspicious); " ;;
                     "$HOME"/.*/*|"$HOME"/.*)
-                        # Versteckter Pfad - nur warnen wenn nicht bekannt
+                        # Versteckter Pfad - only warnen wenn not bekannt
                         if ! echo "$program" | grep -qE "\.(claude|ollama|nvm|npm|cargo|rustup|docker)/"; then
-                            issues="${issues}Binary in verstecktem Ordner; "
+                            issues="${issues}Binary in verstecktem Folder; "
                         fi ;;
                 esac
             fi
@@ -1348,7 +1348,7 @@ module_persistence_audit() {
                 fi
             fi
 
-            # Check 4: Plist enthaelt verdaechtige Inhalte
+            # Check 4: Plist enthaelt suspiciouse Inhalte
             local plist_content=$(cat "$plist" 2>/dev/null)
             if echo "$plist_content" | grep -qE 'curl.*\|.*sh|wget.*\|.*sh|base64.*decode'; then
                 issues="${issues}VERDAECHTIG: Download+Execute Pattern; "
@@ -1357,10 +1357,10 @@ module_persistence_audit() {
                 issues="${issues}VERDAECHTIG: Cryptominer-Referenz; "
             fi
 
-            # Check 5: Plist-Signatur pruefen (Code-Signing)
+            # Check 5: Plist-Signatur checking (Code-Signing)
             if [ -n "$program" ] && [ -f "$program" ]; then
                 if ! codesign -v "$program" 2>/dev/null; then
-                    issues="${issues}Binary nicht signiert; "
+                    issues="${issues}Binary not signed; "
                 fi
             fi
 
@@ -1376,11 +1376,11 @@ module_persistence_audit() {
     done
 
     if [ "$suspicious" -gt 0 ]; then
-        log INFO "   Persistence-Audit: ${suspicious}/${total_checked} Eintraege geprueft (siehe Log)"
+        log INFO "   Persistence-Audit: ${suspicious}/${total_checked} entries checked (see log)"
     else
-        report_add SUCCESS "Persistence-Audit: ${total_checked} Eintraege geprueft, alle OK"
+        report_add SUCCESS "Persistence-Audit: ${total_checked} entries checked, all OK"
     fi
-    log INFO "   ${total_checked} Plists geprueft, ${suspicious} verdaechtig"
+    log INFO "   ${total_checked} plists checked, ${suspicious} suspicious"
 }
 
 # ── [148] TCC-AUDIT (Datenschutz-Berechtigungen) ──
@@ -1395,20 +1395,20 @@ module_tcc_audit() {
     local system_tcc="/Library/Application Support/com.apple.TCC/TCC.db"
 
     # Berechtigungs-Typen die kritisch sind
-    # kTCCServiceAccessibility = kann Tastatur/Maus steuern
+    # kTCCServiceAccessibility = kann Tastatur/Mfrom steuern
     # kTCCServiceSystemPolicyAllFiles = Full Disk Access
     # kTCCServiceScreenCapture = Bildschirm aufnehmen
     # kTCCServiceMicrophone = Mikrofon
     # kTCCServiceCamera = Kamera
-    # kTCCServiceSystemPolicySysAdminFiles = System-Admin-Dateien
+    # kTCCServiceSystemPolicySysAdminFiles = System-Admin-Files
 
     local -a critical_services=(
-        "kTCCServiceAccessibility:Bedienungshilfen (kann Tastatur/Maus steuern)"
+        "kTCCServiceAccessibility:Bedienungshilfen (kann Tastatur/Mfrom steuern)"
         "kTCCServiceSystemPolicyAllFiles:Full Disk Access"
         "kTCCServiceScreenCapture:Bildschirmaufnahme"
         "kTCCServiceMicrophone:Mikrofon"
         "kTCCServiceCamera:Kamera"
-        "kTCCServiceSystemPolicySysAdminFiles:System-Admin-Dateien"
+        "kTCCServiceSystemPolicySysAdminFiles:System-Admin-Files"
         "kTCCServiceAppleEvents:Apple Events (Fernsteuerung)"
     )
 
@@ -1420,7 +1420,7 @@ module_tcc_audit() {
             local service="${service_entry%%:*}"
             local service_name="${service_entry#*:}"
 
-            # Alle Apps mit dieser Berechtigung abfragen (allowed=1)
+            # All Apps mit dieser Berechtigung abfragen (allowed=1)
             local apps
             apps=$(sqlite3 "$user_tcc" \
                 "SELECT client FROM access WHERE service='$service' AND auth_value=2;" 2>/dev/null)
@@ -1432,19 +1432,19 @@ module_tcc_audit() {
                     [ -z "$app" ] && continue
                     local app_short=$(echo "$app" | sed 's|.*/||')
 
-                    # Pruefen ob die App noch installiert ist
+                    # Checkingn ob die App still installed ist
                     local app_exists=true
                     if [[ "$app" == /* ]] && [ ! -e "$app" ]; then
                         app_exists=false
                     elif [[ "$app" == com.* ]]; then
-                        # Bundle-ID - pruefen ob App existiert
+                        # Bundle-ID - checking ob App existiert
                         if ! mdfind "kMDItemCFBundleIdentifier == '$app'" 2>/dev/null | grep -q .; then
                             app_exists=false
                         fi
                     fi
 
                     if ! $app_exists; then
-                        log WARN "     VERWAIST: $app_short hat ${service_name} aber ist nicht mehr installiert!"
+                        log WARN "     ORPHANED: $app_short has ${service_name} but is no longer installed!"
                         tcc_findings=$((tcc_findings + 1))
                     else
                         log STEP "     $app_short"
@@ -1453,15 +1453,15 @@ module_tcc_audit() {
             fi
         done
     else
-        log WARN "   User-TCC-Datenbank nicht lesbar (kein Full Disk Access?)"
+        log WARN "   User TCC database not readable (no Full Disk Access?)"
         tcc_findings=$((tcc_findings + 1))
         if $SELFHEAL_FDA_OPEN && ! $DRY_RUN; then
-            log HEAL "   Oeffne Datenschutz-Einstellungen..."
+            log HEAL "   Oeffne Datenschutz-Settings..."
             open "x-apple.systempreferences:com.apple.preference.security?Privacy" 2>/dev/null
         fi
     fi
 
-    # System-TCC pruefen (braucht root oder FDA)
+    # System-TCC checking (braucht root or FDA)
     if [ -f "$system_tcc" ] && [ -r "$system_tcc" ]; then
         log STEP "   Lese System-Berechtigungen..."
         local fda_apps
@@ -1476,13 +1476,13 @@ module_tcc_audit() {
             done
         fi
     else
-        log STEP "   System-TCC: nicht lesbar (braucht sudo/FDA) - uebersprungen"
+        log STEP "   System TCC: not readable (needs sudo/FDA) - skipped"
     fi
 
     if [ "$tcc_findings" -gt 0 ]; then
         log INFO "   TCC-Audit: ${tcc_findings} Eintraege (siehe Log)"
     else
-        report_add SUCCESS "TCC-Audit: alle Berechtigungen aktuell und gueltig"
+        report_add SUCCESS "TCC-Audit: all permissions current and valid"
     fi
 }
 
@@ -1492,8 +1492,8 @@ module_security_suite() {
     log INFO "Meister Security Suite..."
 
     module_xprotect
-    $SECURITY_PERSISTENCE_AUDIT && module_persistence_audit || log STEP "   Persistence-Audit: deaktiviert (Config)"
-    $SECURITY_TCC_AUDIT && module_tcc_audit || log STEP "   TCC-Audit: deaktiviert (Config)"
+    $SECURITY_PERSISTENCE_AUDIT && module_persistence_audit || log STEP "   Persistence-Audit: disabled (Config)"
+    $SECURITY_TCC_AUDIT && module_tcc_audit || log STEP "   TCC-Audit: disabled (Config)"
 
     log INFO "Security Suite abgeschlossen"
 }
@@ -1502,67 +1502,67 @@ module_security_suite() {
 
 module_system() {
     log INFO "macOS System-Update Pruefung..."
-    log STEP "   Pruefe softwareupdate..."
+    log STEP "   Checking softwareupdate..."
     local sysup=$(softwareupdate -l 2>&1)
 
     if echo "$sysup" | grep -q "No new software"; then
-        log INFO "   macOS ist aktuell"
+        log INFO "   macOS ist current"
         report_add SUCCESS "macOS is up to date"
     else
         local update_count=$(echo "$sysup" | grep -c "^\*" 2>/dev/null || echo "?")
-        log WARN "   ${update_count} macOS Updates verfuegbar:"
+        log WARN "   ${update_count} macOS Updates available:"
         echo "$sysup" | grep "^\*\|Label\|Title" | while IFS= read -r line; do
             log STEP "     $line"
         done
 
-        # Fix #26: Recommended Updates automatisch installieren (kein Restart)
+        # Fix #26: Recommended Updates automatisch installieren (no Restart)
         local has_restart=$(echo "$sysup" | grep -ci "restart" 2>/dev/null || echo 0)
         local has_recommended=$(echo "$sysup" | grep -ci "Recommended: YES" 2>/dev/null || echo 0)
 
         if [ "$has_recommended" -gt 0 ] && [ "$has_restart" -eq 0 ] && $NEEDS_SUDO; then
-            log INFO "   Installiere empfohlene Updates (kein Restart noetig)..."
+            log INFO "   Installing recommended updates (no restart needed)..."
             run_verbose sudo softwareupdate --install --recommended --agree-to-license
             if [ $? -eq 0 ]; then
-                report_add FIX "macOS Recommended Updates installiert"
+                report_add FIX "macOS Recommended Updates installed"
             else
-                log INFO "   macOS Update Installation fehlgeschlagen (manuell via Systemeinstellungen)"
+                log INFO "   macOS Update Installation failed (manual via Systemeinstellungen)"
             fi
         elif [ "$has_recommended" -gt 0 ] && [ "$has_restart" -eq 0 ]; then
-            log WARN "   Empfohlene Updates verfuegbar (sudo noetig: -S oder -a)"
-            log INFO "   macOS Update verfuegbar (sudo noetig)"
+            log WARN "   Empfohlene Updates available (sudo needed: -S or -a)"
+            log INFO "   macOS Update available (sudo needed)"
         elif [ "$has_restart" -gt 0 ]; then
-            log WARN "   Updates benoetigen Restart - ueberspringe Auto-Install"
-            log INFO "   macOS Update verfuegbar (Restart noetig)"
+            log WARN "   Updates need restart - skipping auto-install"
+            log INFO "   macOS Update available (Restart needed)"
         else
-            log INFO "   macOS Update verfuegbar ($update_count)"
+            log INFO "   macOS Update available ($update_count)"
         fi
     fi
 
     # Disk-Usage Check
     local disk_pct=$(df -h / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
     local disk_free=$(df -h / | awk 'NR==2 {print $4}')
-    log INFO "   Disk: ${disk_pct}% belegt, ${disk_free} frei"
+    log INFO "   Disk: ${disk_pct}% used, ${disk_free} free"
     if [ "$disk_pct" -gt "$DISK_USAGE_THRESHOLD" ] 2>/dev/null; then
-        log WARN "   Disk-Usage ueber ${DISK_USAGE_THRESHOLD}%!"
+        log WARN "   Disk usage above ${DISK_USAGE_THRESHOLD}%!"
         log INFO "   Disk usage: ${disk_pct}% (>${DISK_USAGE_THRESHOLD}%)"
     fi
 }
 
 module_cleanup() {
-    log INFO "Bereinigung..."
+    log INFO "Cleanup..."
 
     if $CLEAN_XCODE; then
         local xcpath="$HOME/Library/Developer/Xcode/DerivedData"
         if [ -d "$xcpath" ]; then
             local xc_size=$(du -sh "$xcpath" 2>/dev/null | awk '{print $1}')
-            log INFO "   Loesche Xcode DerivedData ($xc_size)..."
+            log INFO "   Deleting Xcode DerivedData ($xc_size)..."
             run_or_dry rm -rf "$xcpath"
             report_add FIX "Deleted Xcode DerivedData ($xc_size)"
         else
-            log INFO "   Kein Xcode DerivedData vorhanden"
+            log INFO "   No Xcode DerivedData present"
         fi
     else
-        log STEP "   Xcode clean: nicht noetig (DerivedData < ${AUTO_XCODE_THRESHOLD_MB}MB)"
+        log STEP "   Xcode clean: not needed (DerivedData < ${AUTO_XCODE_THRESHOLD_MB}MB)"
     fi
 
     if $EMPTY_TRASH; then
@@ -1571,40 +1571,40 @@ module_cleanup() {
         run_or_dry rm -rf "$HOME/.Trash"/*
         report_add FIX "Emptied Trash ($trash_count items)"
     else
-        log STEP "   Papierkorb: nicht noetig (< ${AUTO_TRASH_THRESHOLD_ITEMS} Elemente)"
+        log STEP "   Papierkorb: not needed (< ${AUTO_TRASH_THRESHOLD_ITEMS} Elemente)"
     fi
 
     if $CLEAN_CACHES; then
         local cache_size=$(du -sh "$HOME/Library/Caches" 2>/dev/null | awk '{print $1}')
-        log INFO "   Loesche User Caches ($cache_size)..."
+        log INFO "   Deleting User Caches ($cache_size)..."
         run_or_dry rm -rf "$HOME/Library/Caches"/*
         report_add FIX "Cleaned User Caches ($cache_size)"
         if $NEEDS_SUDO; then
-            log INFO "   Loesche System Caches (sudo)..."
+            log INFO "   Deleting System Caches (sudo)..."
             run_or_dry sudo rm -rf /Library/Caches/* /System/Library/Caches/* /private/var/tmp/*
             report_add FIX "Cleaned System Caches"
         fi
     else
-        log STEP "   Cache clean: nicht noetig (< ${AUTO_CACHE_THRESHOLD_MB}MB)"
+        log STEP "   Cache clean: not needed (< ${AUTO_CACHE_THRESHOLD_MB}MB)"
     fi
 
     if $LIST_LARGE_FILES; then
-        log INFO "   Suche Dateien groesser ${LARGE_FILE_SIZE_MB}MB..."
+        log INFO "   Suche Files groesser ${LARGE_FILE_SIZE_MB}MB..."
         local large_files=$(find "$HOME" -xdev -type f -size +${LARGE_FILE_SIZE_MB}M -print0 2>/dev/null | xargs -0 ls -lh 2>/dev/null | awk '{print $5, $9}')
         if [ -n "$large_files" ]; then
             local lf_count=$(( $(echo "$large_files" | wc -l) ))
-            log INFO "   ${lf_count} grosse Dateien gefunden:"
+            log INFO "   ${lf_count} grosse Files found:"
             echo "$large_files" | head -10 | while IFS= read -r line; do
                 log STEP "     $line"
             done
-            [ "$lf_count" -gt 10 ] && log STEP "     ... und $((lf_count - 10)) weitere (siehe Log)"
+            [ "$lf_count" -gt 10 ] && log STEP "     ... and $((lf_count - 10)) weitere (siehe Log)"
             echo "$large_files" >> "$LOGFILE"
         else
-            log INFO "   Keine Dateien groesser ${LARGE_FILE_SIZE_MB}MB"
+            log INFO "   No Files groesser ${LARGE_FILE_SIZE_MB}MB"
         fi
         report_add SUCCESS "Large files logged"
     else
-        log STEP "   Grosse Dateien: nicht noetig (Disk < ${DISK_USAGE_THRESHOLD}%)"
+        log STEP "   Large files: not needed (Disk < ${DISK_USAGE_THRESHOLD}%)"
     fi
 }
 
@@ -1621,12 +1621,12 @@ module_deepclean() {
     local user_log_size=$(du -sm "$HOME/Library/Logs" 2>/dev/null | awk '{print $1}')
     [ -z "$user_log_size" ] && user_log_size=0
     if [ "$user_log_size" -gt 50 ]; then
-        log INFO "   User-Logs: ${user_log_size} MB - raeume auf..."
+        log INFO "   User-Logs: ${user_log_size} MB - cleaning up..."
         run_or_dry find "$HOME/Library/Logs" -type f -mtime +30 -delete
         local new_size=$(du -sm "$HOME/Library/Logs" 2>/dev/null | awk '{print $1}')
         [ -z "$new_size" ] && new_size=0
         local freed=$((user_log_size - new_size))
-        [ "$freed" -gt 0 ] && { total_freed=$((total_freed + freed)); log FIX "   ${freed} MB User-Logs bereinigt"; }
+        [ "$freed" -gt 0 ] && { total_freed=$((total_freed + freed)); log FIX "   ${freed} MB User-Logs cleaned up"; }
     else
         log STEP "   User-Logs: ${user_log_size} MB (OK)"
     fi
@@ -1634,18 +1634,18 @@ module_deepclean() {
         local sys_log_size=$(sudo du -sm /private/var/log 2>/dev/null | awk '{print $1}')
         [ -z "$sys_log_size" ] && sys_log_size=0
         if [ "$sys_log_size" -gt 200 ]; then
-            log INFO "   System-Logs: ${sys_log_size} MB - raeume auf..."
+            log INFO "   System-Logs: ${sys_log_size} MB - cleaning up..."
             run_or_dry sudo find /private/var/log -type f -name "*.log" -mtime +30 -delete
             run_or_dry sudo rm -rf /private/var/log/asl/*.asl 2>/dev/null
             local freed_sys=$((sys_log_size - $(sudo du -sm /private/var/log 2>/dev/null | awk '{print $1}')))
-            [ "$freed_sys" -gt 0 ] 2>/dev/null && { total_freed=$((total_freed + freed_sys)); log FIX "   ${freed_sys} MB System-Logs bereinigt"; }
+            [ "$freed_sys" -gt 0 ] 2>/dev/null && { total_freed=$((total_freed + freed_sys)); log FIX "   ${freed_sys} MB System-Logs cleaned up"; }
         else
             log STEP "   System-Logs: ${sys_log_size} MB (OK)"
         fi
     fi
 
     # Fix #55: DMG/PKG/ZIP in Downloads (>30 Tage)
-    log STEP "   [2/14] Downloads aufraeumen..."
+    log STEP "   [2/14] Clean up downloads..."
     local dl_junk_count=0
     local dl_junk_size=0
     while IFS= read -r f; do
@@ -1656,21 +1656,21 @@ module_deepclean() {
     done < <(find "$HOME/Downloads" -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.pkg" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.iso" \) -mtime +30 2>/dev/null)
     if [ "$dl_junk_count" -gt 0 ]; then
         local dl_mb=$((dl_junk_size / 1048576))
-        log INFO "   ${dl_junk_count} alte Installer in Downloads (${dl_mb} MB, >30 Tage)"
+        log INFO "   ${dl_junk_count} alte Installr in Downloads (${dl_mb} MB, >30 Tage)"
         run_or_dry find "$HOME/Downloads" -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.pkg" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.iso" \) -mtime +30 -delete
         total_freed=$((total_freed + dl_mb))
-        report_add FIX "Downloads: ${dl_junk_count} alte Installer geloescht (${dl_mb} MB)"
+        report_add FIX "Downloads: ${dl_junk_count} alte Installr deleted (${dl_mb} MB)"
     else
-        log STEP "   Downloads: keine alten Installer"
+        log STEP "   Downloads: no alten Installr"
     fi
 
-    # Fix #56/#85: Orphaned Preferences - Batch-mdfind statt einzeln (~50-100s gespart)
+    # Fix #56/#85: Orphaned Preferences - Batch-mdfind instead of einzeln (~50-100s gespart)
     # Fix #126: Self-Healing - Backup + Auto-Delete
     log STEP "   [3/14] Orphaned Preferences..."
     local orphan_count=0
     local installed_ids_file=$(mktemp)
     local orphan_list_file=$(mktemp)
-    # Alle installierten Bundle-IDs in EINEM mdfind+mdls Aufruf sammeln
+    # All installeden Bundle-IDs in EINEM mdfind+mdls Aufruf sammeln
     mdfind "kMDItemContentType == 'com.apple.application-bundle'" 2>/dev/null | \
         xargs mdls -name kMDItemCFBundleIdentifier 2>/dev/null | \
         awk -F'"' '/kMDItemCFBundleIdentifier/ && $2 != "" {print $2}' | \
@@ -1678,12 +1678,12 @@ module_deepclean() {
     for plist in "$HOME/Library/Preferences"/*.plist; do
         [ ! -f "$plist" ] && continue
         local bundle_id=$(basename "$plist" .plist)
-        # System-Prefs und Apple-eigene ueberspringen
+        # Skip system prefs and Apple-owned
         [[ "$bundle_id" == com.apple.* ]] && continue
         [[ "$bundle_id" == Apple.* ]] && continue
         [[ "$bundle_id" == loginwindow ]] && continue
         [[ "$bundle_id" == com.meister* ]] && continue
-        # Fix #85: Pruefen gegen gecachte Bundle-ID-Liste (grep statt mdfind pro Plist)
+        # Fix #85: Checkingn gegen gecachte Bundle-ID-Liste (grep instead of mdfind pro Plist)
         if ! grep -qxF "$bundle_id" "$installed_ids_file" 2>/dev/null; then
             orphan_count=$((orphan_count + 1))
             echo "$plist" >> "$orphan_list_file"
@@ -1692,7 +1692,7 @@ module_deepclean() {
     done
     rm -f "$installed_ids_file"
     if [ "$orphan_count" -gt 0 ]; then
-        log INFO "   ${orphan_count} verwaiste Preferences gefunden"
+        log INFO "   ${orphan_count} orphaned Preferences found"
         if $SELFHEAL_ORPHAN_PREFS && ! $DRY_RUN; then
             # Backup erstellen
             local backup_dir="$MEISTER_DIR/backups/prefs_$(date +%Y%m%d)"
@@ -1703,18 +1703,18 @@ module_deepclean() {
                 cp "$orphan_plist" "$backup_dir/" 2>/dev/null
                 rm -f "$orphan_plist" 2>/dev/null && deleted=$((deleted + 1))
             done < "$orphan_list_file"
-            log FIX "   ${deleted} verwaiste Preferences geloescht (Backup: $backup_dir)"
-            report_add FIX "Deepclean: ${deleted} verwaiste Preferences geloescht (Backup in ~/.meister/backups/)"
+            log FIX "   ${deleted} orphaned Preferences deleted (Backup: $backup_dir)"
+            report_add FIX "Deepclean: ${deleted} orphaned Preferences deleted (Backup in ~/.meister/backups/)"
         else
-            log STEP "   ${orphan_count} verwaiste Preferences (werden bei naechstem Lauf geloescht)"
+            log STEP "   ${orphan_count} orphaned Preferences (werden at naechstem Lauf deleted)"
         fi
     else
-        log STEP "   Keine verwaisten Preferences"
+        log STEP "   No orphanedn Preferences"
     fi
     rm -f "$orphan_list_file"
 
-    # Fix #82: Broken Plists erkennen (parallelisiert)
-    # Apple-eigene Plists (com.apple.*) werden ignoriert - Apple repariert die selbst
+    # Fix #82: Broken Plists erkennen (paralllisiert)
+    # Apple-eigene Plists (com.apple.*) werden ignoriert - Apple repaired die selbst
     log STEP "   [4/14] Broken Plists..."
     local broken_user=0
     local broken_list
@@ -1724,11 +1724,11 @@ module_deepclean() {
         while IFS= read -r bp; do
             [ -z "$bp" ] && continue
             broken_user=$((broken_user + 1))
-            [ "$broken_user" -le 10 ] && log WARN "   Defekt: $bp"
+            [ "$broken_user" -le 10 ] && log WARN "   Broken: $bp"
         done <<< "$broken_list"
-        [ "$broken_user" -gt 0 ] && log INFO "   ${broken_user} defekte Plists (non-Apple, siehe Log)"
+        [ "$broken_user" -gt 0 ] && log INFO "   ${broken_user} broken Plists (non-Apple, siehe Log)"
     else
-        log STEP "   Alle Plists OK"
+        log STEP "   All Plists OK"
     fi
 
     # Fix #59: Screenshots aufraumen (Desktop + Schreibtisch, >30 Tage)
@@ -1751,9 +1751,9 @@ module_deepclean() {
             run_or_dry find "$dir" -maxdepth 1 -type f \( -name "Screenshot*" -o -name "Bildschirmfoto*" -o -name "Screen Shot*" \) -mtime +30 -delete
         done
         total_freed=$((total_freed + screenshot_mb))
-        report_add FIX "Screenshots: ${screenshot_count} geloescht (${screenshot_mb} MB)"
+        report_add FIX "Screenshots: ${screenshot_count} deleted (${screenshot_mb} MB)"
     else
-        log STEP "   Keine alten Screenshots"
+        log STEP "   No alten Screenshots"
     fi
 
     # Fix #60: Time Machine lokale Snapshots
@@ -1762,20 +1762,20 @@ module_deepclean() {
     if [ "$tm_snapshots" -gt 0 ]; then
         # Purgeable Space durch TM Snapshots berechnen
         local tm_purgeable=$(( $(tmutil listlocalsnapshots / 2>/dev/null | wc -l) ))
-        log INFO "   ${tm_purgeable} lokale TM-Snapshots gefunden"
+        log INFO "   ${tm_purgeable} lokale TM-Snapshots found"
         local disk_pct=$(df -h / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
         if [ "$disk_pct" -gt "$DISK_USAGE_THRESHOLD" ] 2>/dev/null; then
-            log WARN "   Disk ${disk_pct}% voll - loesche alte TM-Snapshots..."
+            log WARN "   Disk ${disk_pct}% full - deleting old TM snapshots..."
             # Fix #69: Korrektes Snapshot-Datum extrahieren (Format: com.apple.TimeMachine.YYYY-MM-DD-HHMMSS.local)
             tmutil listlocalsnapshots / 2>/dev/null | sed -n 's/.*TimeMachine\.\(.*\)\.local/\1/p' | while IFS= read -r snap; do
                 [ -n "$snap" ] && run_or_dry sudo tmutil deletelocalsnapshots "$snap"
             done
-            report_add FIX "TM-Snapshots geloescht (Disk war ${disk_pct}%)"
+            report_add FIX "TM-Snapshots deleted (Disk war ${disk_pct}%)"
         else
-            report_add SUCCESS "TM-Snapshots: ${tm_purgeable} vorhanden (Disk OK)"
+            report_add SUCCESS "TM-Snapshots: ${tm_purgeable} present (Disk OK)"
         fi
     else
-        log STEP "   Keine lokalen TM-Snapshots"
+        log STEP "   No lokalen TM-Snapshots"
     fi
 
     # Fix #66: Alte iOS-Backups
@@ -1794,17 +1794,17 @@ module_deepclean() {
             log STEP "     Backup: ${bname:0:12}... (${bsize} MB)"
         done < <(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
         if [ "$backup_count" -gt 0 ]; then
-            log INFO "   ${backup_count} iOS-Backups, gesamt ${backup_total_mb} MB"
+            log INFO "   ${backup_count} iOS-Backups, total ${backup_total_mb} MB"
             if [ "$backup_total_mb" -gt 10240 ]; then
                 log INFO "   iOS-Backups: ${backup_total_mb} MB (${backup_count} Stueck)"
             else
                 report_add SUCCESS "iOS-Backups: ${backup_count} (${backup_total_mb} MB)"
             fi
         else
-            log STEP "   Keine iOS-Backups"
+            log STEP "   No iOS-Backups"
         fi
     else
-        log STEP "   Kein iOS-Backup-Verzeichnis"
+        log STEP "   No iOS-Backup-Directory"
     fi
 
     # Fix #72: Package Manager Caches (npm/pip/yarn/gem)
@@ -1859,12 +1859,12 @@ module_deepclean() {
 
         if [ "$pkg_freed" -gt 0 ]; then
             total_freed=$((total_freed + pkg_freed))
-            report_add FIX "Package Caches: ${pkg_freed} MB bereinigt"
+            report_add FIX "Package Caches: ${pkg_freed} MB cleaned up"
         else
-            log STEP "   Alle Package Caches klein oder nicht vorhanden"
+            log STEP "   All Package Caches small or not present"
         fi
     else
-        log STEP "   Package Caches: uebersprungen (Config)"
+        log STEP "   Package Caches: skipped (Config)"
     fi
 
     # Fix #73: Developer Tool Caches (CocoaPods/SPM/Carthage)
@@ -1905,12 +1905,12 @@ module_deepclean() {
 
         if [ "$dev_freed" -gt 0 ]; then
             total_freed=$((total_freed + dev_freed))
-            report_add FIX "Developer Caches: ${dev_freed} MB bereinigt"
+            report_add FIX "Developer Caches: ${dev_freed} MB cleaned up"
         else
-            log STEP "   Alle Developer Caches klein oder nicht vorhanden"
+            log STEP "   All Developer Caches small or not present"
         fi
     else
-        log STEP "   Developer Caches: uebersprungen (Config)"
+        log STEP "   Developer Caches: skipped (Config)"
     fi
 
     # Fix #74: Docker Cleanup
@@ -1924,38 +1924,38 @@ module_deepclean() {
                 run_or_dry docker container prune -f --filter "until=72h" 2>/dev/null
                 run_or_dry docker image prune -f 2>/dev/null
                 run_or_dry docker volume prune -f 2>/dev/null
-                report_add FIX "Docker: ${stopped} Container + ${dangling} Images aufgeraeumt"
+                report_add FIX "Docker: ${stopped} containers + ${dangling} images cleaned up"
             else
                 log STEP "   Docker: sauber"
             fi
         else
-            log STEP "   Docker: Daemon nicht erreichbar"
+            log STEP "   Docker: Daemon unreachable"
         fi
     elif $CLEAN_DOCKER; then
-        log STEP "   Docker: nicht installiert"
+        log STEP "   Docker: not installed"
     else
-        log STEP "   Docker: uebersprungen (Config: CLEAN_DOCKER=false)"
+        log STEP "   Docker: skipped (Config: CLEAN_DOCKER=false)"
     fi
 
-    # Fix #75: Parallels VM-Logs
-    if $CLEAN_PARALLELS_LOGS && [ -d "$HOME/Library/Parallels" ]; then
-        log STEP "   [11/12] Parallels VM-Logs..."
+    # Fix #75: Parallls VM logs
+    if $CLEAN_PARALLELS_LOGS && [ -d "$HOME/Library/Parallls" ]; then
+        log STEP "   [11/12] Parallls VM logs..."
         local prl_log_count
-        prl_log_count=$(( $(find "$HOME/Library/Parallels" -name "*.log" -mtime +30 2>/dev/null | wc -l) ))
+        prl_log_count=$(( $(find "$HOME/Library/Parallls" -name "*.log" -mtime +30 2>/dev/null | wc -l) ))
         if [ "${prl_log_count:-0}" -gt 0 ]; then
-            local prl_size=$(find "$HOME/Library/Parallels" -name "*.log" -mtime +30 -exec du -sm {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
-            log INFO "   Parallels: ${prl_log_count} alte Logs (${prl_size:-0} MB)"
-            run_or_dry find "$HOME/Library/Parallels" -name "*.log" -mtime +30 -delete
+            local prl_size=$(find "$HOME/Library/Parallls" -name "*.log" -mtime +30 -exec du -sm {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
+            log INFO "   Parallls: ${prl_log_count} alte Logs (${prl_size:-0} MB)"
+            run_or_dry find "$HOME/Library/Parallls" -name "*.log" -mtime +30 -delete
             total_freed=$((total_freed + ${prl_size:-0}))
-            report_add FIX "Parallels Logs: ${prl_log_count} geloescht"
+            report_add FIX "Parallls Logs: ${prl_log_count} deleted"
         else
-            log STEP "   Parallels: keine alten Logs"
+            log STEP "   Parallls: no alten Logs"
         fi
     else
-        log STEP "   Parallels: uebersprungen"
+        log STEP "   Parallls: skipped"
     fi
 
-    # Fix #76: Font-Cache + QuickLook-Cache rebuild
+    # Fix #76: Font cache + QuickLook cache rebuild
     if $CLEAN_FONT_CACHE; then
         log STEP "   [12/12] Font & QuickLook Cache..."
         # Font-Cache
@@ -1968,20 +1968,20 @@ module_deepclean() {
         if [ -d "$ql_dir" ]; then
             local ql_size=$(du -sm "$ql_dir" 2>/dev/null | awk '{print $1}')
             run_or_dry rm -rf "$ql_dir"
-            log FIX "   QuickLook-Cache geloescht (${ql_size:-0} MB)"
+            log FIX "   QuickLook-Cache deleted (${ql_size:-0} MB)"
             total_freed=$((total_freed + ${ql_size:-0}))
         fi
         # qlmanage Reset
         run_or_dry qlmanage -r 2>/dev/null
         report_add FIX "Font & QuickLook Cache rebuilt"
     else
-        log STEP "   Font/QuickLook Cache: uebersprungen (Config)"
+        log STEP "   Font/QuickLook Cache: skipped (Config)"
     fi
 
-    # Zusammenfassung
+    # Summary
     if [ "$total_freed" -gt 0 ]; then
-        log FIX "   Deep Clean: ${total_freed} MB insgesamt freigegeben"
-        report_add FIX "Deep Clean: ${total_freed} MB freigegeben"
+        log FIX "   Deep Clean: ${total_freed} MB instotal freegegeben"
+        report_add FIX "Deep Clean: ${total_freed} MB freegegeben"
     fi
 }
 
@@ -1991,14 +1991,14 @@ module_deepclean() {
 
 module_spotlight_fix() {
     if ! $SPOTLIGHT_FIX_ENABLED; then
-        log STEP "Spotlight Fix: uebersprungen (Config)"
+        log STEP "Spotlight Fix: skipped (Config)"
         return 0
     fi
 
-    log INFO "Spotlight Diagnose & Reparatur..."
+    log INFO "Spotlight Diagnosis & Repair..."
     local fixes=0
 
-    # ── [1/5] mds/mds_stores CPU-Verbrauch ──
+    # ── [1/5] mds/mds_stores CPU-Verbralso ──
     log STEP "   [1/5] mds CPU-Check..."
     local mds_cpu=$(ps -eo %cpu,comm 2>/dev/null | awk '/\/mds$/ {total+=$1} END {printf "%d", total+0}')
     local mds_stores_cpu=$(ps -eo %cpu,comm 2>/dev/null | awk '/mds_stores/ {total+=$1} END {printf "%d", total+0}')
@@ -2007,28 +2007,28 @@ module_spotlight_fix() {
     if [ "$mds_total" -gt "$SPOTLIGHT_MDS_CPU_THRESHOLD" ]; then
         log WARN "   mds CPU: ${mds_total}% (mds:${mds_cpu}% mds_stores:${mds_stores_cpu}%) > Schwelle ${SPOTLIGHT_MDS_CPU_THRESHOLD}%"
 
-        # Pruefen ob Spotlight gerade aktiv indexiert
+        # Checkingn ob Spotlight gerade aktiv indexiert
         local indexing_status=$(mdutil -s / 2>/dev/null)
         if echo "$indexing_status" | grep -qi "Indexing enabled"; then
-            # Feststellen ob normales Indexing oder Haenger
+            # Feststellen ob normal indexing or Haenger
             local mds_pid=$(pgrep -x mds 2>/dev/null | head -1)
             if [ -n "$mds_pid" ]; then
                 local mds_state=$(ps -p "$mds_pid" -o state= 2>/dev/null)
                 if [ "$mds_state" = "R" ] || [ "$mds_state" = "R+" ]; then
-                    log STEP "   mds laeuft aktiv (State: $mds_state) - normales Indexing"
-                    # CPU nur hoch weil Indexing aktiv, kein Neustart noetig
+                    log STEP "   mds running actively (State: $mds_state) - normal indexing"
+                    # CPU only hoch weil Indexing aktiv, no Restart needed
                     log INFO "   Spotlight indexiert gerade aktiv (CPU: ${mds_total}%)"
                 else
                     log WARN "   mds scheint zu haengen (State: ${mds_state:-?})"
                     if $NEEDS_SUDO; then
-                        log FIX "   Starte mds neu..."
+                        log FIX "   Restarting mds..."
                         run_or_dry sudo killall mds 2>/dev/null
                         sleep 2
-                        log FIX "   mds neugestartet"
-                        report_add FIX "Spotlight: mds neugestartet (haengte bei ${mds_total}% CPU)"
+                        log FIX "   mds neustartingd"
+                        report_add FIX "Spotlight: mds neustartingd (haengte at ${mds_total}% CPU)"
                         fixes=$((fixes + 1))
                     else
-                        log INFO "   Spotlight: mds bei ${mds_total}% CPU (sudo fuer Neustart noetig)"
+                        log INFO "   Spotlight: mds at ${mds_total}% CPU (sudo for Restart needed)"
                     fi
                 fi
             fi
@@ -2037,13 +2037,13 @@ module_spotlight_fix() {
         log STEP "   mds CPU: ${mds_total}% (OK)"
     fi
 
-    # ── [2/5] Spotlight Index-Status (nur User-relevante Volumes) ──
+    # ── [2/5] Spotlight Index-Status (only User-relevante Volumes) ──
     log STEP "   [2/5] Spotlight Index-Status..."
     local volumes_checked=0
     local volumes_broken=0
     while IFS= read -r vol; do
         [ -z "$vol" ] && continue
-        # Interne APFS-System-Volumes ueberspringen (kein Spotlight erwartet)
+        # Skip internal APFS system volumes (no Spotlight expected)
         case "$vol" in
             /System/Volumes/VM|/System/Volumes/Preboot|/System/Volumes/Update)    continue ;;
             /System/Volumes/xarts|/System/Volumes/iSCPreboot|/System/Volumes/Hardware) continue ;;
@@ -2053,7 +2053,7 @@ module_spotlight_fix() {
         local vol_status=$(mdutil -s "$vol" 2>/dev/null)
         if echo "$vol_status" | grep -qi "error\|invalid"; then
             volumes_broken=$((volumes_broken + 1))
-            log ERROR "   $vol: Spotlight-Index fehlerhaft"
+            log ERROR "   $vol: Spotlight-Index with errors"
             if $SPOTLIGHT_REINDEX_ON_ERROR && $NEEDS_SUDO; then
                 log FIX "   Reindexiere $vol..."
                 run_or_dry sudo mdutil -E "$vol" 2>/dev/null
@@ -2061,26 +2061,26 @@ module_spotlight_fix() {
                 report_add FIX "Spotlight: $vol reindexiert"
                 fixes=$((fixes + 1))
             else
-                log INFO "   Spotlight-Index fehlerhaft: $vol"
+                log INFO "   Spotlight-Index with errors: $vol"
             fi
         elif echo "$vol_status" | grep -qi "disabled"; then
-            # Nur warnen fuer Root-Volume, andere koennen gewollt deaktiviert sein
+            # Nur warnen for Root-Volume, andere koennen gewollt disabled sein
             if [ "$vol" = "/" ]; then
-                log WARN "   /: Spotlight deaktiviert auf Root-Volume!"
+                log WARN "   /: Spotlight disabled auf Root-Volume!"
                 if $NEEDS_SUDO; then
                     run_or_dry sudo mdutil -i on / 2>/dev/null
-                    log FIX "   Spotlight auf / aktiviert"
-                    report_add FIX "Spotlight: Root-Volume aktiviert"
+                    log FIX "   Spotlight auf / enabled"
+                    report_add FIX "Spotlight: Root-Volume enabled"
                     fixes=$((fixes + 1))
                 else
-                    log INFO "   Spotlight auf / deaktiviert (sudo zum Aktivieren)"
+                    log INFO "   Spotlight auf / disabled (sudo for Aktivieren)"
                 fi
             else
-                log STEP "   $vol: Spotlight deaktiviert (gewollt?)"
+                log STEP "   $vol: Spotlight disabled (gewollt?)"
             fi
         fi
     done < <(df -Hl 2>/dev/null | awk 'NR>1 && $NF ~ /^\// {print $NF}')
-    log STEP "   ${volumes_checked} User-Volumes geprueft, ${volumes_broken} fehlerhaft"
+    log STEP "   ${volumes_checked} user volumes checked, ${volumes_broken} with errors"
 
     # ── [3/5] Spotlight-Datenbank Integritaet ──
     log STEP "   [3/5] Spotlight-DB Integritaet..."
@@ -2096,13 +2096,13 @@ module_spotlight_fix() {
                 report_add FIX "Spotlight: Index neu aufgebaut (war ${db_size} MB)"
                 fixes=$((fixes + 1))
             else
-                log INFO "   Spotlight-DB: ${db_size} MB (Rebuild empfohlen)"
+                log INFO "   Spotlight-DB: ${db_size} MB (rebuild recommended)"
             fi
         else
             log STEP "   Spotlight-DB: ${db_size} MB"
         fi
     else
-        # Kein .Spotlight-V100 auf APFS ist normal (liegt in /var)
+        # No .Spotlight-V100 auf APFS ist normal (liegt in /var)
         local var_spotlight="/private/var/db/Spotlight-V100"
         if [ -d "$var_spotlight" ]; then
             local var_db_size=$(sudo -n du -sm "$var_spotlight" 2>/dev/null | awk '{print $1}')
@@ -2112,7 +2112,7 @@ module_spotlight_fix() {
         fi
     fi
 
-    # ── [4/5] Defekte Spotlight-Plugins ──
+    # ── [4/5] Brokene Spotlight-Plugins ──
     log STEP "   [4/5] Spotlight-Plugins..."
     local plugin_count=0
     local broken_plugins=0
@@ -2121,15 +2121,15 @@ module_spotlight_fix() {
         while IFS= read -r plugin; do
             [ -z "$plugin" ] && continue
             plugin_count=$((plugin_count + 1))
-            # Plugin-Binary pruefen
+            # Plugin-Binary checking
             if [ -f "$plugin/Contents/Info.plist" ] && ! plutil -lint "$plugin/Contents/Info.plist" &>/dev/null; then
                 broken_plugins=$((broken_plugins + 1))
-                log WARN "   Defektes Plugin: $(basename "$plugin")"
+                log WARN "   Broken Plugin: $(basename "$plugin")"
             fi
         done < <(find "$plugin_dir" -maxdepth 1 -name "*.mdimporter" -type d 2>/dev/null)
     done
     if [ "$broken_plugins" -gt 0 ]; then
-        log INFO "   Spotlight: ${broken_plugins} defekte Plugins"
+        log INFO "   Spotlight: ${broken_plugins} broken Plugins"
     else
         log STEP "   ${plugin_count} Plugins OK"
     fi
@@ -2139,16 +2139,16 @@ module_spotlight_fix() {
     local excl_list=$(defaults read /.Spotlight-V100/VolumeConfiguration Exclusions 2>/dev/null)
     if [ -n "$excl_list" ]; then
         local excl_count=$(echo "$excl_list" | grep -c '"' 2>/dev/null || echo 0)
-        log STEP "   ${excl_count} Pfade von Spotlight ausgeschlossen"
+        log STEP "   ${excl_count} Pfade von Spotlight fromgeschlossen"
     fi
 
-    # Zusammenfassung
+    # Summary
     if [ "$fixes" -gt 0 ]; then
-        log FIX "   Spotlight: ${fixes} Reparaturen durchgefuehrt"
-        report_add FIX "Spotlight Fix: ${fixes} Reparaturen"
+        log FIX "   Spotlight: ${fixes} Repairen durchgefuehrt"
+        report_add FIX "Spotlight Fix: ${fixes} Repairen"
     else
-        log INFO "   Spotlight: alles OK"
-        report_add SUCCESS "Spotlight: gesund"
+        log INFO "   Spotlight: alls OK"
+        report_add SUCCESS "Spotlight: healthy"
     fi
 }
 
@@ -2158,55 +2158,55 @@ module_spotlight_fix() {
 
 module_icloud_fix() {
     if ! $ICLOUD_FIX_ENABLED; then
-        log STEP "iCloud Fix: uebersprungen (Config)"
+        log STEP "iCloud Fix: skipped (Config)"
         return 0
     fi
 
-    log INFO "iCloud Sync Diagnose & Reparatur..."
+    log INFO "iCloud Sync Diagnosis & Repair..."
     local fixes=0
     local warns=0
     local icloud_dir="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
 
-    # ── [1/6] Geister-Ordner in HOME entfernen ──
+    # ── [1/6] Geister-Folder in HOME entfernen ──
     if $ICLOUD_GHOST_DIRS_CLEAN; then
-        log STEP "   [1/6] Geister-Ordner in HOME..."
+        log STEP "   [1/6] Geister-Folder in HOME..."
         local ghost_count=0
         local ghost_list=""
-        # Bekannte Ordner die in HOME NICHT sein sollten (leere iCloud-Ghosts)
-        # .Trash und Standard-Ordner (Desktop, Documents etc.) ueberspringen
+        # Bekannte Folder die in HOME NICHT sein sollten (leere iCloud-Ghosts)
+        # Skip .Trash and standard folders (Desktop, Documents etc.)
         while IFS= read -r dir; do
             [ -z "$dir" ] && continue
             local dirname=$(basename "$dir")
-            # System-Ordner und bekannte Tools ueberspringen
+            # Skip system folders and known tools
             case "$dirname" in
                 .Trash|.cache|.config|.local|.ssh|.gnupg|.meister|.claude|.ollama|.nvm|.npm) continue ;;
                 Desktop|Documents|Downloads|Movies|Music|Pictures|Public|Library) continue ;;
                 Applications|Sites|.CFUserTextEncoding) continue ;;
-                go|miniforge3|Parallels|Venvs|.docker|.gradle|.cargo|.rustup) continue ;;
+                go|miniforge3|Parallls|Venvs|.docker|.gradle|.cargo|.rustup) continue ;;
             esac
-            # Nur wirklich leere Ordner (kein .DS_Store etc.)
+            # Nur wirklich leere Folder (no .DS_Store etc.)
             local content_count=$(find "$dir" -mindepth 1 -not -name ".DS_Store" -not -name ".localized" 2>/dev/null | head -1)
             if [ -z "$content_count" ]; then
                 ghost_count=$((ghost_count + 1))
                 ghost_list="${ghost_list}${dirname} "
-                log WARN "     Geister-Ordner: ~/${dirname}"
+                log WARN "     Geister-Folder: ~/${dirname}"
                 run_or_dry rmdir "$dir" 2>/dev/null || run_or_dry rm -rf "$dir" 2>/dev/null
             fi
         done < <(find "$HOME" -maxdepth 1 -type d -mindepth 1 2>/dev/null)
         if [ "$ghost_count" -gt 0 ]; then
-            log FIX "   ${ghost_count} Geister-Ordner entfernt: ${ghost_list}"
-            report_add FIX "iCloud: ${ghost_count} Geister-Ordner entfernt (${ghost_list})"
+            log FIX "   ${ghost_count} Geister-Folder removed: ${ghost_list}"
+            report_add FIX "iCloud: ${ghost_count} Geister-Folder removed (${ghost_list})"
             fixes=$((fixes + 1))
         else
-            log STEP "   Keine Geister-Ordner"
+            log STEP "   No Geister-Folder"
         fi
     else
-        log STEP "   [1/6] Geister-Ordner: uebersprungen (Config)"
+        log STEP "   [1/6] Geister-Folder: skipped (Config)"
     fi
 
-    # ── [2/6] Korrupte iCloud-Stubs erkennen ──
+    # ── [2/6] Corrupt iCloud-Stubs erkennen ──
     if $ICLOUD_STUBS_SCAN; then
-        log STEP "   [2/6] Korrupte iCloud-Stubs..."
+        log STEP "   [2/6] Corrupt iCloud-Stubs..."
         local stub_count=0
         # Scan-Pfade: Documents, Desktop, iCloud Drive
         local scan_paths="$HOME/Documents $HOME/Desktop"
@@ -2222,7 +2222,7 @@ module_icloud_fix() {
                     stub_count=$((stub_count + 1))
                     local relpath="${entry#$HOME/}"
                     if [ "$stub_count" -le 20 ]; then
-                        log ERROR "     Korrupt: ~/${relpath} (links=65535 size=0)"
+                        log ERROR "     Corrupt: ~/${relpath} (links=65535 size=0)"
                     fi
                     if $ICLOUD_STUBS_DELETE; then
                         run_or_dry rm -rf "$entry" 2>/dev/null
@@ -2233,19 +2233,19 @@ module_icloud_fix() {
 
         if [ "$stub_count" -gt 0 ]; then
             if $ICLOUD_STUBS_DELETE; then
-                log FIX "   ${stub_count} korrupte Stubs entfernt"
-                report_add FIX "iCloud: ${stub_count} korrupte Stubs entfernt"
+                log FIX "   ${stub_count} corrupt Stubs removed"
+                report_add FIX "iCloud: ${stub_count} corrupt Stubs removed"
                 fixes=$((fixes + 1))
             else
-                log WARN "   ${stub_count} korrupte Stubs gefunden (ICLOUD_STUBS_DELETE=true zum Loeschen)"
-                log INFO "   iCloud: ${stub_count} korrupte Stubs (Config: ICLOUD_STUBS_DELETE)"
+                log WARN "   ${stub_count} corrupt Stubs foand (ICLOUD_STUBS_DELETE=true for Deletingn)"
+                log INFO "   iCloud: ${stub_count} corrupt Stubs (Config: ICLOUD_STUBS_DELETE)"
                 warns=$((warns + 1))
             fi
         else
-            log STEP "   Keine korrupten Stubs"
+            log STEP "   No corruptn Stubs"
         fi
     else
-        log STEP "   [2/6] Stubs-Scan: uebersprungen (Config)"
+        log STEP "   [2/6] Stubs-Scan: skipped (Config)"
     fi
 
     # ── [3/6] bird (iCloud-Daemon) Status ──
@@ -2258,19 +2258,19 @@ module_icloud_fix() {
         log STEP "   bird: PID ${bird_pid}, CPU ${bird_cpu:-0}%, MEM ${bird_mem:-0}%"
 
         if [ "${bird_cpu:-0}" -gt 50 ]; then
-            log WARN "   bird CPU: ${bird_cpu}% (haengt moeglicherweise)"
+            log WARN "   bird CPU: ${bird_cpu}% (haengt possibleerweise)"
             if $ICLOUD_RESTART_BIRD; then
-                log FIX "   Starte bird neu..."
+                log FIX "   Restarting bird..."
                 run_or_dry killall bird 2>/dev/null
                 sleep 3
-                # bird wird automatisch von launchd neugestartet
+                # bird wird automatisch von launchd neustartingd
                 if pgrep -x bird &>/dev/null; then
-                    log FIX "   bird neugestartet"
-                    report_add FIX "iCloud: bird neugestartet (CPU war ${bird_cpu}%)"
+                    log FIX "   bird neustartingd"
+                    report_add FIX "iCloud: bird neustartingd (CPU war ${bird_cpu}%)"
                     fixes=$((fixes + 1))
                 else
-                    log WARN "   bird wurde nicht automatisch neugestartet"
-                    log INFO "   iCloud: bird nicht neugestartet"
+                    log WARN "   bird wurde not automatisch neustartingd"
+                    log INFO "   iCloud: bird not neustartingd"
                 fi
             else
                 log INFO "   iCloud: bird CPU ${bird_cpu}%"
@@ -2278,13 +2278,13 @@ module_icloud_fix() {
             fi
         fi
     else
-        log WARN "   bird-Daemon nicht aktiv"
-        log INFO "   iCloud: bird nicht aktiv"
+        log WARN "   bird-Daemon not aktiv"
+        log INFO "   iCloud: bird not aktiv"
         warns=$((warns + 1))
     fi
 
     # ── [4/6] iCloud Drive Speicher ──
-    # Fix #139: Timeout fuer du/find auf iCloud (fileproviderd kann haengen)
+    # Fix #139: Timeout for du/find auf iCloud (fileproviderd kann haengen)
     log STEP "   [4/6] iCloud Drive Speicher..."
     if [ -d "$icloud_dir" ]; then
         local icloud_size=$(timeout 10 du -sm "$icloud_dir" 2>/dev/null | awk '{print $1}')
@@ -2294,26 +2294,26 @@ module_icloud_fix() {
         fi
         local icloud_files=$(timeout 10 find "$icloud_dir" -type f 2>/dev/null | wc -l)
         icloud_files=${icloud_files##* }
-        log STEP "   iCloud Drive: ${icloud_size} MB lokal, ${icloud_files} Dateien"
+        log STEP "   iCloud Drive: ${icloud_size} MB lokal, ${icloud_files} Files"
 
-        # Pruefen auf .icloud-Platzhalter (nicht heruntergeladene Dateien)
+        # Checkingn auf .icloud-Platzhalter (not herunterloadede Files)
         local placeholder_count=$(timeout 10 find "$icloud_dir" -name "*.icloud" -type f 2>/dev/null | wc -l)
         placeholder_count=${placeholder_count##* }
         if [ "${placeholder_count:-0}" -gt 0 ]; then
-            log STEP "   ${placeholder_count} Dateien nur in der Cloud (nicht lokal)"
+            log STEP "   ${placeholder_count} Files only in der Cloud (not lokal)"
         fi
     else
-        log STEP "   iCloud Drive Pfad nicht vorhanden"
+        log STEP "   iCloud Drive path not present"
     fi
 
-    # ── [5/6] Verwaiste CloudKit-Container ──
+    # ── [5/6] Orphaned CloudKit-Container ──
     if $ICLOUD_ORPHAN_CONTAINERS_WARN; then
-        log STEP "   [5/6] Verwaiste CloudKit-Container..."
+        log STEP "   [5/6] Orphaned CloudKit-Container..."
         local orphan_containers=0
         local orphan_size_total=0
         local mobile_docs="$HOME/Library/Mobile Documents"
         if [ -d "$mobile_docs" ]; then
-            # Batch: Alle Bundle-IDs einmal sammeln (spart ~50 mdfind-Forks)
+            # Batch: All Bundle-IDs einmal sammeln (spart ~50 mdfind-Forks)
             local installed_ids_file=$(mktemp)
             timeout 15 mdfind "kMDItemContentType == 'com.apple.application-bundle'" 2>/dev/null | \
                 xargs mdls -name kMDItemCFBundleIdentifier 2>/dev/null | \
@@ -2323,28 +2323,28 @@ module_icloud_fix() {
             while IFS= read -r container; do
                 [ -z "$container" ] && continue
                 local cname=$(basename "$container")
-                # Apple-eigene Container und System-Ordner ueberspringen
+                # Skip Apple-owned containers and system folders
                 [ "$cname" = "com~apple~CloudDocs" ] && continue
                 [[ "$cname" == com~apple~* ]] && continue
                 [ "$cname" = ".Trash" ] && continue
                 # Container-Bundle-ID rekonstruieren (~ → .)
                 local bundle_id=$(echo "$cname" | tr '~' '.')
-                # Pruefen gegen gecachte Bundle-ID-Liste (grep statt mdfind)
+                # Checkingn gegen gecachte Bundle-ID-Liste (grep instead of mdfind)
                 if ! grep -qxF "$bundle_id" "$installed_ids_file" 2>/dev/null; then
-                    # Pruefen ob Container Daten enthaelt
+                    # Checkingn ob Container Daten enthaelt
                     local container_size=$(timeout 5 du -sm "$container" 2>/dev/null | awk '{print $1}')
                     [ -z "$container_size" ] && container_size=0
                     if [ "$container_size" -gt 0 ]; then
                         orphan_containers=$((orphan_containers + 1))
                         orphan_size_total=$((orphan_size_total + container_size))
-                        [ "$orphan_containers" -le 10 ] && log STEP "     Verwaist: ${cname} (${container_size} MB)"
+                        [ "$orphan_containers" -le 10 ] && log STEP "     Orphaned: ${cname} (${container_size} MB)"
                     fi
                 fi
             done < <(find "$mobile_docs" -maxdepth 1 -type d -mindepth 1 2>/dev/null)
 
             if [ "$orphan_containers" -gt 0 ]; then
-                log WARN "   ${orphan_containers} verwaiste CloudKit-Container (~${orphan_size_total} MB)"
-                # Fix #145: Always-on Self-Healing - Verwaiste Container immer loeschen (kein Size-Limit)
+                log WARN "   ${orphan_containers} orphaned CloudKit-Container (~${orphan_size_total} MB)"
+                # Fix #145: Always-on self-healing - always delete orphaned containers (no size limit)
                 if $SELFHEAL_ICLOUD_CONTAINERS && ! $DRY_RUN; then
                     local cleaned_containers=0
                     while IFS= read -r container; do
@@ -2358,22 +2358,22 @@ module_icloud_fix() {
                             local cs=$(timeout 5 du -sm "$container" 2>/dev/null | awk '{print $1}')
                             if [ "${cs:-0}" -gt 0 ]; then
                                 rm -rf "$container" 2>/dev/null && cleaned_containers=$((cleaned_containers + 1))
-                                log FIX "     Geloescht: ${cname} (${cs} MB)"
+                                log FIX "     Deleted: ${cname} (${cs} MB)"
                             fi
                         fi
                     done < <(find "$mobile_docs" -maxdepth 1 -type d -mindepth 1 2>/dev/null)
-                    [ "$cleaned_containers" -gt 0 ] && report_add FIX "iCloud: ${cleaned_containers} verwaiste Container geloescht (~${orphan_size_total} MB)"
+                    [ "$cleaned_containers" -gt 0 ] && report_add FIX "iCloud: ${cleaned_containers} orphaned Container deleted (~${orphan_size_total} MB)"
                 else
-                    log INFO "   iCloud: ${orphan_containers} verwaiste Container (~${orphan_size_total} MB)"
+                    log INFO "   iCloud: ${orphan_containers} orphaned Container (~${orphan_size_total} MB)"
                 fi
                 warns=$((warns + 1))
             else
-                log STEP "   Keine verwaisten Container"
+                log STEP "   No orphanedn Container"
             fi
             rm -f "$installed_ids_file"
         fi
     else
-        log STEP "   [5/6] CloudKit-Container: uebersprungen (Config)"
+        log STEP "   [5/6] CloudKit-Container: skipped (Config)"
     fi
 
     # ── [6/6] Pending Sync + Stuck Downloads ──
@@ -2382,10 +2382,10 @@ module_icloud_fix() {
     command_exists brctl && brctl_avail=true
 
     if $brctl_avail; then
-        # brctl status mit timeout (kann bei vielen Containern >60s dauern)
+        # brctl status mit timeout (kann at vielen Containern >60s dauern)
         local sync_status
         sync_status=$(timeout 15 brctl status 2>/dev/null | head -50)
-        # ANSI-Codes aus brctl-Output entfernen (verursachen Zaehl-Fehler)
+        # ANSI-Codes from brctl-Output entfernen (verursachen Zaehl-Error)
         local clean_sync=$(echo "$sync_status" | sed $'s/\x1b\\[[0-9;]*m//g')
         local needs_sync_count=$(echo "$clean_sync" | grep -c "needs-sync" 2>/dev/null || echo 0)
         local sync_disabled_count=$(echo "$clean_sync" | grep -c "SYNC DISABLED" 2>/dev/null || echo 0)
@@ -2393,10 +2393,10 @@ module_icloud_fix() {
         if [ "${needs_sync_count:-0}" -gt 5 ]; then
             log WARN "   ${needs_sync_count} Container warten auf Sync"
             if $ICLOUD_RESTART_BIRD && [ "${needs_sync_count:-0}" -gt 20 ]; then
-                log FIX "   Viele wartende Syncs - starte bird neu..."
+                log FIX "   Viele wartende Syncs - starting bird neu..."
                 run_or_dry killall bird 2>/dev/null
                 sleep 3
-                report_add FIX "iCloud: bird neugestartet (${needs_sync_count} pending syncs)"
+                report_add FIX "iCloud: bird neustartingd (${needs_sync_count} pending syncs)"
                 fixes=$((fixes + 1))
             else
                 log INFO "   iCloud: ${needs_sync_count} Container warten auf Sync"
@@ -2407,20 +2407,20 @@ module_icloud_fix() {
         fi
 
         if [ "${sync_disabled_count:-0}" -gt 0 ]; then
-            log STEP "   ${sync_disabled_count} Container mit deaktiviertem Sync (deinstallierte Apps)"
+            log STEP "   ${sync_disabled_count} Container mit disabledem Sync (deinstallede Apps)"
         fi
     else
-        log STEP "   brctl nicht verfuegbar - Sync-Status uebersprungen"
+        log STEP "   brctl not available - Sync-Status skipped"
     fi
 
-    # Zusammenfassung
+    # Summary
     if [ "$fixes" -gt 0 ]; then
-        log FIX "   iCloud: ${fixes} Reparaturen, ${warns} Warnungen"
+        log FIX "   iCloud: ${fixes} Repairen, ${warns} Warningen"
     elif [ "$warns" -gt 0 ]; then
-        log WARN "   iCloud: ${warns} Warnungen"
+        log WARN "   iCloud: ${warns} Warningen"
     else
-        log INFO "   iCloud: alles OK"
-        report_add SUCCESS "iCloud Sync: gesund"
+        log INFO "   iCloud: alls OK"
+        report_add SUCCESS "iCloud Sync: healthy"
     fi
 }
 
@@ -2429,11 +2429,11 @@ module_icloud_fix() {
 #############################
 
 module_performance() {
-    log INFO "macOS Performance Optimierung..."
+    log INFO "macOS Performance Optimization..."
     local perf_fixes=0
     local perf_warns=0
 
-    # Fix #110: ps-Output einmal cachen statt 5x forken
+    # Fix #110: ps-Output einmal cachen instead of 5x forken
     local _ps_rss_cache _ps_cpu_cache
     _ps_rss_cache=$(ps -eo rss=,pid=,comm=,uid= 2>/dev/null)
     _ps_cpu_cache=$(ps -eo %cpu=,pid=,comm= 2>/dev/null)
@@ -2456,10 +2456,10 @@ module_performance() {
     local trim_status=$(echo "$disk_info" | awk -F: '/TRIM Support:/ {gsub(/^[ ]+/,"",$2); print $2}')
     if [ -n "$trim_status" ]; then
         if echo "$trim_status" | grep -qi "yes"; then
-            log STEP "   TRIM: aktiviert"
+            log STEP "   TRIM: enabled"
         else
             log WARN "   TRIM: DEAKTIVIERT (SSD-Performance leidet!)"
-            log INFO "   SSD TRIM deaktiviert"
+            log INFO "   SSD TRIM disabled"
             perf_warns=$((perf_warns + 1))
         fi
     fi
@@ -2494,16 +2494,16 @@ module_performance() {
         for sdir in "${spotlight_dirs[@]}"; do
             if [ -d "$sdir" ] && [ ! -f "$sdir/.metadata_never_index" ]; then
                 run_or_dry touch "$sdir/.metadata_never_index"
-                log FIX "   Spotlight: $(basename "$sdir") ausgeschlossen"
+                log FIX "   Spotlight: $(basename "$sdir") fromgeschlossen"
                 spotlight_excluded=$((spotlight_excluded + 1))
             fi
         done
         [ "$spotlight_excluded" -gt 0 ] && {
             perf_fixes=$((perf_fixes + spotlight_excluded))
-            report_add FIX "Spotlight: ${spotlight_excluded} Verzeichnisse ausgeschlossen"
+            report_add FIX "Spotlight: ${spotlight_excluded} Directories fromgeschlossen"
         }
     else
-        log STEP "   [3/8] Spotlight Exclusions: uebersprungen (Config)"
+        log STEP "   [3/8] Spotlight Exclusions: skipped (Config)"
     fi
 
     # ── [4/8] CPU & Thermal ──
@@ -2516,7 +2516,7 @@ module_performance() {
             [ -n "$line" ] && log STEP "$line"
         done
     else
-        log STEP "   Keine CPU-Hogs"
+        log STEP "   No CPU-Hogs"
     fi
     local cpu_speed_limit=$(pmset -g therm 2>/dev/null | awk '/CPU_Speed_Limit/ {print $3}')
     if [ -n "$cpu_speed_limit" ] && [ "$cpu_speed_limit" -lt 100 ] 2>/dev/null; then
@@ -2524,7 +2524,7 @@ module_performance() {
         log INFO "   CPU thermisch gedrosselt (${cpu_speed_limit}%)"
         perf_warns=$((perf_warns + 1))
     else
-        log STEP "   Kein Thermal Throttling"
+        log STEP "   No Thermal Throttling"
     fi
 
     # ── [5/8] WindowServer Performance ──
@@ -2544,7 +2544,7 @@ module_performance() {
     [ -z "$swap_used_perf" ] && swap_used_perf=0
     if [ "$swap_used_perf" -gt 4096 ] 2>/dev/null; then
         log WARN "   Swap: ${swap_used_perf}/${swap_total_perf:-?} MB (hoch!)"
-        log STEP "   Empfehlung: Apps schliessen oder RAM aufrüsten"
+        log STEP "   Recommendation: close apps or upgrade RAM"
         log INFO "   Swap hoch: ${swap_used_perf} MB"
         perf_warns=$((perf_warns + 1))
     elif [ "$swap_used_perf" -gt 1024 ] 2>/dev/null; then
@@ -2553,30 +2553,30 @@ module_performance() {
         log STEP "   Swap: ${swap_used_perf} MB (niedrig)"
     fi
 
-    # ── [7/8] Unnoetige LaunchAgents deaktivieren ──
+    # ── [7/8] Unneedede LaunchAgents deaktivieren ──
     if $PERF_DISABLE_AGENTS; then
-        log STEP "   [7/8] LaunchAgents bereinigen..."
+        log STEP "   [7/8] LaunchAgents bersomen..."
         local disabled_agents=0
         for pattern in $PERF_DISABLE_AGENT_PATTERNS; do
             for plist in "$HOME/Library/LaunchAgents/"*"${pattern}"*".plist" ; do
                 [ ! -f "$plist" ] && continue
                 local agent_label=$(basename "$plist" .plist)
-                # Pruefen ob geladen
+                # Checkingn ob loaded
                 if launchctl list "$agent_label" &>/dev/null; then
                     run_or_dry launchctl bootout "gui/$(id -u)" "$plist"
-                    log FIX "     LaunchAgent deaktiviert: $agent_label"
+                    log FIX "     LaunchAgent disabled: $agent_label"
                     disabled_agents=$((disabled_agents + 1))
                 else
-                    log STEP "     Agent bereits inaktiv: $agent_label"
+                    log STEP "     Agent already inaktiv: $agent_label"
                 fi
             done
         done
         [ "$disabled_agents" -gt 0 ] && {
-            report_add FIX "LaunchAgents: ${disabled_agents} deaktiviert"
+            report_add FIX "LaunchAgents: ${disabled_agents} disabled"
             perf_fixes=$((perf_fixes + 1))
         }
     else
-        log STEP "   [7/8] LaunchAgents: uebersprungen (Config)"
+        log STEP "   [7/8] LaunchAgents: skipped (Config)"
     fi
 
     # ── [8/8] Ollama Model Cleanup ──
@@ -2585,7 +2585,7 @@ module_performance() {
         local ollama_was_running=false
         ollama_available && ollama_was_running=true
 
-        # Sicherstellen dass Ollama laeuft fuer rm
+        # Ensure Ollama is running for rm
         if ! $ollama_was_running; then
             ollama serve &>/dev/null &
             sleep 3
@@ -2604,33 +2604,33 @@ module_performance() {
                 done
                 if ! $keep; then
                     run_or_dry ollama rm "$model"
-                    log FIX "     Ollama-Modell entfernt: $model"
+                    log FIX "     Ollama model removed: $model"
                     removed_models=$((removed_models + 1))
                 else
                     log STEP "     Behalten: $model"
                 fi
             done
-            # Wenn Ollama nur temporaer gestartet, wieder stoppen
+            # Wenn Ollama only temporaer startingd, wieder stoppen
             if ! $ollama_was_running; then
                 pkill ollama 2>/dev/null
-                log STEP "     Ollama-Server wieder gestoppt (RAM freigegeben)"
+                log STEP "     Ollama-Server wieder stopped (RAM freegegeben)"
             fi
             [ "$removed_models" -gt 0 ] && {
-                report_add FIX "Ollama: ${removed_models} Modelle entfernt"
+                report_add FIX "Ollama: ${removed_models} Modele removed"
                 perf_fixes=$((perf_fixes + 1))
                 ollama_list_invalidate
             }
         else
-            log WARN "   Ollama-Server nicht erreichbar - Cleanup uebersprungen"
+            log WARN "   Ollama-Server unreachable - Cleanup skipped"
         fi
     else
-        log STEP "   [8/8] Ollama Cleanup: uebersprungen (Config/nicht installiert)"
+        log STEP "   [8/8] Ollama Cleanup: skipped (Config/not installed)"
     fi
 
-    # ── Zusammenfassung ──
-    log INFO "   Performance: ${perf_fixes} Optimierungen, ${perf_warns} Empfehlungen"
-    [ "$perf_fixes" -gt 0 ] && report_add FIX "Performance: ${perf_fixes} Optimierungen angewendet"
-    [ "$perf_warns" -gt 0 ] && log INFO "   ${perf_warns} Empfehlungen uebersprungen (brauchen sudo/Config)"
+    # ── Summary ──
+    log INFO "   Performance: ${perf_fixes} Optimizationen, ${perf_warns} Recommendationen"
+    [ "$perf_fixes" -gt 0 ] && report_add FIX "Performance: ${perf_fixes} Optimizationen angewendet"
+    [ "$perf_warns" -gt 0 ] && log INFO "   ${perf_warns} Recommendationen skipped (brauchen sudo/Config)"
     return 0
 }
 
@@ -2642,23 +2642,23 @@ selfheal_preflight() {
     log INFO "Self-Healing Preflight Check..."
 
     if command_exists brew; then
-        log STEP "   Pruefe Homebrew-Zustand..."
+        log STEP "   Checking Homebrew-Zustand..."
         if ! brew --prefix &>/dev/null; then
-            log WARN "   Homebrew reagiert nicht"
-            log INFO "   Homebrew reagiert nicht (brew --prefix fehlgeschlagen)"
+            log WARN "   Homebrew not responding"
+            log INFO "   Homebrew reagiert not (brew --prefix failed)"
         else
             log STEP "   Homebrew OK"
         fi
     fi
 
-    log STEP "   Pruefe DNS..."
+    log STEP "   Checking DNS..."
     if ! host google.com &>/dev/null 2>&1; then
-        log WARN "   DNS-Aufloesung fehlgeschlagen"
+        log WARN "   DNS-Aufloesung failed"
         sudo -n dscacheutil -flushcache 2>/dev/null
         sudo -n killall -HUP mDNSResponder 2>/dev/null
         sleep 1
         if host google.com &>/dev/null 2>&1; then
-            log FIX "   DNS nach Flush OK"
+            log FIX "   DNS after Flush OK"
             report_add FIX "DNS-Cache geleert (Preflight)"
         fi
     else
@@ -2668,12 +2668,12 @@ selfheal_preflight() {
     local disk_pct=$(df -h / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
     if [ "$disk_pct" -gt "$DISK_CRITICAL_THRESHOLD" ] 2>/dev/null; then
         log ERROR "   KRITISCH: Disk ${disk_pct}% voll!"
-        log WARN "   Raeume Temp-Dateien auf..."
+        log WARN "   Raeume Temp-Files auf..."
         rm -rf /private/var/tmp/* 2>/dev/null
         rm -rf "$HOME/Library/Caches"/* 2>/dev/null
-        report_add FIX "Notfall-Cleanup bei ${disk_pct}% Disk"
+        report_add FIX "Notfall-Cleanup at ${disk_pct}% Disk"
     elif [ "$disk_pct" -gt "$DISK_USAGE_THRESHOLD" ] 2>/dev/null; then
-        log WARN "   Disk ${disk_pct}% belegt (Schwelle: ${DISK_USAGE_THRESHOLD}%)"
+        log WARN "   Disk ${disk_pct}% used (Schwelle: ${DISK_USAGE_THRESHOLD}%)"
     else
         log STEP "   Disk OK (${disk_pct}%)"
     fi
@@ -2697,8 +2697,8 @@ benchmark_should_run() {
     [ $((now - last_ts)) -ge "$BENCHMARK_INTERVAL" ]
 }
 
-# Fix #106: date +%s%N funktioniert nicht auf macOS (gibt "N" statt Nanosekunden)
-# → perl oder gdate fuer Millisekunden-Praezision
+# Fix #106: date +%s%N funktioniert not auf macOS (gibt "N" instead of Nanosekunden)
+# → perl or gdate for Millisekunden-Praezision
 _epoch_ms() {
     if command_exists gdate; then
         gdate +%s%N | cut -c1-13
@@ -2749,7 +2749,7 @@ benchmark_disk_read() {
 }
 
 benchmark_network() {
-    # Fix #87: Latenz + DNS in EINEM curl-Aufruf statt zwei
+    # Fix #87: Latenz + DNS in EINEM curl-Aufruf instead of zwei
     local curl_times
     curl_times=$(curl -so /dev/null -w "%{time_namelookup} %{time_connect}" \
         https://www.apple.com 2>/dev/null || echo "0 0")
@@ -2821,7 +2821,7 @@ benchmark_security() {
     else
         sip="OFF"
     fi
-    # Fix #88: XProtect Version via pkgutil statt system_profiler (~10s schneller)
+    # Fix #88: XProtect Version via pkgutil instead of system_profiler (~10s schneller)
     xprotect=$(pkgutil --pkg-info com.apple.pkg.XProtectPlistConfigData 2>/dev/null | awk '/version:/ {print $2}')
     [ -z "$xprotect" ] && xprotect=$(pkgutil --pkg-info com.apple.pkg.XProtectPayloads 2>/dev/null | awk '/version:/ {print $2}')
     [ -z "$xprotect" ] && xprotect="n/a"
@@ -2849,16 +2849,16 @@ benchmark_system_info() {
     thermal=$(pmset -g therm 2>/dev/null | awk '/CPU_Speed_Limit/ {print $3}' || echo "100")
     [ -z "$thermal" ] && thermal="100"
 
-    # Battery (nur MacBooks)
+    # Battery (only MacBooks)
     battery_pct=""
     battery_cycles=""
     battery_health=""
     if pmset -g batt 2>/dev/null | grep -q "InternalBattery"; then
         battery_pct=$(pmset -g batt 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%')
-        # Fix #87: ioreg EINMAL aufrufen statt dreimal (~3s gespart)
+        # Fix #87: ioreg EINMAL aufrufen instead of dreimal (~3s gespart)
         local ioreg_cache
         ioreg_cache=$(ioreg -rc AppleSmartBattery 2>/dev/null)
-        # Fix: Nur Top-Level-Keys matchen (^ + Leerzeichen + "), nicht innerhalb BatteryData-Blob
+        # Fix: Nur Top-Level-Keys matchen (^ + Leerzeichen + "), not innerhalb BatteryData-Blob
         battery_cycles=$(echo "$ioreg_cache" | awk '/^[[:space:]]+"CycleCount" =/ {print $NF}')
         battery_health=$(echo "$ioreg_cache" | awk -F'"' '/^[[:space:]]+"BatteryHealth" =/ {print $4}')
         [ -z "$battery_health" ] && battery_health=$(echo "$ioreg_cache" | awk '/^[[:space:]]+"MaxCapacity" =/ {print $NF}')
@@ -2926,7 +2926,7 @@ benchmark_compare() {
     # Letzten vorherigen Benchmark finden
     local prev_file
     prev_file=$(ls -1t "$BENCHMARK_DIR"/*.json 2>/dev/null | grep -v "$(basename "$current_file")" | head -1)
-    [ -z "$prev_file" ] && { log STEP "   Erster Benchmark - kein Vergleich moeglich"; return; }
+    [ -z "$prev_file" ] && { log STEP "   Erster Benchmark - no Vergleich possible"; return; }
 
     if ! command_exists jq; then return; fi
 
@@ -2943,7 +2943,7 @@ benchmark_compare() {
         local cpu_diff=$(( (curr_cpu - prev_cpu) * 100 / prev_cpu ))
         if [ "$cpu_diff" -gt 20 ]; then
             log WARN "   CPU: ${curr_cpu}ms vs ${prev_cpu}ms (+${cpu_diff}% langsamer!)"
-            log INFO "   CPU-Benchmark ${cpu_diff}% langsamer als letzter Lauf"
+            log INFO "   CPU-Benchmark ${cpu_diff}% langsamer als last Lauf"
         elif [ "$cpu_diff" -lt -10 ]; then
             log INFO "   CPU: ${curr_cpu}ms vs ${prev_cpu}ms (${cpu_diff}% schneller)"
         else
@@ -2956,7 +2956,7 @@ benchmark_compare() {
         local dw_diff=$(( (curr_dw - prev_dw) * 100 / prev_dw ))
         if [ "$dw_diff" -lt -30 ]; then
             log WARN "   Disk Write: ${curr_dw} MB/s vs ${prev_dw} MB/s (${dw_diff}% langsamer!)"
-            log INFO "   Disk-Write ${dw_diff}% langsamer als letzter Lauf"
+            log INFO "   Disk-Write ${dw_diff}% langsamer als last Lauf"
         else
             log STEP "   Disk Write: ${curr_dw} MB/s vs ${prev_dw} MB/s"
         fi
@@ -2965,9 +2965,9 @@ benchmark_compare() {
 
 module_benchmark() {
     if ! benchmark_should_run; then
-        log INFO "Benchmark: Bereits heute gelaufen - ueberspringe"
-        log STEP "   Naechster Benchmark in ~$((BENCHMARK_INTERVAL - ($(date +%s) - $(cat "$BENCHMARK_DIR/last_run" 2>/dev/null || echo 0)))) Sekunden"
-        report_add SUCCESS "Benchmark: skip (bereits heute)"
+        log INFO "Benchmark: Already ran today - skipping"
+        log STEP "   Next Benchmark in ~$((BENCHMARK_INTERVAL - ($(date +%s) - $(cat "$BENCHMARK_DIR/last_run" 2>/dev/null || echo 0)))) Sekunden"
+        report_add SUCCESS "Benchmark: skip (already heute)"
         return
     fi
 
@@ -2985,8 +2985,8 @@ module_benchmark() {
     local disk_r=$(benchmark_disk_read)
     log STEP "   Disk: Write ${disk_w} MB/s, Read ${disk_r} MB/s"
 
-    # 3. Netzwerk
-    log STEP "   Netzwerk-Benchmark..."
+    # 3. Network
+    log STEP "   Network-Benchmark..."
     local net_lat net_dns net_dl
     read -r net_lat net_dns net_dl <<< $(benchmark_network)
     log STEP "   Netz: Latenz ${net_lat}ms, DNS ${net_dns}ms, Download ${net_dl} MB/s"
@@ -3016,19 +3016,19 @@ module_benchmark() {
     log STEP "   FileVault: $fv | Firewall: $fw | Gatekeeper: $gk | SIP: $sip_status"
     log STEP "   XProtect: $xp"
 
-    # Security Self-Healing: auto-fixen was moeglich
+    # Security Self-Healing: auto-fixen was possible
     if [ "$fw" = "OFF" ] && ! $DRY_RUN; then
         sudo -n /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on 2>/dev/null && \
-            { log FIX "   Firewall aktiviert"; report_add FIX "Firewall aktiviert"; fw="ON"; } || \
-            log INFO "   Firewall deaktiviert (sudo noetig)"
+            { log FIX "   Firewall enabled"; report_add FIX "Firewall enabled"; fw="ON"; } || \
+            log INFO "   Firewall disabled (sudo needed)"
     fi
     if [ "$gk" = "OFF" ] && ! $DRY_RUN; then
         sudo -n spctl --master-enable 2>/dev/null && \
-            { log FIX "   Gatekeeper aktiviert"; report_add FIX "Gatekeeper reaktiviert"; gk="ON"; } || \
-            log INFO "   Gatekeeper deaktiviert (sudo noetig)"
+            { log FIX "   Gatekeeper enabled"; report_add FIX "Gatekeeper reenabled"; gk="ON"; } || \
+            log INFO "   Gatekeeper disabled (sudo needed)"
     fi
-    [ "$fv" = "OFF" ] && log INFO "   FileVault deaktiviert (manuell via Systemeinstellungen)"
-    [ "$sip_status" = "OFF" ] && log INFO "   SIP deaktiviert (Recovery Mode noetig)"
+    [ "$fv" = "OFF" ] && log INFO "   FileVault disabled (manual via Systemeinstellungen)"
+    [ "$sip_status" = "OFF" ] && log INFO "   SIP disabled (Recovery Mode needed)"
 
     # 6. System-Info
     log STEP "   System-Info..."
@@ -3043,11 +3043,11 @@ module_benchmark() {
     fi
 
     if [ "$up_days" -gt 30 ] 2>/dev/null; then
-        log WARN "   System laeuft seit ${up_days} Tagen - Neustart empfohlen"
+        log WARN "   System up for ${up_days} days - restart recommended"
         log INFO "   Uptime ${up_days} Tage"
     fi
 
-    # 7. Ergebnisse speichern (JSON)
+    # 7. Resultse speichern (JSON)
     local json_file
     json_file=$(benchmark_save_json "$ts" "$cpu_ms" "$disk_w" "$disk_r" \
         "$net_lat" "$net_dns" "$net_dl" \
@@ -3125,7 +3125,7 @@ print_report() {
         printf '  - %s\n' "${REPORT_ERRORS[@]}"
     fi
 
-    # Fix #80: Gesamt-Speicher-Summary aus FIXED-Eintraegen extrahieren
+    # Fix #80: Total-Speicher-Summary from FIXED-Eintraegen extrahieren
     local total_mb_freed=0
     for entry in "${REPORT_FIXED[@]}"; do
         local mb_val
@@ -3154,11 +3154,11 @@ health_dashboard() {
     if ollama_available; then
         echo -e "  Ollama:  ${GREEN}online${NC} ($OLLAMA_MODEL)"
         local model_count=$(( $(ollama_list_cached | awk 'NR>1' | wc -l) ))
-        echo -e "  Modelle: ${model_count}"
+        echo -e "  Modele: ${model_count}"
     else
         echo -e "  Ollama:  ${RED}offline${NC}"
     fi
-    echo -e "  Disk:    $(df -h / | awk 'NR==2 {print $5}') belegt ($(df -h / | awk 'NR==2 {print $4}') frei)"
+    echo -e "  Disk:    $(df -h / | awk 'NR==2 {print $5}') used ($(df -h / | awk 'NR==2 {print $4}') free)"
     local pc=$(( $(ls -1 "$MEISTER_DIR/patches/" 2>/dev/null | wc -l) ))
     echo -e "  Patches: ${pc} gespeichert"
     if [ $pc -gt 0 ]; then
@@ -3171,14 +3171,14 @@ health_dashboard() {
     local history_file="$MEISTER_DIR/history.log"
     if [ -f "$history_file" ]; then
         local run_count=$(wc -l < "$history_file" | xargs)
-        echo -e "  Runs:    ${run_count} gesamt"
+        echo -e "  Runs:    ${run_count} total"
         echo -e "  Letzte Laeufe:"
         tail -5 "$history_file" | while IFS= read -r line; do
             echo -e "    $line"
         done
     fi
     echo -e "  Config:  $MEISTER_CONFIG"
-    # Letzter Benchmark
+    # Last Benchmark
     local last_bench=$(ls -1t "$BENCHMARK_DIR"/*.json 2>/dev/null | head -1)
     if [ -n "$last_bench" ] && command_exists jq; then
         local b_date=$(basename "$last_bench" .json)
@@ -3208,9 +3208,9 @@ log_analysis() {
     local run_count=$(wc -l < "$history_file" | xargs)
     [ "$run_count" -lt 3 ] && return
 
-    log INFO "Log-Analyse: Pruefe wiederkehrende Probleme..."
+    log INFO "Log-Analyse: Checking wiederkehrende Probleme..."
 
-    # Warnings und Errors aus letzten 5 Runs zaehlen
+    # Warnings and Errors from letzten 5 Runs zaehlen
     local recent_warns=""
     if [ -f "$LOGFILE" ]; then
         recent_warns=$(grep -E "^.* - (WARN|ERROR) - " "$LOGFILE" 2>/dev/null | \
@@ -3227,16 +3227,16 @@ log_analysis() {
     fi
 
     if [ -n "$recent_warns" ]; then
-        # Stale Eintraege rausfiltern (deinstallierte Apps, alte Timeouts)
+        # Stale Eintraege rfromfiltern (deinstallede Apps, alte Timeouts)
         local recurring=$(echo "$recent_warns" | awk '$1 >= 3 {$1=""; print}' | sed 's/^ //' | \
-            grep -vE "VERWAIST:.*nicht mehr installiert|TIMEOUT bei git remote|Wiederkehrende Probleme")
+            grep -vE "ORPHANED:.*not more installed|TIMEOUT on git remote|Recurring problems")
         if [ -n "$recurring" ]; then
-            log INFO "   Wiederkehrende Probleme:"
+            log INFO "   Recurring problems:"
             echo "$recurring" | while IFS= read -r line; do
                 [ -n "$line" ] && log STEP "     - $line"
             done
         else
-            log STEP "   Keine wiederkehrenden Probleme (stale Eintraege gefiltert)"
+            log STEP "   No wiederkehrenden Probleme (stale Eintraege gefiltert)"
         fi
     fi
 }
@@ -3277,7 +3277,7 @@ send_report_notification() {
     local fix_count=${#REPORT_FIXED[@]}
 
     local subtitle=""
-    [ $err_count -gt 0 ] && subtitle="${err_count} Fehler!"
+    [ $err_count -gt 0 ] && subtitle="${err_count} Error!"
     [ $fix_count -gt 0 ] && subtitle="${subtitle} ${fix_count} Fixes"
     send_notification "Meister" "$summary" "$subtitle"
 }
@@ -3298,14 +3298,14 @@ install_launchagent() {
         weekly)  interval_secs=604800 ;;
     esac
 
-    log INFO "Installiere LaunchAgent ($LAUNCHAGENT_SCHEDULE)..."
+    log INFO "Installing LaunchAgent ($LAUNCHAGENT_SCHEDULE)..."
     log STEP "   Script: $script_path"
     log STEP "   Plist:  $plist_path"
 
     # Bestehenden Agent stoppen
     if launchctl list 2>/dev/null | grep -q "$label"; then
         launchctl unload "$plist_path" 2>/dev/null
-        log STEP "   Bestehender Agent gestoppt"
+        log STEP "   Existing Agent stopped"
     fi
 
     mkdir -p "$HOME/Library/LaunchAgents"
@@ -3345,22 +3345,22 @@ PLISTEOF
 
     launchctl load "$plist_path" 2>/dev/null
     if launchctl list 2>/dev/null | grep -q "$label"; then
-        log FIX "LaunchAgent installiert und geladen"
+        log FIX "LaunchAgent installed and loaded"
         log INFO "   Schedule: $LAUNCHAGENT_SCHEDULE"
         log INFO "   Deinstallieren: launchctl unload $plist_path && rm $plist_path"
         echo ""
-        echo -e "${GREEN}LaunchAgent erfolgreich installiert!${NC}"
+        echo -e "${GREEN}LaunchAgent successful installed!${NC}"
         echo -e "  Schedule:      $LAUNCHAGENT_SCHEDULE"
         echo -e "  Plist:         $plist_path"
         echo -e "  Log:           $MEISTER_DIR/launchagent.log"
         echo -e "  Deinstallieren: launchctl unload $plist_path"
     else
-        log ERROR "LaunchAgent konnte nicht geladen werden"
-        echo -e "${RED}LaunchAgent Installation fehlgeschlagen!${NC}"
+        log ERROR "LaunchAgent konnte not loaded werden"
+        echo -e "${RED}LaunchAgent Installation failed!${NC}"
     fi
 }
 
-# Fix #117: Long-Options vor getopts abfangen (getopts kann nur Short-Options)
+# Fix #117: Long-Options before getopts abfangen (getopts kann only Short-Options)
 for arg in "$@"; do
     case "$arg" in
         --help)    set -- "-h"; break ;;
@@ -3377,30 +3377,30 @@ while getopts ":aAXTSCLhcHnIPGq" opt; do
        RUN_SUDO_TASKS=true; CLEAN_CACHES=true; LIST_LARGE_FILES=true; RUN_PERF_TUNE=true; RUN_GIT_REPOS=true ;;
     G) RUN_GIT_REPOS=true ;;
     P) RUN_PERF_TUNE=true ;;
-    A) log WARN "ClamAV entfernt - XProtect laeuft in Security Suite" ;;
+    A) log WARN "ClamAV removed - XProtect runs in Security Suite" ;;
     X) CLEAN_XCODE=true ;;
     T) EMPTY_TRASH=true ;;
     S) RUN_SUDO_TASKS=true ;;
     C) CLEAN_CACHES=true ;;
     L) LIST_LARGE_FILES=true ;;
-    c) log WARN "ClamAV entfernt - XProtect laeuft in Security Suite" ;;
+    c) log WARN "ClamAV removed - XProtect runs in Security Suite" ;;
     H) SHOW_HEALTH=true ;;
     n) DRY_RUN=true ;;
     q) QUIET_MODE=true ;;
     I) INSTALL_LAUNCHAGENT=true ;;
     h) cat << 'HELPEOF'
-Meister - macOS Wartung & Self-Healing
+Meister - macOS Maintenance & Self-Healing
 
 VERWENDUNG:
   meister              Auto-Detect (Default)
-  meister -a           Alle Module erzwingen
+  meister -a           All Module erzwingen
   meister -n           Dry-Run
-  meister -q           Quiet (nur Warns/Errors/Fixes)
-  meister -H           Health Dashboard
+  meister -q           Quiet (only Warns/Errors/Fixes)
+  meister -H           Health dashboard
   meister -I           LaunchAgent installieren
 
 OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
-            -L Grosse Dateien  -P Performance  -G Git
+            -L Large files  -P Performance  -G Git
 
 Config: ~/.meister/config
 HELPEOF
@@ -3430,7 +3430,7 @@ auto_detect() {
         if [ "$xc_mb" -ge "$AUTO_XCODE_THRESHOLD_MB" ]; then
             CLEAN_XCODE=true
             detected=$((detected + 1))
-            log STEP "   Xcode DerivedData: ${xc_mb}MB (>= ${AUTO_XCODE_THRESHOLD_MB}MB) → aktiviert"
+            log STEP "   Xcode DerivedData: ${xc_mb}MB (>= ${AUTO_XCODE_THRESHOLD_MB}MB) → enabled"
         else
             log STEP "   Xcode DerivedData: ${xc_mb}MB (< ${AUTO_XCODE_THRESHOLD_MB}MB) → OK"
         fi
@@ -3444,7 +3444,7 @@ auto_detect() {
         if [ "$trash_items" -ge "$AUTO_TRASH_THRESHOLD_ITEMS" ] || [ "$trash_mb" -ge "$AUTO_TRASH_THRESHOLD_MB" ]; then
             EMPTY_TRASH=true
             detected=$((detected + 1))
-            log STEP "   Papierkorb: ${trash_items} Elemente, ${trash_mb}MB → aktiviert"
+            log STEP "   Papierkorb: ${trash_items} Elemente, ${trash_mb}MB → enabled"
         else
             log STEP "   Papierkorb: ${trash_items} Elemente, ${trash_mb}MB → OK"
         fi
@@ -3457,21 +3457,21 @@ auto_detect() {
         if [ "$cache_mb" -ge "$AUTO_CACHE_THRESHOLD_MB" ]; then
             CLEAN_CACHES=true
             detected=$((detected + 1))
-            log STEP "   User Caches: ${cache_mb}MB (>= ${AUTO_CACHE_THRESHOLD_MB}MB) → aktiviert"
+            log STEP "   User Caches: ${cache_mb}MB (>= ${AUTO_CACHE_THRESHOLD_MB}MB) → enabled"
         else
             log STEP "   User Caches: ${cache_mb}MB (< ${AUTO_CACHE_THRESHOLD_MB}MB) → OK"
         fi
     fi
 
-    # 4. Disk Usage → grosse Dateien listen
+    # 4. Disk Usage → grosse Files listen
     local disk_usage=$(df -H / 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
     disk_usage=${disk_usage:-0}
     if [ "$disk_usage" -ge "$DISK_USAGE_THRESHOLD" ]; then
         LIST_LARGE_FILES=true
         detected=$((detected + 1))
-        log STEP "   Disk: ${disk_usage}% belegt (>= ${DISK_USAGE_THRESHOLD}%) → grosse Dateien listen"
+        log STEP "   Disk: ${disk_usage}% used (>= ${DISK_USAGE_THRESHOLD}%) → grosse Files listen"
     else
-        log STEP "   Disk: ${disk_usage}% belegt → OK"
+        log STEP "   Disk: ${disk_usage}% used → OK"
     fi
 
     # 5. periodic scripts (sudo tasks)
@@ -3481,30 +3481,30 @@ auto_detect() {
         if [ "$daily_age_days" -ge "$AUTO_PERIODIC_INTERVAL_DAYS" ]; then
             RUN_SUDO_TASKS=true
             detected=$((detected + 1))
-            log STEP "   periodic scripts: ${daily_age_days} Tage alt (>= ${AUTO_PERIODIC_INTERVAL_DAYS}) → aktiviert"
+            log STEP "   periodic scripts: ${daily_age_days} days old (>= ${AUTO_PERIODIC_INTERVAL_DAYS}) → enabled"
         else
-            log STEP "   periodic scripts: ${daily_age_days} Tage alt → OK"
+            log STEP "   periodic scripts: ${daily_age_days} days old → OK"
         fi
     else
-        # Kein Log → wahrscheinlich noch nie gelaufen
+        # No Log → wahrscheinlich still nie gelaufen
         RUN_SUDO_TASKS=true
         detected=$((detected + 1))
-        log STEP "   periodic scripts: kein Log gefunden → aktiviert"
+        log STEP "   periodic scripts: no Log foand → enabled"
     fi
 
     # 7. Performance + Git (bestehende Auto-Logik beibehalten)
     if $SELFHEAL_PERF_AUTO; then
         RUN_PERF_TUNE=true
         detected=$((detected + 1))
-        log STEP "   Performance-Tuning: SELFHEAL_PERF_AUTO=true → aktiviert"
+        log STEP "   Performance tuning: SELFHEAL_PERF_AUTO=true → enabled"
     fi
-    log INFO "Auto-Detect: ${detected} Module automatisch aktiviert"
+    log INFO "Auto-Detect: ${detected} Module automatisch enabled"
 }
 
 if ! $MANUAL_FLAGS_SET && $AUTO_DETECT && ! $SHOW_HEALTH && ! $INSTALL_LAUNCHAGENT; then
     auto_detect
 else
-    # Manuelle Flags gesetzt oder Auto-Detect deaktiviert - bestehende Logik
+    # Manuelle Flags gesetzt or Auto-Detect disabled - bestehende Logik
     if $SELFHEAL_PERF_AUTO && ! $RUN_PERF_TUNE; then
         RUN_PERF_TUNE=true
     fi
@@ -3517,16 +3517,16 @@ acquire_lock
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
 echo "  ║        MEISTER v0.09                     ║"
-echo "  ║   macOS Wartung & Self-Healing           ║"
+echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODUS]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
-log INFO "Meister v0.09 gestartet ($(date))"
-$DRY_RUN && log WARN "DRY-RUN: Keine Aenderungen werden vorgenommen"
+log INFO "Meister v0.09 startingd ($(date))"
+$DRY_RUN && log WARN "DRY-RUN: No Changes werden vorgenommen"
 log STEP "   Logfile: $LOGFILE"
-[ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG geladen"
+[ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
 if ! $MANUAL_FLAGS_SET && $AUTO_DETECT; then
     log STEP "   Modus: AUTO-DETECT"
 else
@@ -3537,8 +3537,8 @@ log STEP "   Module: XCODE=$CLEAN_XCODE TRASH=$EMPTY_TRASH SUDO=$RUN_SUDO_TASKS 
 if $SHOW_HEALTH; then health_dashboard; release_lock; exit 0; fi
 if $INSTALL_LAUNCHAGENT; then install_launchagent; release_lock; exit 0; fi
 
-# Fix #145: Sudo ZUERST holen - vor Ollama und allen Modulen
-# Verhindert Password-Prompt mitten im Lauf (z.B. bei brew cask upgrade)
+# Fix #145: Sudo ZUERST holen - before Ollama and alln Modulen
+# Verhindert Password-Prompt mitten im Lauf (z.B. at brew cask upgrade)
 if ! $DRY_RUN && $NEEDS_SUDO; then
     if [ -t 0 ]; then
         log INFO "Requesting Sudo..."
@@ -3546,28 +3546,28 @@ if ! $DRY_RUN && $NEEDS_SUDO; then
             keep_sudo
             log INFO "   Sudo OK"
         else
-            log WARN "Sudo verweigert oder Timeout - einige Operationen koennten fehlschlagen"
-            log INFO "   Sudo nicht verfuegbar"
+            log WARN "Sudo verweigert or Timeout - some Operationen koennten fehlschlagen"
+            log INFO "   Sudo not available"
         fi
     else
         if sudo -n true 2>/dev/null; then
             keep_sudo
             log INFO "   Sudo OK (non-interactive/cached)"
         else
-            log WARN "Kein interaktives Terminal + kein Sudo-Cache - sudo-Operationen uebersprungen"
-            log INFO "   Sudo nicht verfuegbar (non-interactive)"
+            log WARN "No interaktives Terminal + no Sudo-Cache - sudo-Operationen skipped"
+            log INFO "   Sudo not available (non-interactive)"
         fi
     fi
 fi
 
-# Fix #41: Zentraler Ollama-Starter + Fix #45: Modell-Check
+# Fix #41: Central Ollama startingr + Fix #45: Model check
 if ollama_available || ensure_ollama_running ""; then
     log INFO "Ollama: online (${OLLAMA_MODEL})"
     local_models=$(ollama_list_cached | awk 'NR>1 {print $1}' | tr '\n' ', ')
-    log STEP "   Modelle: ${local_models:-keine}"
+    log STEP "   Modele: ${local_models:-no}"
     ensure_ollama_model
 else
-    log WARN "Ollama: nicht verfuegbar - kein AI-Heal"
+    log WARN "Ollama: not available - no AI-Heal"
     OLLAMA_ENABLED=false
 fi
 
@@ -3591,32 +3591,32 @@ if check_net; then
     run_module_safe "Spotlight Fix"  module_spotlight_fix
     run_module_safe "iCloud Fix"     module_icloud_fix
     run_module_safe "Performance"    module_performance
-    run_module_safe "Git Repos"      module_git_repos
+    run_module_safe "Git repos"      module_git_repos
     run_module_safe "Security Suite" module_security_suite
     run_module_safe "Benchmark"      module_benchmark
 
     if $RUN_SUDO_TASKS; then
-        section_header "System-Wartung (sudo)"
+        section_header "System maintenance (sudo)"
         module_timer_start
-        log INFO "Starte periodic scripts..."
+        log INFO "Starting periodic scripts..."
         log STEP "   periodic daily..."
         run_or_dry sudo periodic daily
         log STEP "   periodic weekly..."
         run_or_dry sudo periodic weekly
         log STEP "   periodic monthly..."
         run_or_dry sudo periodic monthly
-        log INFO "   DNS-Cache flush..."
+        log INFO "   DNS cache flush..."
         run_or_dry sudo dscacheutil -flushcache
         report_add FIX "Ran periodic scripts & DNS flush"
-        module_timer_stop "System-Wartung"
+        module_timer_stop "System-Maintenance"
     fi
 else
-    log ERROR "Abbruch: Kein Internet"
+    log ERROR "Aborting: No internet"
 fi
 
 log_analysis
 
-# Fix #141: Ollama stoppen bevor Report (damit RAM-Info im Report stimmt)
+# Fix #141: Ollama stoppen bebefore Report (damit RAM-Info im Report stimmt)
 shutdown_ollama
 
 print_report
@@ -3624,6 +3624,6 @@ save_history
 send_report_notification
 release_lock
 
-# Fix #38: Exit-Code 1 bei Errors
+# Fix #38: Exit-Code 1 at Errors
 [ ${#REPORT_ERRORS[@]} -gt 0 ] && exit 1
 exit 0

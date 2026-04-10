@@ -1,10 +1,10 @@
 class Meister < Formula
-  desc "macOS Wartung, Update & Self-Healing"
-  homepage "https://github.com/maf4711/homebrew-meister"
-  url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v0.09.tar.gz"
-  sha256 "6465846370511345e6bd6028a4b8e3918bcfdb9efcd43192630e33b38149bfb1"
+  desc "macOS Maintenance, Update & Self-Healing"
+  homepage "https://github.com/maf4711/meister"
+  url "https://github.com/maf4711/meister/archive/refs/tags/v1.0.tar.gz"
+  sha256 "PLACEHOLDER"
   license "GPL-3.0-only"
-  version "0.09"
+  version "1.0"
 
   depends_on :macos
 
@@ -19,16 +19,16 @@ class Meister < Formula
 
   def caveats
     <<~EOS
-      meister v#{version} wurde installiert!
+      meister v#{version} installed!
 
-      Verwendung:
-        meister          Auto-Detect Wartung
-        meister -a       Alle Module
-        meister -n       Dry-Run
-        meister -h       Hilfe
+      Usage:
+        meister          Auto-detect maintenance
+        meister -a       All modules
+        meister -n       Dry-run
+        meister -h       Help
 
-      Konfiguration: ~/.meister/config
-      Logs: ~/.meister/meister.log
+      Config: ~/.meister/config
+      Logs:   ~/.meister/meister.log
     EOS
   end
 
