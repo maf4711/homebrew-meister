@@ -75,20 +75,20 @@ PERF_DISABLE_AGENTS=true       # Disable unnecessary user LaunchAgents
 PERF_CLEAN_OLLAMA=true         # Remove unused Ollama models
 OLLAMA_KEEP_MODELS="qwen3-coder:30b llama3.2:latest"  # Models to keep
 
-# Spotlight Fix (automatisch at jedem Lauf)
+# Spotlight Fix (automatic on every run)
 SPOTLIGHT_FIX_ENABLED=true         # Spotlight diagnosis and repair
 SPOTLIGHT_MDS_CPU_THRESHOLD=30     # mds CPU threshold for restart (%)
 SPOTLIGHT_REINDEX_ON_ERROR=true    # Auto-reindex on error
 
-# iCloud Sync Fix (automatisch at jedem Lauf)
+# iCloud Sync Fix (automatic on every run)
 ICLOUD_FIX_ENABLED=true            # iCloud diagnosis and repair
 ICLOUD_GHOST_DIRS_CLEAN=true       # Leere Geister-Folder in HOME entfernen
 ICLOUD_STUBS_SCAN=true             # Corrupt iCloud-Stubs erkennen (65535 links)
-ICLOUD_STUBS_DELETE=false          # Corrupt Stubs automatisch deletingn (default: from, Security)
+ICLOUD_STUBS_DELETE=false          # Auto-delete corrupt stubs (default: off, safety)
 ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
 ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
 
-# Self-Healing v0.06: Automatische Repair for all Warnings
+# Self-Healing v0.06: Automatic repair for all warnings
 SELFHEAL_APPSTORE_OPEN=true        # Open App Store on missing login
 SELFHEAL_FDA_OPEN=true             # Open privacy settings for FDA
 SELFHEAL_ORPHAN_PREFS=true         # Backup + delete orphaned preferences
@@ -124,7 +124,7 @@ SECURITY_TCC_AUDIT=true                # Datenschutz-Berechtigungen checking
 CLEAN_DOCKER=true                      # Docker Cleanup
 LAUNCHAGENT_SCHEDULE="weekly"          # daily/weekly/monthly
 
-AUTO_DETECT=true                       # Automatische Erkennung enabled
+AUTO_DETECT=true                       # Auto-detection enabled
 AUTO_XCODE_THRESHOLD_MB=500            # Delete DerivedData above this size
 AUTO_TRASH_THRESHOLD_ITEMS=50          # Empty trash above X items
 AUTO_TRASH_THRESHOLD_MB=500            # Empty trash above X MB
@@ -977,7 +977,7 @@ module_ollama() {
     if ollama_available; then
         log INFO "   Ollama server running"
     elif ensure_ollama_running "   "; then
-        report_add FIX "Ollama-Server automatisch startingd"
+        report_add FIX "Ollama server auto-started"
     else
         log STEP "   Ollama-Server offline"
     fi
@@ -1051,7 +1051,7 @@ module_git_repos() {
                 -not -path "*/Library/Mobile Documents/*" \
                 2>/dev/null
         done | sort -u > "$repo_list"
-        # Cache speichern
+        # Cache result
         cp "$repo_list" "$repo_cache" 2>/dev/null
     fi
 
@@ -1332,7 +1332,7 @@ module_persistence_audit() {
                     /tmp/*|/var/tmp/*|/private/tmp/*)
                         issues="${issues}Binary in /tmp (suspicious); " ;;
                     "$HOME"/.*/*|"$HOME"/.*)
-                        # Versteckter Pfad - only warnen wenn not bekannt
+                        # Hidden path - only warn if not known
                         if ! echo "$program" | grep -qE "\.(claude|ollama|nvm|npm|cargo|rustup|docker)/"; then
                             issues="${issues}Binary in verstecktem Folder; "
                         fi ;;
@@ -1420,7 +1420,7 @@ module_tcc_audit() {
             local service="${service_entry%%:*}"
             local service_name="${service_entry#*:}"
 
-            # All Apps mit dieser Berechtigung abfragen (allowed=1)
+            # Query all apps with this permission (allowed=1)
             local apps
             apps=$(sqlite3 "$user_tcc" \
                 "SELECT client FROM access WHERE service='$service' AND auth_value=2;" 2>/dev/null)
@@ -1480,7 +1480,7 @@ module_tcc_audit() {
     fi
 
     if [ "$tcc_findings" -gt 0 ]; then
-        log INFO "   TCC-Audit: ${tcc_findings} Eintraege (siehe Log)"
+        log INFO "   TCC-Audit: ${tcc_findings} entries (see log)"
     else
         report_add SUCCESS "TCC-Audit: all permissions current and valid"
     fi
@@ -1515,7 +1515,7 @@ module_system() {
             log STEP "     $line"
         done
 
-        # Fix #26: Recommended Updates automatisch installieren (no Restart)
+        # Fix #26: Auto-install recommended updates (no restart)
         local has_restart=$(echo "$sysup" | grep -ci "restart" 2>/dev/null || echo 0)
         local has_recommended=$(echo "$sysup" | grep -ci "Recommended: YES" 2>/dev/null || echo 0)
 
@@ -2024,8 +2024,8 @@ module_spotlight_fix() {
                         log FIX "   Restarting mds..."
                         run_or_dry sudo killall mds 2>/dev/null
                         sleep 2
-                        log FIX "   mds neustartingd"
-                        report_add FIX "Spotlight: mds neustartingd (haengte at ${mds_total}% CPU)"
+                        log FIX "   mds restarted"
+                        report_add FIX "Spotlight: mds restarted (stuck at ${mds_total}% CPU)"
                         fixes=$((fixes + 1))
                     else
                         log INFO "   Spotlight: mds at ${mds_total}% CPU (sudo for Restart needed)"
@@ -2237,7 +2237,7 @@ module_icloud_fix() {
                 report_add FIX "iCloud: ${stub_count} corrupt Stubs removed"
                 fixes=$((fixes + 1))
             else
-                log WARN "   ${stub_count} corrupt Stubs foand (ICLOUD_STUBS_DELETE=true for Deletingn)"
+                log WARN "   ${stub_count} corrupt stubs found (set ICLOUD_STUBS_DELETE=true to delete)"
                 log INFO "   iCloud: ${stub_count} corrupt Stubs (Config: ICLOUD_STUBS_DELETE)"
                 warns=$((warns + 1))
             fi
@@ -2263,14 +2263,14 @@ module_icloud_fix() {
                 log FIX "   Restarting bird..."
                 run_or_dry killall bird 2>/dev/null
                 sleep 3
-                # bird wird automatisch von launchd neustartingd
+                # bird will be auto-restarted by launchd
                 if pgrep -x bird &>/dev/null; then
-                    log FIX "   bird neustartingd"
-                    report_add FIX "iCloud: bird neustartingd (CPU war ${bird_cpu}%)"
+                    log FIX "   bird restarted"
+                    report_add FIX "iCloud: bird restarted (CPU was ${bird_cpu}%)"
                     fixes=$((fixes + 1))
                 else
-                    log WARN "   bird wurde not automatisch neustartingd"
-                    log INFO "   iCloud: bird not neustartingd"
+                    log WARN "   bird was not auto-restarted"
+                    log INFO "   iCloud: bird not restarted"
                 fi
             else
                 log INFO "   iCloud: bird CPU ${bird_cpu}%"
@@ -2283,9 +2283,9 @@ module_icloud_fix() {
         warns=$((warns + 1))
     fi
 
-    # ── [4/6] iCloud Drive Speicher ──
+    # ── [4/6] iCloud Drive Storage ──
     # Fix #139: Timeout for du/find auf iCloud (fileproviderd kann haengen)
-    log STEP "   [4/6] iCloud Drive Speicher..."
+    log STEP "   [4/6] iCloud Drive Storage..."
     if [ -d "$icloud_dir" ]; then
         local icloud_size=$(timeout 10 du -sm "$icloud_dir" 2>/dev/null | awk '{print $1}')
         if [ $? -eq 124 ] || [ -z "$icloud_size" ]; then
@@ -2396,7 +2396,7 @@ module_icloud_fix() {
                 log FIX "   Viele wartende Syncs - starting bird neu..."
                 run_or_dry killall bird 2>/dev/null
                 sleep 3
-                report_add FIX "iCloud: bird neustartingd (${needs_sync_count} pending syncs)"
+                report_add FIX "iCloud: bird restarted (${needs_sync_count} pending syncs)"
                 fixes=$((fixes + 1))
             else
                 log INFO "   iCloud: ${needs_sync_count} Container warten auf Sync"
@@ -2407,7 +2407,7 @@ module_icloud_fix() {
         fi
 
         if [ "${sync_disabled_count:-0}" -gt 0 ]; then
-            log STEP "   ${sync_disabled_count} Container mit disabledem Sync (deinstallede Apps)"
+            log STEP "   ${sync_disabled_count} containers with disabled sync (uninstalled apps)"
         fi
     else
         log STEP "   brctl not available - Sync-Status skipped"
@@ -2642,7 +2642,7 @@ selfheal_preflight() {
     log INFO "Self-Healing Preflight Check..."
 
     if command_exists brew; then
-        log STEP "   Checking Homebrew-Zustand..."
+        log STEP "   Checking Homebrew health..."
         if ! brew --prefix &>/dev/null; then
             log WARN "   Homebrew not responding"
             log INFO "   Homebrew reagiert not (brew --prefix failed)"
@@ -2998,7 +2998,7 @@ module_benchmark() {
     local mem_used=$((mem_total - mem_free))
     local mem_pct=$((mem_used * 100 / mem_total))
     local pressure_txt="normal"
-    [ "$mem_pressure" -ge 2 ] 2>/dev/null && pressure_txt="WARNUNG"
+    [ "$mem_pressure" -ge 2 ] 2>/dev/null && pressure_txt="WARNING"
     [ "$mem_pressure" -ge 4 ] 2>/dev/null && pressure_txt="KRITISCH"
     log STEP "   RAM: ${mem_used}/${mem_total} MB (${mem_pct}%), Pressure: ${pressure_txt}, Swap: ${swap_mb} MB"
 
@@ -3055,7 +3055,7 @@ module_benchmark() {
         "$fv" "$fw" "$gk" "$sip_status" "$xp" \
         "$up_days" "$l1" "$l5" "$l15" "$therm" \
         "$batt_pct" "$batt_cyc" "$batt_hp")
-    log STEP "   Gespeichert: $json_file"
+    log STEP "   Saved: $json_file"
 
     # 8. Vergleich mit letztem Lauf
     benchmark_compare "$json_file"
@@ -3125,7 +3125,7 @@ print_report() {
         printf '  - %s\n' "${REPORT_ERRORS[@]}"
     fi
 
-    # Fix #80: Total-Speicher-Summary from FIXED-Eintraegen extrahieren
+    # Fix #80: Extract total storage summary from FIXED entries
     local total_mb_freed=0
     for entry in "${REPORT_FIXED[@]}"; do
         local mb_val
@@ -3133,7 +3133,7 @@ print_report() {
         [ -n "$mb_val" ] && total_mb_freed=$((total_mb_freed + mb_val))
     done
     if [ "$total_mb_freed" -gt 0 ]; then
-        echo -e "\n${GREEN}--- Speicher-Summary ---${NC}"
+        echo -e "\n${GREEN}--- Storage Summary ---${NC}"
         if [ "$total_mb_freed" -gt 1024 ]; then
             local gb_freed=$(echo "scale=1; $total_mb_freed / 1024" | bc 2>/dev/null || echo "$((total_mb_freed / 1024))")
             echo "  Freigegeben: ~${gb_freed} GB (${total_mb_freed} MB)"
@@ -3160,7 +3160,7 @@ health_dashboard() {
     fi
     echo -e "  Disk:    $(df -h / | awk 'NR==2 {print $5}') used ($(df -h / | awk 'NR==2 {print $4}') free)"
     local pc=$(( $(ls -1 "$MEISTER_DIR/patches/" 2>/dev/null | wc -l) ))
-    echo -e "  Patches: ${pc} gespeichert"
+    echo -e "  Patches: ${pc} saved"
     if [ $pc -gt 0 ]; then
         echo -e "  Letzte:"
         ls -1t "$MEISTER_DIR/patches/" 2>/dev/null | head -5 | while IFS= read -r f; do
@@ -3193,7 +3193,7 @@ health_dashboard() {
         echo -e "  CPU:     ${b_cpu}ms | Disk: W:${b_dw}/R:${b_dr} MB/s"
         echo -e "  Security: FV:$b_fv FW:$b_fw GK:$b_gk SIP:$b_sip"
         local bench_count=$(( $(ls -1 "$BENCHMARK_DIR"/*.json 2>/dev/null | wc -l) ))
-        echo -e "  History: ${bench_count} Benchmarks gespeichert"
+        echo -e "  History: ${bench_count} Benchmarks saved"
     fi
     echo -e "${MAGENTA}═══════════════════════════════════════${NC}"
 }
@@ -3227,7 +3227,7 @@ log_analysis() {
     fi
 
     if [ -n "$recent_warns" ]; then
-        # Stale Eintraege rfromfiltern (deinstallede Apps, alte Timeouts)
+        # Filter stale entries (uninstalled apps, old timeouts)
         local recurring=$(echo "$recent_warns" | awk '$1 >= 3 {$1=""; print}' | sed 's/^ //' | \
             grep -vE "ORPHANED:.*not more installed|TIMEOUT on git remote|Recurring problems")
         if [ -n "$recurring" ]; then
@@ -3236,7 +3236,7 @@ log_analysis() {
                 [ -n "$line" ] && log STEP "     - $line"
             done
         else
-            log STEP "   No wiederkehrenden Probleme (stale Eintraege gefiltert)"
+            log STEP "   No recurring problems (stale entries filtered)"
         fi
     fi
 }
@@ -3347,13 +3347,13 @@ PLISTEOF
     if launchctl list 2>/dev/null | grep -q "$label"; then
         log FIX "LaunchAgent installed and loaded"
         log INFO "   Schedule: $LAUNCHAGENT_SCHEDULE"
-        log INFO "   Deinstallieren: launchctl unload $plist_path && rm $plist_path"
+        log INFO "   Uninstall: launchctl unload $plist_path && rm $plist_path"
         echo ""
         echo -e "${GREEN}LaunchAgent successful installed!${NC}"
         echo -e "  Schedule:      $LAUNCHAGENT_SCHEDULE"
         echo -e "  Plist:         $plist_path"
         echo -e "  Log:           $MEISTER_DIR/launchagent.log"
-        echo -e "  Deinstallieren: launchctl unload $plist_path"
+        echo -e "  Uninstall: launchctl unload $plist_path"
     else
         log ERROR "LaunchAgent konnte not loaded werden"
         echo -e "${RED}LaunchAgent Installation failed!${NC}"
@@ -3366,7 +3366,7 @@ for arg in "$@"; do
         --help)    set -- "-h"; break ;;
         --version) echo "meister v0.09"; exit 0 ;;
         --dry-run) set -- "-n"; break ;;
-        --*)       echo "[ERROR] Unbekannte Option: $arg (siehe meister -h)"; exit 1 ;;
+        --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
     esac
 done
 
@@ -3391,13 +3391,13 @@ while getopts ":aAXTSCLhcHnIPGq" opt; do
     h) cat << 'HELPEOF'
 Meister - macOS Maintenance & Self-Healing
 
-VERWENDUNG:
-  meister              Auto-Detect (Default)
-  meister -a           All Module erzwingen
-  meister -n           Dry-Run
-  meister -q           Quiet (only Warns/Errors/Fixes)
+USAGE:
+  meister              Auto-detect (default)
+  meister -a           Force all modules
+  meister -n           Dry-run
+  meister -q           Quiet (warnings/fixes only)
   meister -H           Health dashboard
-  meister -I           LaunchAgent installieren
+  meister -I           Install LaunchAgent
 
 OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
             -L Large files  -P Performance  -G Git
@@ -3405,7 +3405,7 @@ OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
 Config: ~/.meister/config
 HELPEOF
        exit 0 ;;
-    \?) log ERROR "Unbekannte Option: -$OPTARG"; exit 1 ;;
+    \?) log ERROR "Unknown option: -$OPTARG"; exit 1 ;;
   esac
 done
 
@@ -3498,7 +3498,7 @@ auto_detect() {
         detected=$((detected + 1))
         log STEP "   Performance tuning: SELFHEAL_PERF_AUTO=true → enabled"
     fi
-    log INFO "Auto-Detect: ${detected} Module automatisch enabled"
+    log INFO "Auto-Detect: ${detected} modules auto-enabled"
 }
 
 if ! $MANUAL_FLAGS_SET && $AUTO_DETECT && ! $SHOW_HEALTH && ! $INSTALL_LAUNCHAGENT; then
@@ -3537,7 +3537,7 @@ log STEP "   Module: XCODE=$CLEAN_XCODE TRASH=$EMPTY_TRASH SUDO=$RUN_SUDO_TASKS 
 if $SHOW_HEALTH; then health_dashboard; release_lock; exit 0; fi
 if $INSTALL_LAUNCHAGENT; then install_launchagent; release_lock; exit 0; fi
 
-# Fix #145: Sudo ZUERST holen - before Ollama and alln Modulen
+# Fix #145: Get sudo FIRST - before Ollama and all modules
 # Verhindert Password-Prompt mitten im Lauf (z.B. at brew cask upgrade)
 if ! $DRY_RUN && $NEEDS_SUDO; then
     if [ -t 0 ]; then
