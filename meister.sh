@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 3.0
+# Version: 3.1
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -4047,16 +4047,21 @@ if [ "${1:-}" = "speed" ]; then
     done
     echo ""
 
-    # Download speed (100MB test file from Cloudflare)
+    # Download speed (3x 10MB from Cloudflare, best of 3)
     echo -e "  \033[1mDownload\033[0m"
-    echo "  Testing (100MB from Cloudflare)..."
-    dl_result=$(curl -o /dev/null -w '%{speed_download} %{time_total}' -s --max-time 15 \
-        "https://speed.cloudflare.com/__down?bytes=104857600" 2>/dev/null)
-    dl_speed=$(echo "$dl_result" | awk '{printf "%.1f", $1/1048576}')
-    dl_time=$(echo "$dl_result" | awk '{printf "%.1f", $2}')
-    echo "  Download: ${dl_speed} MB/s (${dl_time}s)"
-    dl_mbps=$(echo "$dl_speed" | awk '{printf "%.0f", $1 * 8}')
-    echo "  = ${dl_mbps} Mbps"
+    echo "  Testing (3x 10MB from Cloudflare)..."
+    dl_best=0
+    for _i in 1 2 3; do
+        _dl=$(curl -o /dev/null -w '%{speed_download}' -s --max-time 15 \
+            "https://speed.cloudflare.com/__down?bytes=10485760" 2>/dev/null)
+        _dl_cmp=$(echo "$_dl $dl_best" | awk '{if($1>$2) print 1; else print 0}')
+        [ "$_dl_cmp" = "1" ] && dl_best="$_dl"
+        _dl_mb=$(echo "$_dl" | awk '{printf "%.1f", $1/1048576}')
+        printf '  Run %s: %s MB/s\n' "$_i" "$_dl_mb"
+    done
+    dl_speed=$(echo "$dl_best" | awk '{printf "%.1f", $1/1048576}')
+    dl_mbps=$(echo "$dl_best" | awk '{printf "%.0f", $1/1048576 * 8}')
+    echo "  Best: ${dl_speed} MB/s = ${dl_mbps} Mbps"
     echo ""
 
     # Upload speed (smaller payload)
