@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 2.1
+# Version: 2.2
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -46,8 +46,8 @@
 #   -O  LM Studio sync            -c  ClamAV only
 #   -P  Performance tuning        -G  Git repos
 #   -H  Health dashboard          -n  Dry-Run
-#   -q  Quiet (warnings/fixes only)  -I  LaunchAgent install
-#   -h  Help
+#   -N  Sniffnet (network monitor)    -q  Quiet (warnings/fixes only)
+#   -I  LaunchAgent install           -h  Help
 # ==============================================================================
 
 #############################
@@ -186,6 +186,7 @@ DRY_RUN=false
 INSTALL_LAUNCHAGENT=false
 RUN_PERF_TUNE=false
 RUN_GIT_REPOS=false
+RUN_SNIFFNET=false
 QUIET_MODE=false
 
 #############################
@@ -1545,6 +1546,91 @@ module_tcc_audit() {
 }
 
 # ── SECURITY SUITE ORCHESTRATOR ──
+
+module_sniffnet() {
+    if ! $RUN_SNIFFNET; then
+        log INFO "Sniffnet: skipped (use -N to enable)"
+        report_add SUCCESS "Sniffnet: skip (not requested)"
+        return
+    fi
+
+    log INFO "Network Sniff..."
+    local issues=0
+
+    # 1. Active interface & IP
+    log STEP "   [1/5] Active interface..."
+    local iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
+    if [ -n "$iface" ]; then
+        local ip=$(ipconfig getifaddr "$iface" 2>/dev/null || echo "n/a")
+        local mac=$(ifconfig "$iface" 2>/dev/null | awk '/ether/{print $2}')
+        log STEP "   Interface: $iface | IP: $ip | MAC: $mac"
+        report_add SUCCESS "Net: $iface ($ip)"
+    else
+        log WARN "   No active interface found"
+        report_add WARN "Net: no active interface"
+        issues=$((issues + 1))
+    fi
+
+    # 2. DNS check
+    log STEP "   [2/5] DNS resolution..."
+    local dns_servers=$(scutil --dns 2>/dev/null | awk '/nameserver\[/{print $3}' | sort -u | head -3 | tr '\n' ' ')
+    local dns_ms=$(( $(date +%s%N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))') ))
+    local dns_ok=false
+    dig +short apple.com A &>/dev/null && dns_ok=true
+    local dns_end=$(( $(date +%s%N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))') ))
+    if $dns_ok; then
+        log STEP "   DNS OK | Servers: $dns_servers"
+    else
+        log WARN "   DNS resolution failed"
+        issues=$((issues + 1))
+    fi
+
+    # 3. Open connections (top processes)
+    log STEP "   [3/5] Open connections..."
+    local total_conn=$(netstat -an 2>/dev/null | grep -c ESTABLISHED)
+    local listen_ports=$(netstat -an 2>/dev/null | grep -c LISTEN)
+    log STEP "   Established: $total_conn | Listening: $listen_ports"
+
+    local top_procs=$(lsof -i -nP 2>/dev/null | awk 'NR>1{print $1}' | sort | uniq -c | sort -rn | head -5)
+    if [ -n "$top_procs" ]; then
+        log STEP "   Top talkers (connections):"
+        while IFS= read -r line; do
+            log STEP "     $line"
+        done <<< "$top_procs"
+    fi
+    report_add SUCCESS "Net: $total_conn established, $listen_ports listening"
+
+    # 4. Bandwidth snapshot (bytes in/out on active interface)
+    log STEP "   [4/5] Bandwidth snapshot..."
+    if [ -n "$iface" ]; then
+        local stats1=$(netstat -I "$iface" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
+        sleep 2
+        local stats2=$(netstat -I "$iface" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
+        local in1=$(echo "$stats1" | awk '{print $1}') out1=$(echo "$stats1" | awk '{print $2}')
+        local in2=$(echo "$stats2" | awk '{print $1}') out2=$(echo "$stats2" | awk '{print $2}')
+        if [ -n "$in1" ] && [ -n "$in2" ]; then
+            local in_rate=$(( (in2 - in1) / 2 / 1024 ))
+            local out_rate=$(( (out2 - out1) / 2 / 1024 ))
+            log STEP "   Throughput (2s avg): IN ${in_rate} KB/s | OUT ${out_rate} KB/s"
+            report_add SUCCESS "Net throughput: IN ${in_rate} KB/s, OUT ${out_rate} KB/s"
+        fi
+    fi
+
+    # 5. Suspicious connections check
+    log STEP "   [5/5] Connection audit..."
+    local non_std=$(lsof -i -nP 2>/dev/null | awk 'NR>1 && $8=="TCP" && $9~/ESTABLISHED/' | \
+        awk -F'[>: ]' '{print $NF}' | sort -u | while read -r port; do
+            case "$port" in 80|443|53|22|8080|8443|993|587|465|143|110|25) ;; *) echo "$port" ;; esac
+        done | head -10)
+    if [ -n "$non_std" ]; then
+        log WARN "   Non-standard outbound ports: $(echo "$non_std" | tr '\n' ' ')"
+        issues=$((issues + 1))
+    else
+        log STEP "   No suspicious outbound connections"
+    fi
+
+    [ "$issues" -eq 0 ] && report_add SUCCESS "Network sniff: clean" || report_add WARN "Network sniff: $issues issue(s)"
+}
 
 module_security_suite() {
     log INFO "Meister Security Suite..."
@@ -3447,11 +3533,12 @@ for arg in "$@"; do
 done
 
 # ── Args ──
-while getopts ":aAXTSCLhcHnIPGq" opt; do
+while getopts ":aAXTSCLhcHnIPGNq" opt; do
   case $opt in
     a) CLEAN_XCODE=true; EMPTY_TRASH=true
-       RUN_SUDO_TASKS=true; CLEAN_CACHES=true; LIST_LARGE_FILES=true; RUN_PERF_TUNE=true; RUN_GIT_REPOS=true ;;
+       RUN_SUDO_TASKS=true; CLEAN_CACHES=true; LIST_LARGE_FILES=true; RUN_PERF_TUNE=true; RUN_GIT_REPOS=true; RUN_SNIFFNET=true ;;
     G) RUN_GIT_REPOS=true ;;
+    N) RUN_SNIFFNET=true ;;
     P) RUN_PERF_TUNE=true ;;
     A) log WARN "ClamAV removed - XProtect runs in Security Suite" ;;
     X) CLEAN_XCODE=true ;;
@@ -3477,6 +3564,7 @@ MAINTENANCE:
 
   OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
               -L Large files  -P Performance  -G Git
+              -N Sniffnet (network monitor)
 
 DOTFILES SYNC:
   meister push         Collect configs, commit, push
@@ -3503,6 +3591,7 @@ $CLEAN_CACHES && MANUAL_FLAGS_SET=true
 $LIST_LARGE_FILES && MANUAL_FLAGS_SET=true
 $RUN_PERF_TUNE && MANUAL_FLAGS_SET=true
 $RUN_GIT_REPOS && MANUAL_FLAGS_SET=true
+$RUN_SNIFFNET && MANUAL_FLAGS_SET=true
 
 auto_detect() {
     log INFO "Auto-Detect: Analyzing system..."
@@ -3659,7 +3748,7 @@ else
 fi
 
 # Modul-Anzahl berechnen
-MODULE_TOTAL=13
+MODULE_TOTAL=14
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -3679,6 +3768,7 @@ if check_net; then
     run_module_safe "iCloud Fix"     module_icloud_fix
     run_module_safe "Performance"    module_performance
     run_module_safe "Git repos"      module_git_repos
+    run_module_safe "Sniffnet"       module_sniffnet
     run_module_safe "Security Suite" module_security_suite
     run_module_safe "Benchmark"      module_benchmark
 
