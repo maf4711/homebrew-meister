@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 3.1
+# Version: 1.00004
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3609,15 +3609,23 @@ if [ "${1:-}" = "disk" ]; then
     echo ""
     printf '  %10s  %s\n' "SIZE" "DIRECTORY"
     printf '  %10s  %s\n' "----" "---------"
-    du -d 1 -h "$TARGET" 2>/dev/null | sort -rh | head -25 | while IFS=$'\t' read -r size dir; do
+    # Collect data first, then scale bars relative to largest entry
+    _disk_data=$(du -d 1 -h "$TARGET" 2>/dev/null | sort -rh | head -25 | while IFS=$'\t' read -r size dir; do
         [ "$dir" = "$TARGET" ] && continue
         name="${dir#$TARGET/}"
-        bar_len=$(echo "$size" | awk '{
-            s=$1; u=substr(s,length(s));
+        mb=$(echo "$size" | awk '{
+            s=$1; gsub(/,/,".",s); u=substr(s,length(s));
             n=substr(s,1,length(s)-1)+0;
-            if(u=="G") n=n*1024; else if(u=="M") n=n; else if(u=="K") n=n/1024; else n=0;
-            l=int(n/100); if(l>40) l=40; if(l<1 && n>0) l=1; print l
+            if(u=="T") n=n*1048576; else if(u=="G") n=n*1024; else if(u=="M") n=n; else if(u=="K") n=n/1024; else n=0;
+            printf "%.0f", n
         }')
+        printf '%s\t%s\t%s\n' "$mb" "$size" "$name"
+    done)
+    _max_mb=$(echo "$_disk_data" | head -1 | cut -f1)
+    [ -z "$_max_mb" ] || [ "$_max_mb" -eq 0 ] 2>/dev/null && _max_mb=1
+    echo "$_disk_data" | while IFS=$'\t' read -r mb size name; do
+        bar_len=$((mb * 30 / _max_mb))
+        [ "$bar_len" -lt 1 ] && [ "$mb" -gt 0 ] 2>/dev/null && bar_len=1
         bar=$(printf '%*s' "$bar_len" '' | tr ' ' '█')
         printf '  %10s  %-30s %s\n' "$size" "$name" "$bar"
     done
@@ -3713,7 +3721,7 @@ if [ "${1:-}" = "battery" ]; then
     connected=$(echo "$batt_info" | awk -F': ' '/Connected/{print $2}' | head -1)
     pct=$(pmset -g batt 2>/dev/null | grep -oE '[0-9]+%' | head -1)
     remaining=$(pmset -g batt 2>/dev/null | grep -oE '[0-9]+:[0-9]+' | head -1)
-    temp=$(ioreg -r -n AppleSmartBattery 2>/dev/null | awk '/Temperature/{printf "%.1f", $3/100; exit}')
+    temp=$(ioreg -r -n AppleSmartBattery 2>/dev/null | awk -F'= ' '/"Temperature" =/{printf "%.1f", $2/100; exit}')
 
     echo -e "  \033[1mStatus\033[0m"
     echo "  Charge:       ${pct:-n/a}"
@@ -3796,54 +3804,65 @@ fi
 if [ "${1:-}" = "wifi" ]; then
     echo -e "\033[1;34m  MEISTER WIFI — Wi-Fi Diagnostics\033[0m"
     echo ""
-    AIRPORT="/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
-    if [ ! -x "$AIRPORT" ]; then
-        echo "  airport CLI not found — using system_profiler"
-        system_profiler SPAirPortDataType 2>/dev/null | head -40
-        exit 0
-    fi
+    # Parse from system_profiler (works on all macOS versions incl. Apple Silicon)
+    sp_out=$(system_profiler SPAirPortDataType 2>/dev/null)
+    ssid=$(echo "$sp_out" | awk -F': ' '/Current Network Information:/{getline; gsub(/^[ \t]+|:$/,"",$0); print; exit}')
+    # Extract from current network block
+    net_block=$(echo "$sp_out" | sed -n '/Current Network Information:/,/Other Local/p')
+    channel=$(echo "$net_block" | awk -F': ' '/Channel:/{print $2; exit}')
+    security=$(echo "$net_block" | awk -F': ' '/Security:/{print $2; exit}')
+    phy=$(echo "$net_block" | awk -F': ' '/PHY Mode:/{print $2; exit}')
+    tx_rate=$(echo "$net_block" | awk -F': ' '/Transmit Rate:/{print $2; exit}')
+    mcs=$(echo "$net_block" | awk -F': ' '/MCS Index:/{print $2; exit}')
+    signal_noise=$(echo "$net_block" | awk -F': ' '/Signal \/ Noise:/{print $2; exit}')
+    rssi=$(echo "$signal_noise" | awk -F'/' '{gsub(/[^0-9-]/,"",$1); print $1}')
+    noise=$(echo "$signal_noise" | awk -F'/' '{gsub(/[^0-9-]/,"",$2); print $2}')
+    mac=$(echo "$sp_out" | awk -F': ' '/MAC Address:/{print $2; exit}')
+    country=$(echo "$sp_out" | awk -F': ' '/Country Code:/{print $2; exit}')
 
-    info=$("$AIRPORT" -I 2>/dev/null)
-    ssid=$(echo "$info" | awk '/ SSID:/{print $2}')
-    bssid=$(echo "$info" | awk '/BSSID:/{print $2}')
-    rssi=$(echo "$info" | awk '/agrCtlRSSI:/{print $2}')
-    noise=$(echo "$info" | awk '/agrCtlNoise:/{print $2}')
-    channel=$(echo "$info" | awk '/channel:/{print $2}')
-    tx_rate=$(echo "$info" | awk '/lastTxRate:/{print $2}')
-    mcs=$(echo "$info" | awk '/MCS:/{print $2}')
-    security=$(echo "$info" | awk '/link auth:/{print $2}')
-
-    snr=$((rssi - noise))
+    snr=0
+    [ -n "$rssi" ] && [ -n "$noise" ] && snr=$((rssi - noise))
 
     echo -e "  \033[1mConnection\033[0m"
     echo "  SSID:       ${ssid:-n/a}"
-    echo "  BSSID:      ${bssid:-n/a}"
+    echo "  PHY Mode:   ${phy:-n/a}"
     echo "  Channel:    ${channel:-n/a}"
     echo "  TX Rate:    ${tx_rate:-n/a} Mbps"
     echo "  MCS Index:  ${mcs:-n/a}"
     echo "  Security:   ${security:-n/a}"
+    echo "  MAC:        ${mac:-n/a}"
+    echo "  Country:    ${country:-n/a}"
     echo ""
 
     echo -e "  \033[1mSignal Quality\033[0m"
-    echo "  RSSI:       ${rssi:-n/a} dBm"
+    echo "  Signal:     ${rssi:-n/a} dBm"
     echo "  Noise:      ${noise:-n/a} dBm"
     echo "  SNR:        ${snr} dB"
-    if [ "$rssi" -ge -50 ] 2>/dev/null; then
-        echo -e "  Quality:    \033[0;32m████████████████████ Excellent\033[0m"
-    elif [ "$rssi" -ge -60 ] 2>/dev/null; then
-        echo -e "  Quality:    \033[0;32m███████████████░░░░░ Good\033[0m"
-    elif [ "$rssi" -ge -70 ] 2>/dev/null; then
-        echo -e "  Quality:    \033[1;33m██████████░░░░░░░░░░ Fair\033[0m"
-    elif [ "$rssi" -ge -80 ] 2>/dev/null; then
-        echo -e "  Quality:    \033[0;31m█████░░░░░░░░░░░░░░░ Weak\033[0m"
-    else
-        echo -e "  Quality:    \033[0;31m██░░░░░░░░░░░░░░░░░░ Very Weak\033[0m"
+    if [ -n "$rssi" ]; then
+        if [ "$rssi" -ge -50 ] 2>/dev/null; then
+            echo -e "  Quality:    \033[0;32m████████████████████ Excellent\033[0m"
+        elif [ "$rssi" -ge -60 ] 2>/dev/null; then
+            echo -e "  Quality:    \033[0;32m███████████████░░░░░ Good\033[0m"
+        elif [ "$rssi" -ge -70 ] 2>/dev/null; then
+            echo -e "  Quality:    \033[1;33m██████████░░░░░░░░░░ Fair\033[0m"
+        elif [ "$rssi" -ge -80 ] 2>/dev/null; then
+            echo -e "  Quality:    \033[0;31m█████░░░░░░░░░░░░░░░ Weak\033[0m"
+        else
+            echo -e "  Quality:    \033[0;31m██░░░░░░░░░░░░░░░░░░ Very Weak\033[0m"
+        fi
     fi
     echo ""
 
-    echo -e "  \033[1mChannel Scan (nearby networks)\033[0m"
-    printf '  %4s  %4s  %-30s\n' "CH" "RSSI" "SSID"
-    "$AIRPORT" -s 2>/dev/null | awk 'NR>1{printf "  %4s  %4s  %-30s\n", $4, $3, $1}' | sort -t' ' -k2 -n | head -15
+    # Nearby networks
+    echo -e "  \033[1mNearby Networks\033[0m"
+    printf '  %-30s  %-15s  %-10s  %s\n' "SSID" "CHANNEL" "SECURITY" "SIGNAL"
+    echo "$sp_out" | sed -n '/Other Local Wi-Fi Networks:/,/^$/p' | \
+        awk -F': ' '
+        /^[[:space:]]+[A-Za-z0-9].*:$/ {gsub(/^[ \t]+|:$/,"",$0); name=$0}
+        /Channel:/ {ch=$2}
+        /Security:/ {sec=$2}
+        /Signal \/ Noise:/ {sig=$2; printf "  %-30s  %-15s  %-10s  %s\n", name, ch, sec, sig}
+        '
     exit 0
 fi
 
@@ -3878,13 +3897,13 @@ if [ "${1:-}" = "top" ]; then
         printf '  \033[1mTop Memory\033[0m\n'
         printf '  %6s  %8s  %s\n' "%MEM" "RSS(MB)" "PROCESS"
         ps -Amro pid,%mem,rss,comm 2>/dev/null | head -11 | tail -10 | \
-            awk '{printf "  %6s  %8.0f  %s\n", $2, $3/1024, $4}'
+            awk '{n=$4; gsub(/.*\//,"",n); printf "  %6s  %8.0f  %s\n", $2, $3/1024, n}'
         echo ""
 
         # Energy (if available)
         printf '  \033[1mTop Energy (AppNap)\033[0m\n'
         ps -Aro pid,%cpu,comm 2>/dev/null | head -6 | tail -5 | \
-            awk '{if($2>1.0) printf "  \033[1;33m%6s%%\033[0m  %s\n", $2, $3; else printf "  %6s%%  %s\n", $2, $3}'
+            awk '{n=$3; gsub(/.*\//,"",n); if($2>1.0) printf "  \033[1;33m%6s%%\033[0m  %s\n", $2, n; else printf "  %6s%%  %s\n", $2, n}'
 
         printf '\n\033[2m  Refresh: %ss  Ctrl+C to exit\033[0m\n' "$INTERVAL"
         sleep "$INTERVAL"
@@ -3971,41 +3990,46 @@ if [ "${1:-}" = "thermal" ]; then
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
 
-        # Thermal pressure
-        therm=$(sysctl -n machdep.xcpm.cpu_thermal_level 2>/dev/null || echo "n/a")
-        case "$therm" in
-            0) therm_txt="\033[0;32mNominal\033[0m" ;;
-            *[1-9]*) therm_txt="\033[1;33mElevated ($therm)\033[0m" ;;
-            *) therm_txt="$therm" ;;
-        esac
-        printf '  Thermal Level: %b\n' "$therm_txt"
-
-        # CPU frequency / performance
-        cpu_freq=$(sysctl -n hw.cpufrequency_max 2>/dev/null)
-        [ -n "$cpu_freq" ] && printf '  CPU Max Freq:  %s MHz\n' "$((cpu_freq / 1000000))"
-
-        # pmset thermal info
-        pmset_therm=$(pmset -g therm 2>/dev/null | grep -i "cpu_speed_limit" | awk '{print $NF}')
-        if [ -n "$pmset_therm" ]; then
-            if [ "$pmset_therm" -lt 100 ] 2>/dev/null; then
-                printf '  CPU Throttle:  \033[0;31m%s%% (throttled!)\033[0m\n' "$pmset_therm"
+        # Battery temperature (reliable on Apple Silicon)
+        batt_temp=$(ioreg -r -n AppleSmartBattery 2>/dev/null | awk -F'= ' '/"Temperature" =/{printf "%.1f", $2/100; exit}')
+        if [ -n "$batt_temp" ] && [ "$batt_temp" != "0.0" ]; then
+            printf '  \033[1mTemperature\033[0m\n'
+            batt_int=${batt_temp%.*}
+            if [ "$batt_int" -ge 40 ] 2>/dev/null; then
+                printf '  Battery:  \033[0;31m%s°C (HOT)\033[0m\n' "$batt_temp"
+            elif [ "$batt_int" -ge 35 ] 2>/dev/null; then
+                printf '  Battery:  \033[1;33m%s°C (warm)\033[0m\n' "$batt_temp"
             else
-                printf '  CPU Throttle:  \033[0;32m%s%% (no throttle)\033[0m\n' "$pmset_therm"
+                printf '  Battery:  \033[0;32m%s°C\033[0m\n' "$batt_temp"
+            fi
+        else
+            printf '  \033[1mTemperature\033[0m\n'
+            printf '  Battery:  n/a\n'
+        fi
+
+        # Thermal pressure via pmset
+        therm_warn=$(pmset -g therm 2>/dev/null | grep -c "No thermal warning")
+        if [ "$therm_warn" -gt 0 ]; then
+            printf '  Throttle: \033[0;32mNone\033[0m\n'
+        else
+            pmset_therm=$(pmset -g therm 2>/dev/null | grep -i "cpu_speed_limit" | awk '{print $NF}')
+            if [ -n "$pmset_therm" ] && [ "$pmset_therm" -lt 100 ] 2>/dev/null; then
+                printf '  Throttle: \033[0;31m%s%% (throttled!)\033[0m\n' "$pmset_therm"
+            else
+                printf '  Throttle: \033[0;32mNone\033[0m\n'
             fi
         fi
 
-        # Fan speed (if available)
+        # Fan speed
         echo ""
         printf '  \033[1mFans\033[0m\n'
-        fan_count=$(sysctl -n hw.packages 2>/dev/null || echo 0)
         fans_found=false
-        for key in $(ioreg -r -n AppleSMC 2>/dev/null | grep -oE 'F[0-9]Ac' | sort -u); do
-            speed=$(ioreg -r -n AppleSMC 2>/dev/null | grep "$key" | awk '{print $NF}' | head -1)
-            [ -n "$speed" ] && printf '  Fan %s: %s RPM\n' "${key:1:1}" "$speed" && fans_found=true
+        for key in $(ioreg -r -n AppleSMC 2>/dev/null | grep -oE '"F[0-9]Ac"' | tr -d '"' | sort -u); do
+            speed=$(ioreg -r -n AppleSMC 2>/dev/null | awk -v k="\"$key\"" '$0 ~ k {print $NF; exit}')
+            [ -n "$speed" ] && [ "$speed" != "0" ] && printf '  Fan %s: %s RPM\n' "${key:1:1}" "$speed" && fans_found=true
         done
         if ! $fans_found; then
-            # Try powermetrics style
-            echo "  (Fan data requires sudo or powermetrics)"
+            echo "  No active fans (Apple Silicon passive cooling or idle)"
         fi
 
         # CPU usage heatmap
