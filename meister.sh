@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.8
+# Version: 4.9
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3319,7 +3319,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v4.8+)
+# 7b. EXTRA MODULES (v4.9+)
 #############################
 
 module_healer() {
@@ -3333,9 +3333,8 @@ module_healer() {
         while IFS= read -r link; do
             [ -z "$link" ] && continue
             log HEAL "   broken symlink: $link"
-            if ! $DRY_RUN; then
-                rm -f "$link" && fixed=$((fixed + 1))
-            fi
+            fixed=$((fixed + 1))
+            $DRY_RUN || rm -f "$link"
         done < <(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null)
     done
 
@@ -3349,9 +3348,10 @@ module_healer() {
             [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
             if [ -n "$bin" ] && [ ! -e "$bin" ]; then
                 log HEAL "   orphan agent: $(basename "$plist") → missing $bin"
+                fixed=$((fixed + 1))
                 if ! $DRY_RUN; then
                     launchctl unload "$plist" 2>/dev/null
-                    mv "$plist" "${plist}.disabled.$(date +%s)" && fixed=$((fixed + 1))
+                    mv "$plist" "${plist}.disabled.$(date +%s)"
                 fi
             fi
         done < <(find "$agent_dir" -maxdepth 1 -name "*.plist" 2>/dev/null)
@@ -3362,9 +3362,8 @@ module_healer() {
         [ -f "$plist" ] || continue
         if ! plutil -lint "$plist" >/dev/null 2>&1; then
             log HEAL "   corrupt plist: $(basename "$plist")"
-            if ! $DRY_RUN; then
-                mv "$plist" "${plist}.bad.$(date +%s)" && fixed=$((fixed + 1))
-            fi
+            fixed=$((fixed + 1))
+            $DRY_RUN || mv "$plist" "${plist}.bad.$(date +%s)"
         fi
     done < <(find "$HOME/Library/Preferences" -maxdepth 1 -name "*.plist" -size +0 2>/dev/null)
 
@@ -3376,9 +3375,8 @@ module_healer() {
             app_path=$(brew info --cask "$name" 2>/dev/null | grep -oE "/Applications/[^']+\.app" | head -1)
             if [ -n "$app_path" ] && [ ! -d "$app_path" ]; then
                 log HEAL "   broken cask: $name (missing $app_path)"
-                if ! $DRY_RUN; then
-                    brew reinstall --cask --force "$name" >/dev/null 2>&1 && fixed=$((fixed + 1))
-                fi
+                fixed=$((fixed + 1))
+                $DRY_RUN || brew reinstall --cask --force "$name" >/dev/null 2>&1
             fi
         done < <(brew list --cask 2>/dev/null)
     fi
@@ -3386,10 +3384,10 @@ module_healer() {
     # 5. DNS broken → flush
     if ! dscacheutil -q host -a name apple.com 2>/dev/null | grep -q '^ip_address:'; then
         log HEAL "   DNS resolution failing — flushing..."
+        fixed=$((fixed + 1))
         if ! $DRY_RUN; then
             sudo -n dscacheutil -flushcache 2>/dev/null
             sudo -n killall -HUP mDNSResponder 2>/dev/null
-            fixed=$((fixed + 1))
         fi
     fi
 
@@ -3400,10 +3398,8 @@ module_healer() {
         stale_locks=$(find "$dd_dir" -maxdepth 4 -name "*.lock" -mtime +1 2>/dev/null | wc -l | tr -d ' ')
         if [ "$stale_locks" -gt 0 ]; then
             log HEAL "   ${stale_locks} stale Xcode lock(s)"
-            if ! $DRY_RUN; then
-                find "$dd_dir" -maxdepth 4 -name "*.lock" -mtime +1 -delete 2>/dev/null
-                fixed=$((fixed + stale_locks))
-            fi
+            fixed=$((fixed + stale_locks))
+            $DRY_RUN || find "$dd_dir" -maxdepth 4 -name "*.lock" -mtime +1 -delete 2>/dev/null
         fi
     fi
 
@@ -3411,16 +3407,18 @@ module_healer() {
     if command_exists brew; then
         if brew doctor 2>&1 | grep -qE "Unbrewed header files|broken symlinks in"; then
             log HEAL "   brew doctor flagged linker issues — cleanup..."
-            if ! $DRY_RUN; then
-                brew cleanup -s >/dev/null 2>&1
-                fixed=$((fixed + 1))
-            fi
+            fixed=$((fixed + 1))
+            $DRY_RUN || brew cleanup -s >/dev/null 2>&1
         fi
     fi
 
     if [ "$fixed" -gt 0 ]; then
-        log FIX "   Healer: ${fixed} fix(es) applied"
-        report_add FIX "Healer: ${fixed} auto-fixes"
+        if $DRY_RUN; then
+            log FIX "   Healer: ${fixed} fix(es) would apply (dry-run)"
+        else
+            log FIX "   Healer: ${fixed} fix(es) applied"
+            report_add FIX "Healer: ${fixed} auto-fixes"
+        fi
     else
         log STEP "   Nothing to heal — system clean"
     fi
@@ -3799,7 +3797,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v4.8 | ${total_mins}min | $summary"
+    echo "Meister v4.9 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4931,7 +4929,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v4.8                     ║"
+echo "  ║        MEISTER v4.9                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4939,7 +4937,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v4.8 started ($(date))"
+log INFO "Meister v4.9 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
