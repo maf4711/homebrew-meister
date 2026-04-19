@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.2
+# Version: 5.3
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -872,14 +872,38 @@ module_homebrew() {
         log STEP "   ${pin_count} gepinnte formulae (bewusst skipped)"
     fi
 
-    # brew upgrade mit korrektem Exit-Code
+    # brew upgrade mit korrektem Exit-Code (capture to catch deprecated warnings)
     log INFO "   brew upgrade..."
-    run_verbose brew upgrade
-    if [ $? -eq 0 ]; then
+    local formula_out; formula_out=$(mktemp)
+    local rc=0
+    if $DRY_RUN; then
+        log STEP "   [DRY-RUN] brew upgrade"
+        : > "$formula_out"
+    else
+        brew upgrade > "$formula_out" 2>&1
+        rc=$?
+        while IFS= read -r l; do [ -n "$l" ] && log STEP "   $l"; done < "$formula_out"
+    fi
+    if [ $rc -eq 0 ]; then
         report_add SUCCESS "Homebrew formulae upgraded"
     else
-        log STEP "   Homebrew upgrade haste Probleme (siehe Log)"
+        log STEP "   Homebrew upgrade had issues (see log)"
     fi
+
+    # Auto-uninstall deprecated/disabled formulae (brew refuses to upgrade them)
+    local dead_formulae
+    dead_formulae=$(grep -oE 'Warning: Not upgrading [a-zA-Z0-9@._+-]+, it is (deprecated|disabled)' "$formula_out" 2>/dev/null \
+        | awk '{print $4}' | sed 's/,$//' | sort -u)
+    if [ -n "$dead_formulae" ]; then
+        log HEAL "   Auto-uninstalling deprecated/disabled formulae..."
+        for name in $dead_formulae; do
+            log STEP "     $name: brew uninstall --ignore-dependencies"
+            if ! $DRY_RUN && brew uninstall --ignore-dependencies "$name" >/dev/null 2>&1; then
+                report_add FIX "Uninstalled deprecated formula: $name"
+            fi
+        done
+    fi
+    rm -f "$formula_out"
 
     # Fix #142: Post-Upgrade Verifikation - sind still formulae veraltet?
     local still_outdated_formulae=$(brew outdated --formula 2>/dev/null)
@@ -3328,7 +3352,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v5.2+)
+# 7b. EXTRA MODULES (v5.3+)
 #############################
 
 module_healer() {
@@ -3817,7 +3841,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v5.2 | ${total_mins}min | $summary"
+    echo "Meister v5.3 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4959,7 +4983,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v5.2                     ║"
+echo "  ║        MEISTER v5.3                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4967,7 +4991,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v5.2 started ($(date))"
+log INFO "Meister v5.3 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
