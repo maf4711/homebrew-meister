@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.3
+# Version: 5.4
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -391,6 +391,11 @@ _bw_get_bytes() {
 bw_set_status() {
     local cur="${1:-0}" tot="${2:-0}" label="${3:-}"
     [ -n "$BW_STATUS_FILE" ] && printf '%s|%s|%s\n' "$cur" "$tot" "$label" > "$BW_STATUS_FILE" 2>/dev/null
+}
+# Update just the label (keep current/total) — for showing sub-actions live in status bar
+bw_phase() {
+    local label="$1"
+    bw_set_status "$MODULE_STEP" "$MODULE_TOTAL" "$label"
 }
 start_bw_monitor() {
     [ ! -t 1 ] && return
@@ -3352,7 +3357,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v5.3+)
+# 7b. EXTRA MODULES (v5.4+)
 #############################
 
 module_healer() {
@@ -3360,12 +3365,14 @@ module_healer() {
     local fixed=0
 
     # 1. Broken symlinks in PATH dirs (system bins need sudo)
+    bw_phase "Healer: scanning symlinks"
     local sym_dirs=("$HOME/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin")
     local needs_sudo=0
     for dir in "${sym_dirs[@]}"; do
         [ -d "$dir" ] || continue
         while IFS= read -r link; do
             [ -z "$link" ] && continue
+            bw_phase "Healer: rm $(basename "$link")"
             log HEAL "   broken symlink: $link"
             fixed=$((fixed + 1))
             $DRY_RUN && continue
@@ -3383,6 +3390,7 @@ module_healer() {
     [ "$needs_sudo" -gt 0 ] && report_add WARN "Healer: ${needs_sudo} symlink(s) need sudo"
 
     # 2. Orphan LaunchAgents (plist points to missing binary) → quarantine
+    bw_phase "Healer: LaunchAgents"
     local agent_dir="$HOME/Library/LaunchAgents"
     if [ -d "$agent_dir" ]; then
         while IFS= read -r plist; do
@@ -3391,6 +3399,7 @@ module_healer() {
             bin=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)
             [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
             if [ -n "$bin" ] && [ ! -e "$bin" ]; then
+                bw_phase "Healer: quarantine $(basename "$plist")"
                 log HEAL "   orphan agent: $(basename "$plist") → missing $bin"
                 fixed=$((fixed + 1))
                 if ! $DRY_RUN; then
@@ -3402,9 +3411,11 @@ module_healer() {
     fi
 
     # 3. Corrupt user plist files → quarantine
+    bw_phase "Healer: linting plists"
     while IFS= read -r plist; do
         [ -f "$plist" ] || continue
         if ! plutil -lint "$plist" >/dev/null 2>&1; then
+            bw_phase "Healer: corrupt $(basename "$plist")"
             log HEAL "   corrupt plist: $(basename "$plist")"
             fixed=$((fixed + 1))
             $DRY_RUN || mv "$plist" "${plist}.bad.$(date +%s)"
@@ -3412,12 +3423,15 @@ module_healer() {
     done < <(find "$HOME/Library/Preferences" -maxdepth 1 -name "*.plist" -size +0 2>/dev/null)
 
     # 4. Broken casks (app source gone) — auto-uninstall (app is already gone, cask is stale)
+    bw_phase "Healer: scanning casks"
     if command_exists brew; then
         while IFS= read -r name; do
             [ -z "$name" ] && continue
+            bw_phase "Healer: cask $name"
             local app_path
             app_path=$(brew info --cask "$name" 2>/dev/null | grep -oE "/Applications/[^']+\.app" | head -1)
             if [ -n "$app_path" ] && [ ! -d "$app_path" ]; then
+                bw_phase "Healer: uninstall $name"
                 log HEAL "   broken cask: $name (missing $app_path) — uninstalling"
                 fixed=$((fixed + 1))
                 $DRY_RUN || brew uninstall --cask --force "$name" >/dev/null 2>&1
@@ -3426,7 +3440,9 @@ module_healer() {
     fi
 
     # 5. DNS broken → flush
+    bw_phase "Healer: DNS check"
     if ! dscacheutil -q host -a name apple.com 2>/dev/null | grep -q '^ip_address:'; then
+        bw_phase "Healer: flushing DNS"
         log HEAL "   DNS resolution failing — flushing..."
         fixed=$((fixed + 1))
         if ! $DRY_RUN; then
@@ -3436,6 +3452,7 @@ module_healer() {
     fi
 
     # 6. Stale Xcode DerivedData locks (>24h old)
+    bw_phase "Healer: Xcode locks"
     local dd_dir="$HOME/Library/Developer/Xcode/DerivedData"
     if [ -d "$dd_dir" ]; then
         local stale_locks
@@ -3448,8 +3465,10 @@ module_healer() {
     fi
 
     # 7. Homebrew post-install cleanup if doctor flags linker issues
+    bw_phase "Healer: brew doctor"
     if command_exists brew; then
         if brew doctor 2>&1 | grep -qE "Unbrewed header files|broken symlinks in"; then
+            bw_phase "Healer: brew cleanup"
             log HEAL "   brew doctor flagged linker issues — cleanup..."
             fixed=$((fixed + 1))
             $DRY_RUN || brew cleanup -s >/dev/null 2>&1
@@ -3648,6 +3667,107 @@ module_shell_history() {
     done
 }
 
+module_apfs_snapshots() {
+    log INFO "Checking APFS local snapshots..."
+    bw_phase "Snapshots: enumerating"
+    command_exists tmutil || { log STEP "   tmutil missing"; return 0; }
+    local snaps
+    snaps=$(tmutil listlocalsnapshots / 2>/dev/null | grep com.apple.TimeMachine)
+    [ -z "$snaps" ] && { log STEP "   No local snapshots"; return 0; }
+    local count; count=$(echo "$snaps" | wc -l | tr -d ' ')
+    local free_before; free_before=$(df -h / | awk 'NR==2{print $4}')
+    log STEP "   ${count} local snapshots (free: $free_before)"
+    # Thin to 5GB target purge
+    bw_phase "Snapshots: thinning to 5GB"
+    if ! $DRY_RUN; then
+        tmutil thinlocalsnapshots / 5000000000 4 >/dev/null 2>&1
+    fi
+    local free_after; free_after=$(df -h / | awk 'NR==2{print $4}')
+    local snaps_after; snaps_after=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c com.apple.TimeMachine)
+    local thinned=$((count - snaps_after))
+    if [ "$thinned" -gt 0 ]; then
+        log FIX "   Thinned ${thinned} snapshots ($free_before → $free_after free)"
+        report_add FIX "APFS snapshots: ${thinned} thinned"
+    else
+        log STEP "   No thinning needed ($free_after free)"
+    fi
+}
+
+module_kext_audit() {
+    log INFO "Auditing kernel extensions (non-Apple)..."
+    bw_phase "Kexts: loading kextstat"
+    local third_party
+    third_party=$(kextstat -l 2>/dev/null | awk 'NR>1 && $6 !~ /^com\.apple\./ {print $6}')
+    if [ -z "$third_party" ]; then
+        log STEP "   No third-party kexts loaded"
+        return 0
+    fi
+    local count; count=$(echo "$third_party" | wc -l | tr -d ' ')
+    log STEP "   ${count} third-party kext(s) loaded:"
+    echo "$third_party" | head -10 | while read -r k; do
+        bw_phase "Kexts: $k"
+        log STEP "     - $k"
+    done
+    report_add WARN "${count} third-party kexts (manual review — potential security risk)"
+}
+
+module_time_sync() {
+    log INFO "Checking system time drift..."
+    bw_phase "Time: querying NTP"
+    command_exists sntp || { log STEP "   sntp missing"; return 0; }
+    local offset
+    offset=$(sntp time.apple.com 2>/dev/null | grep -oE '[+-][0-9]+\.[0-9]+' | head -1)
+    [ -z "$offset" ] && { log STEP "   NTP check unavailable (offline?)"; return 0; }
+    local abs_offset
+    abs_offset=$(echo "$offset" | tr -d '+-' | awk -F. '{print $1}')
+    log STEP "   Drift vs time.apple.com: ${offset}s"
+    if [ "${abs_offset:-0}" -ge 2 ] 2>/dev/null; then
+        bw_phase "Time: syncing"
+        log HEAL "   Drift > 2s — syncing..."
+        if ! $DRY_RUN && sudo -n sntp -sS time.apple.com >/dev/null 2>&1; then
+            log FIX "   System time synced"
+            report_add FIX "Time synced (was ${offset}s off)"
+        fi
+    fi
+}
+
+module_rendering_caches() {
+    log INFO "Refreshing rendering caches (QuickLook + fonts)..."
+    bw_phase "Caches: QuickLook reset"
+    if ! $DRY_RUN; then
+        qlmanage -r >/dev/null 2>&1
+        qlmanage -r cache >/dev/null 2>&1
+    fi
+    log STEP "   QuickLook cache reset"
+    bw_phase "Caches: font database"
+    if ! $DRY_RUN; then
+        atsutil databases -removeUser >/dev/null 2>&1
+    fi
+    log STEP "   Font database rebuilt"
+    report_add FIX "QuickLook + font caches refreshed"
+}
+
+module_receipts_audit() {
+    log INFO "Auditing orphan installer receipts..."
+    bw_phase "Receipts: enumerating"
+    local receipts_dir="/var/db/receipts"
+    [ -d "$receipts_dir" ] || return 0
+    local total; total=$(find "$receipts_dir" -maxdepth 1 -name "*.plist" 2>/dev/null | wc -l | tr -d ' ')
+    local orphans=0
+    # An orphan receipt is for software whose install location no longer exists
+    # (not bulletproof — but catches obvious ones)
+    while IFS= read -r plist; do
+        [ -f "$plist" ] || continue
+        local pkg_id; pkg_id=$(basename "$plist" .plist)
+        local install_loc; install_loc=$(pkgutil --pkg-info "$pkg_id" 2>/dev/null | awk -F': ' '/location:/ {print $2}')
+        if [ -n "$install_loc" ] && [ "$install_loc" != "/" ] && [ ! -e "/$install_loc" ]; then
+            orphans=$((orphans + 1))
+        fi
+    done < <(find "$receipts_dir" -maxdepth 1 -name "*.plist" 2>/dev/null | head -200)
+    log STEP "   ${total} receipts total, ${orphans} potentially orphaned"
+    [ "$orphans" -gt 0 ] && report_add WARN "${orphans} orphan receipts (review manually)"
+}
+
 #############################
 # 8. MAIN
 #############################
@@ -3841,7 +3961,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v5.3 | ${total_mins}min | $summary"
+    echo "Meister v5.4 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4983,7 +5103,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v5.3                     ║"
+echo "  ║        MEISTER v5.4                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4991,7 +5111,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v5.3 started ($(date))"
+log INFO "Meister v5.4 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
@@ -5039,8 +5159,8 @@ else
     OLLAMA_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer)
-MODULE_TOTAL=25
+# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance)
+MODULE_TOTAL=30
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -5074,6 +5194,11 @@ if check_net; then
     run_module_safe "Brew Bottle Age" module_brew_age
     run_module_safe "LaunchDaemons"  module_launchd_orphans
     run_module_safe "Shell History"  module_shell_history
+    run_module_safe "APFS Snapshots" module_apfs_snapshots
+    run_module_safe "Kext Audit"     module_kext_audit
+    run_module_safe "Time Sync"      module_time_sync
+    run_module_safe "Render Caches"  module_rendering_caches
+    run_module_safe "Receipts Audit" module_receipts_audit
 
     if $RUN_SUDO_TASKS; then
         section_header "System maintenance (sudo)"
