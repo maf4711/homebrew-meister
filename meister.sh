@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.5
+# Version: 4.6
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -241,6 +241,7 @@ log() {
 section_header() {
     local title="$1"
     MODULE_STEP=$((MODULE_STEP + 1))
+    bw_set_status "$MODULE_STEP" "$MODULE_TOTAL" "$title"
     echo ""
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BLUE}  [${MODULE_STEP}/${MODULE_TOTAL}] ${BOLD}${title}${NC}"
@@ -378,23 +379,29 @@ cleanup() {
     release_lock
 }
 
-# Bandwidth monitor (bottom-left status line)
+# Bandwidth + progress monitor (bottom pinned status line)
 BW_MONITOR_PID=""
 BW_TERM_LINES=""
 BW_TERM_COLS=""
+BW_STATUS_FILE="$MEISTER_DIR/status"
 _bw_get_bytes() {
     netstat -ib 2>/dev/null | awk '/en0.*Link/ && NF>=10 {print $7, $10; exit}'
 }
+# Update current progress (called from section_header and ad-hoc from modules)
+bw_set_status() {
+    local cur="${1:-0}" tot="${2:-0}" label="${3:-}"
+    [ -n "$BW_STATUS_FILE" ] && printf '%s|%s|%s\n' "$cur" "$tot" "$label" > "$BW_STATUS_FILE" 2>/dev/null
+}
 start_bw_monitor() {
-    [ ! -t 1 ] && return  # no terminal, skip
+    [ ! -t 1 ] && return
     BW_TERM_LINES=$(tput lines 2>/dev/null || echo 24)
     BW_TERM_COLS=$(tput cols 2>/dev/null || echo 80)
-    # Reserve last line: scroll region = 1..(N-1). Save/restore around DECSTBM because setting the region homes the cursor on xterm.
+    : > "$BW_STATUS_FILE"
     printf '\0337\033[1;%dr\0338' "$((BW_TERM_LINES - 1))"
-    # Background process repaints status bar on the reserved line
     (
         local prev; prev=$(_bw_get_bytes)
         local prev_in=${prev%% *} prev_out=${prev##* }
+        local bar_width=20
         while true; do
             sleep 1
             local curr; curr=$(_bw_get_bytes)
@@ -403,10 +410,42 @@ start_bw_monitor() {
             local ul=$(( (curr_out - prev_out) / 1024 ))
             [ "$dl" -lt 0 ] 2>/dev/null && dl=0
             [ "$ul" -lt 0 ] 2>/dev/null && ul=0
-            local status=" ↓ ${dl} KB/s  ↑ ${ul} KB/s"
-            # Save cursor FIRST so restore sends main process back where it was, then re-assert region and paint
-            printf '\0337\033[1;%dr\033[%d;1H\033[2K\033[7m\033[2m%-*s\033[0m\0338' \
-                "$((BW_TERM_LINES - 1))" "$BW_TERM_LINES" "$BW_TERM_COLS" "$status"
+            # Read progress state
+            local cur=0 tot=0 label=""
+            if [ -s "$BW_STATUS_FILE" ]; then
+                IFS='|' read -r cur tot label < "$BW_STATUS_FILE"
+            fi
+            # Build progress bar
+            local filled=0
+            if [ "${tot:-0}" -gt 0 ]; then
+                filled=$(( (cur * bar_width) / tot ))
+                [ "$filled" -gt "$bar_width" ] && filled=$bar_width
+            fi
+            local bar=""
+            local i
+            for ((i=0; i<filled; i++)); do bar+="█"; done
+            for ((i=filled; i<bar_width; i++)); do bar+="░"; done
+            local progress_str=""
+            if [ "${tot:-0}" -gt 0 ]; then
+                progress_str=$(printf ' [%s] %d/%d %s' "$bar" "$cur" "$tot" "$label")
+            else
+                progress_str=" [starting...]"
+            fi
+            local net_str=$(printf '↓ %d KB/s  ↑ %d KB/s' "$dl" "$ul")
+            # Truncate progress_str to leave room for net_str (fixed ~30 cols) + padding
+            local net_width=${#net_str}
+            local max_progress=$(( BW_TERM_COLS - net_width - 3 ))
+            [ "$max_progress" -lt 10 ] && max_progress=10
+            if [ ${#progress_str} -gt $max_progress ]; then
+                progress_str="${progress_str:0:$max_progress}"
+            fi
+            local pad_width=$(( BW_TERM_COLS - ${#progress_str} - net_width - 1 ))
+            [ "$pad_width" -lt 1 ] && pad_width=1
+            local padding
+            printf -v padding '%*s' "$pad_width" ''
+            local status="${progress_str}${padding}${net_str} "
+            printf '\0337\033[1;%dr\033[%d;1H\033[2K\033[7m\033[2m%s\033[0m\0338' \
+                "$((BW_TERM_LINES - 1))" "$BW_TERM_LINES" "$status"
             prev_in=$curr_in; prev_out=$curr_out
         done
     ) &
@@ -3248,6 +3287,190 @@ module_benchmark() {
 }
 
 #############################
+# 7b. EXTRA MODULES (v4.6+)
+#############################
+
+module_tm_health() {
+    log INFO "Checking Time Machine..."
+    if ! command_exists tmutil; then log STEP "   tmutil not available"; return 0; fi
+    if ! tmutil destinationinfo &>/dev/null; then
+        log STEP "   Time Machine not configured"
+        return 0
+    fi
+    local latest; latest=$(tmutil latestbackup 2>/dev/null | tail -1)
+    if [ -z "$latest" ]; then
+        log WARN "   No Time Machine backups found"
+        report_add WARN "Time Machine: no backups"
+    else
+        local bkup_date; bkup_date=$(basename "$latest" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        if [ -n "$bkup_date" ]; then
+            local bkup_epoch; bkup_epoch=$(date -j -f "%Y-%m-%d" "$bkup_date" +%s 2>/dev/null || echo 0)
+            local age_days=$(( ($(date +%s) - bkup_epoch) / 86400 ))
+            if [ "$age_days" -gt 7 ]; then
+                log WARN "   Last backup ${age_days}d ago"
+                report_add WARN "Time Machine: ${age_days}d old"
+            else
+                log STEP "   Last backup ${age_days}d ago (OK)"
+            fi
+        fi
+    fi
+    local snap_count; snap_count=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c com.apple.TimeMachine)
+    log STEP "   Local snapshots on /: ${snap_count}"
+}
+
+module_battery() {
+    local info; info=$(system_profiler SPPowerDataType 2>/dev/null)
+    echo "$info" | grep -q "Battery Information" || { log STEP "No battery (desktop Mac)"; return 0; }
+    log INFO "Checking battery..."
+    local cycles condition max_cap
+    cycles=$(echo "$info" | awk -F': ' '/Cycle Count/ {print $2; exit}' | tr -d ' ')
+    condition=$(echo "$info" | awk -F': ' '/Condition/ {print $2; exit}' | sed 's/^ *//; s/ *$//')
+    max_cap=$(echo "$info" | awk -F': ' '/Maximum Capacity/ {print $2; exit}' | tr -d ' ')
+    log STEP "   Cycles: ${cycles:-?}, Condition: ${condition:-?}, Capacity: ${max_cap:-?}"
+    if [ "${cycles:-0}" -gt 800 ] 2>/dev/null; then
+        log WARN "   High cycle count (>800) — battery aging"
+        report_add WARN "Battery: ${cycles} cycles"
+    fi
+    if [ -n "$condition" ] && [ "$condition" != "Normal" ]; then
+        log WARN "   Condition: $condition"
+        report_add WARN "Battery condition: $condition"
+    fi
+}
+
+module_ios_sim() {
+    command_exists xcrun || { log STEP "xcrun not available"; return 0; }
+    local sim_dir="$HOME/Library/Developer/CoreSimulator/Devices"
+    [ -d "$sim_dir" ] || { log STEP "No simulator dir"; return 0; }
+    log INFO "Cleaning iOS simulators..."
+    local before; before=$(du -sh "$sim_dir" 2>/dev/null | awk '{print $1}')
+    if ! $DRY_RUN; then
+        xcrun simctl delete unavailable 2>/dev/null
+        xcrun simctl --set previews delete all 2>/dev/null || true
+    fi
+    local after; after=$(du -sh "$sim_dir" 2>/dev/null | awk '{print $1}')
+    log STEP "   Simulators: ${before} → ${after}"
+    [ "$before" != "$after" ] && report_add FIX "iOS Simulators: ${before} → ${after}"
+}
+
+module_docker_prune() {
+    command_exists docker || { log STEP "Docker not installed"; return 0; }
+    docker info &>/dev/null || { log STEP "Docker daemon not running"; return 0; }
+    log INFO "Docker prune..."
+    local df_before; df_before=$(docker system df 2>/dev/null | tail -n +2)
+    log STEP "$(echo "$df_before" | while IFS= read -r l; do echo "   $l"; done)"
+    # Prune unused (no --volumes — too destructive for DB data)
+    if ! $DRY_RUN; then
+        docker system prune -af 2>&1 | tail -3 | while IFS= read -r l; do
+            [ -n "$l" ] && log STEP "   $l"
+        done
+        report_add FIX "Docker: system prune -af"
+    fi
+}
+
+module_panic_scan() {
+    log INFO "Scanning kernel panics (last 7d)..."
+    local panic_files; panic_files=$(find /Library/Logs/DiagnosticReports -maxdepth 1 -name "*.panic" -mtime -7 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$panic_files" -gt 0 ]; then
+        log WARN "   ${panic_files} panic reports in last 7 days"
+        report_add WARN "Kernel: ${panic_files} panics in 7d"
+        find /Library/Logs/DiagnosticReports -maxdepth 1 -name "*.panic" -mtime -7 2>/dev/null | head -3 | while read -r f; do
+            log STEP "     - $(basename "$f")"
+        done
+    else
+        log STEP "   No kernel panics (7d)"
+    fi
+}
+
+module_ssh_audit() {
+    [ -d "$HOME/.ssh" ] || { log STEP "No ~/.ssh"; return 0; }
+    log INFO "Auditing SSH keys..."
+    local weak=0 total=0
+    for key in "$HOME"/.ssh/*.pub; do
+        [ -f "$key" ] || continue
+        total=$((total + 1))
+        local info; info=$(ssh-keygen -lf "$key" 2>/dev/null)
+        [ -z "$info" ] && continue
+        local bits; bits=$(echo "$info" | awk '{print $1}')
+        local type; type=$(echo "$info" | grep -oE '\(([A-Z0-9]+)\)$' | tr -d '()')
+        if [ "$type" = "DSA" ] || { [ "$type" = "RSA" ] && [ "${bits:-0}" -lt 3072 ]; }; then
+            log WARN "   Weak: $(basename "$key") (${type}, ${bits} bit)"
+            weak=$((weak + 1))
+        fi
+    done
+    log STEP "   ${total} keys audited, ${weak} weak"
+    [ "$weak" -gt 0 ] && report_add WARN "${weak} weak SSH keys"
+}
+
+module_broken_symlinks() {
+    log INFO "Checking broken symlinks..."
+    local dirs=("$HOME/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin")
+    local total=0
+    for dir in "${dirs[@]}"; do
+        [ -d "$dir" ] || continue
+        local broken
+        broken=$(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$broken" -gt 0 ]; then
+            log WARN "   ${broken} broken in $dir"
+            total=$((total + broken))
+        fi
+    done
+    [ "$total" -eq 0 ] && log STEP "   No broken symlinks"
+    [ "$total" -gt 0 ] && report_add WARN "${total} broken symlinks"
+}
+
+module_brew_age() {
+    command_exists brew || { log STEP "brew missing"; return 0; }
+    log INFO "Checking bottle ages..."
+    local cellar; cellar=$(brew --cellar 2>/dev/null)
+    [ -d "$cellar" ] || return 0
+    local old_pkgs
+    old_pkgs=$(find "$cellar" -maxdepth 2 -type d -mtime +180 2>/dev/null \
+        | awk -F/ -v c="$cellar" '$0 != c {gsub(c"/",""); split($0, a, "/"); print a[1]}' \
+        | sort -u)
+    if [ -z "$old_pkgs" ]; then
+        log STEP "   No bottles older than 180d"
+        return 0
+    fi
+    local count; count=$(echo "$old_pkgs" | wc -l | tr -d ' ')
+    log WARN "   ${count} bottles older than 180d (consider 'brew reinstall')"
+    echo "$old_pkgs" | head -10 | while read -r p; do log STEP "     - $p"; done
+    [ "$count" -gt 10 ] && log STEP "     ... +$((count - 10)) more"
+    report_add WARN "${count} bottles >180d old"
+}
+
+module_launchd_orphans() {
+    log INFO "Checking LaunchDaemons for orphans..."
+    local orphans=0
+    for plist in /Library/LaunchDaemons/*.plist; do
+        [ -f "$plist" ] || continue
+        local bin
+        bin=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)
+        [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
+        if [ -n "$bin" ] && [ ! -e "$bin" ]; then
+            log WARN "   Orphan: $(basename "$plist") → missing $bin"
+            orphans=$((orphans + 1))
+        fi
+    done
+    [ "$orphans" -eq 0 ] && log STEP "   No orphan LaunchDaemons"
+    [ "$orphans" -gt 0 ] && report_add WARN "${orphans} orphan LaunchDaemons"
+}
+
+module_shell_history() {
+    log INFO "Checking shell history sizes..."
+    local files=("$HOME/.zsh_history" "$HOME/.bash_history")
+    for f in "${files[@]}"; do
+        [ -f "$f" ] || continue
+        local size_mb=$(( $(stat -f%z "$f" 2>/dev/null || echo 0) / 1048576 ))
+        if [ "$size_mb" -gt 10 ]; then
+            log WARN "   $(basename "$f"): ${size_mb}MB — trim recommended"
+            report_add WARN "$(basename "$f"): ${size_mb}MB"
+        else
+            log STEP "   $(basename "$f"): ${size_mb}MB OK"
+        fi
+    done
+}
+
+#############################
 # 8. MAIN
 #############################
 
@@ -3440,7 +3663,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v4.5 | ${total_mins}min | $summary"
+    echo "Meister v4.6 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4560,7 +4783,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v4.5                     ║"
+echo "  ║        MEISTER v4.6                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4568,7 +4791,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v4.5 started ($(date))"
+log INFO "Meister v4.6 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
@@ -4616,8 +4839,8 @@ else
     OLLAMA_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen
-MODULE_TOTAL=14
+# Modul-Anzahl berechnen (14 core + 10 extras)
+MODULE_TOTAL=24
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -4640,6 +4863,16 @@ if check_net; then
     run_module_safe "Sniffnet"       module_sniffnet
     run_module_safe "Security Suite" module_security_suite
     run_module_safe "Benchmark"      module_benchmark
+    run_module_safe "Time Machine"   module_tm_health
+    run_module_safe "Battery"        module_battery
+    run_module_safe "iOS Simulators" module_ios_sim
+    run_module_safe "Docker Prune"   module_docker_prune
+    run_module_safe "Kernel Panics"  module_panic_scan
+    run_module_safe "SSH Keys"       module_ssh_audit
+    run_module_safe "Broken Symlinks" module_broken_symlinks
+    run_module_safe "Brew Bottle Age" module_brew_age
+    run_module_safe "LaunchDaemons"  module_launchd_orphans
+    run_module_safe "Shell History"  module_shell_history
 
     if $RUN_SUDO_TASKS; then
         section_header "System maintenance (sudo)"
