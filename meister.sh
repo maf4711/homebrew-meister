@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.2
+# Version: 4.3
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -95,7 +95,7 @@ ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
 ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
 
 # Self-Healing v0.06: Automatic repair for all warnings
-SELFHEAL_APPSTORE_OPEN=true        # Open App Store on missing login
+SELFHEAL_APPSTORE_OPEN=false       # Open App Store on missing login
 SELFHEAL_FDA_OPEN=true             # Open privacy settings for FDA
 SELFHEAL_ORPHAN_PREFS=true         # Backup + delete orphaned preferences
 SELFHEAL_ICLOUD_CONTAINERS=true    # Delete orphaned iCloud containers
@@ -226,6 +226,8 @@ log() {
     esac
     # Quiet mode: only WARN/ERROR/FIX on terminal
     if ! $QUIET_MODE || [[ "$level" =~ ^(WARN|ERROR|FIX)$ ]]; then
+        # Re-assert scroll region so child-command escapes can't push status bar into the log stream
+        [ -n "$BW_MONITOR_PID" ] && printf '\033[1;%dr' "$((BW_TERM_LINES - 1))"
         echo -e "${color}[${level}]${NC} ${msg}"
     fi
     # Fix #91: ANSI-Strip only wenn needed (spart sed-Fork in ~95% der Aufrufe)
@@ -378,12 +380,18 @@ cleanup() {
 
 # Bandwidth monitor (bottom-left status line)
 BW_MONITOR_PID=""
+BW_TERM_LINES=""
+BW_TERM_COLS=""
 _bw_get_bytes() {
     netstat -ib 2>/dev/null | awk '/en0.*Link/ && NF>=10 {print $7, $10; exit}'
 }
 start_bw_monitor() {
     [ ! -t 1 ] && return  # no terminal, skip
-    # Background process pins speed to the last terminal line
+    BW_TERM_LINES=$(tput lines 2>/dev/null || echo 24)
+    BW_TERM_COLS=$(tput cols 2>/dev/null || echo 80)
+    # Reserve last line: scroll region = lines 1..(N-1)
+    printf '\033[1;%dr' "$((BW_TERM_LINES - 1))"
+    # Background process repaints status bar on the reserved line
     (
         local prev; prev=$(_bw_get_bytes)
         local prev_in=${prev%% *} prev_out=${prev##* }
@@ -395,12 +403,10 @@ start_bw_monitor() {
             local ul=$(( (curr_out - prev_out) / 1024 ))
             [ "$dl" -lt 0 ] 2>/dev/null && dl=0
             [ "$ul" -lt 0 ] 2>/dev/null && ul=0
-            local lines; lines=$(tput lines 2>/dev/null || echo 24)
-            local cols; cols=$(tput cols 2>/dev/null || echo 80)
             local status=" ↓ ${dl} KB/s  ↑ ${ul} KB/s"
-            # Lock scroll region to lines 1..(n-1), pin status bar on line n
-            printf '\033[1;%dr' "$((lines - 1))"
-            printf '\0337\033[%d;1H\033[2K\033[7m\033[2m%-*s\033[0m\0338' "$lines" "$cols" "$status"
+            # Re-assert scroll region + repaint status (one atomic printf)
+            printf '\033[1;%dr\0337\033[%d;1H\033[2K\033[7m\033[2m%-*s\033[0m\0338' \
+                "$((BW_TERM_LINES - 1))" "$BW_TERM_LINES" "$BW_TERM_COLS" "$status"
             prev_in=$curr_in; prev_out=$curr_out
         done
     ) &
@@ -970,18 +976,9 @@ module_mas() {
     log INFO "Checking Mac App Store..."
     ensure_tool "mas" "mas" || return 1
 
-    # Fix #43: Checkingn ob User im App Store eingeloggt ist
+    # Login is only needed to purchase — outdated/upgrade run against local receipts
     if ! mas account &>/dev/null; then
-        log WARN "   Not logged into App Store"
-        # Fix #124: App Store oeffnen for Anmelden
-        if $SELFHEAL_APPSTORE_OPEN && ! $DRY_RUN; then
-            log HEAL "   Opening App Store for login..."
-            open -a "App Store" 2>/dev/null
-            report_add FIX "App Store: opened for login (log in manually)"
-        else
-            log STEP "   App Store: Not logged in (will open on next run)"
-        fi
-        return 0
+        log STEP "   Not logged in (updates for installed apps still work)"
     fi
 
     export MAS_NO_AUTO_INDEX=1
