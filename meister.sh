@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.6
+# Version: 4.7
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -911,7 +911,39 @@ module_homebrew() {
 
     # Fix #12: --greedy instead of --force
     log INFO "   Upgrading casks (--greedy)..."
-    run_verbose brew upgrade --cask --greedy
+    local cask_out; cask_out=$(mktemp)
+    if $DRY_RUN; then
+        log STEP "   [DRY-RUN] brew upgrade --cask --greedy"
+        : > "$cask_out"
+    else
+        brew upgrade --cask --greedy > "$cask_out" 2>&1
+        while IFS= read -r l; do [ -n "$l" ] && log STEP "   $l"; done < "$cask_out"
+    fi
+
+    # Fix #150: Auto-heal cask errors that block batch upgrade
+    local missing_src stale_src
+    missing_src=$(grep -oE '^[[:space:]]*[a-z0-9][a-z0-9_-]*: It seems the App source' "$cask_out" 2>/dev/null | sed -E 's/^[[:space:]]*([a-z0-9_-]+):.*/\1/' | sort -u)
+    stale_src=$(grep -oE '^[[:space:]]*[a-z0-9][a-z0-9_-]*: It seems there is already an App' "$cask_out" 2>/dev/null | sed -E 's/^[[:space:]]*([a-z0-9_-]+):.*/\1/' | sort -u)
+    local healed=0
+    if [ -n "$missing_src" ] || [ -n "$stale_src" ]; then
+        log HEAL "   Auto-healing broken casks..."
+        for name in $stale_src; do
+            local stale_path
+            stale_path=$(grep "^[[:space:]]*${name}: It seems there is already an App at" "$cask_out" | grep -oE "'[^']+'" | head -1 | tr -d "'")
+            if [ -n "$stale_path" ] && [ -e "$stale_path" ]; then
+                log STEP "     $name: removing stale $stale_path"
+                ! $DRY_RUN && rm -rf "$stale_path"
+            fi
+        done
+        for name in $missing_src $stale_src; do
+            log STEP "     $name: brew reinstall --cask --force"
+            if ! $DRY_RUN && brew reinstall --cask --force "$name" >/dev/null 2>&1; then
+                healed=$((healed + 1))
+            fi
+        done
+        [ "$healed" -gt 0 ] && report_add FIX "Auto-healed ${healed} broken cask(s)"
+    fi
+    rm -f "$cask_out"
 
     # Fix #142: Post-Upgrade Cask-Verifikation — split deprecated/disabled from auto-update
     local still_outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
@@ -3287,7 +3319,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v4.6+)
+# 7b. EXTRA MODULES (v4.7+)
 #############################
 
 module_tm_health() {
@@ -3663,7 +3695,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v4.6 | ${total_mins}min | $summary"
+    echo "Meister v4.7 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4783,7 +4815,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v4.6                     ║"
+echo "  ║        MEISTER v4.7                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4791,7 +4823,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v4.6 started ($(date))"
+log INFO "Meister v4.7 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
