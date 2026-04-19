@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.3
+# Version: 4.4
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -226,8 +226,8 @@ log() {
     esac
     # Quiet mode: only WARN/ERROR/FIX on terminal
     if ! $QUIET_MODE || [[ "$level" =~ ^(WARN|ERROR|FIX)$ ]]; then
-        # Re-assert scroll region so child-command escapes can't push status bar into the log stream
-        [ -n "$BW_MONITOR_PID" ] && printf '\033[1;%dr' "$((BW_TERM_LINES - 1))"
+        # Re-assert scroll region without moving cursor (DECSTBM homes cursor; save/restore protects current line)
+        [ -n "$BW_MONITOR_PID" ] && printf '\0337\033[1;%dr\0338' "$((BW_TERM_LINES - 1))"
         echo -e "${color}[${level}]${NC} ${msg}"
     fi
     # Fix #91: ANSI-Strip only wenn needed (spart sed-Fork in ~95% der Aufrufe)
@@ -389,8 +389,8 @@ start_bw_monitor() {
     [ ! -t 1 ] && return  # no terminal, skip
     BW_TERM_LINES=$(tput lines 2>/dev/null || echo 24)
     BW_TERM_COLS=$(tput cols 2>/dev/null || echo 80)
-    # Reserve last line: scroll region = lines 1..(N-1)
-    printf '\033[1;%dr' "$((BW_TERM_LINES - 1))"
+    # Reserve last line: scroll region = 1..(N-1). Save/restore around DECSTBM because setting the region homes the cursor on xterm.
+    printf '\0337\033[1;%dr\0338' "$((BW_TERM_LINES - 1))"
     # Background process repaints status bar on the reserved line
     (
         local prev; prev=$(_bw_get_bytes)
@@ -404,8 +404,8 @@ start_bw_monitor() {
             [ "$dl" -lt 0 ] 2>/dev/null && dl=0
             [ "$ul" -lt 0 ] 2>/dev/null && ul=0
             local status=" ↓ ${dl} KB/s  ↑ ${ul} KB/s"
-            # Re-assert scroll region + repaint status (one atomic printf)
-            printf '\033[1;%dr\0337\033[%d;1H\033[2K\033[7m\033[2m%-*s\033[0m\0338' \
+            # Save cursor FIRST so restore sends main process back where it was, then re-assert region and paint
+            printf '\0337\033[1;%dr\033[%d;1H\033[2K\033[7m\033[2m%-*s\033[0m\0338' \
                 "$((BW_TERM_LINES - 1))" "$BW_TERM_LINES" "$BW_TERM_COLS" "$status"
             prev_in=$curr_in; prev_out=$curr_out
         done
@@ -3416,7 +3416,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v1.0 | ${total_mins}min | $summary"
+    echo "Meister v4.4 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4536,7 +4536,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v1.0                     ║"
+echo "  ║        MEISTER v4.4                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4544,7 +4544,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v1.0 started ($(date))"
+log INFO "Meister v4.4 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
