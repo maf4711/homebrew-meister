@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.1
+# Version: 5.2
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -394,6 +394,7 @@ bw_set_status() {
 }
 start_bw_monitor() {
     [ ! -t 1 ] && return
+    kill_orphan_bw
     BW_TERM_LINES=$(tput lines 2>/dev/null || echo 24)
     BW_TERM_COLS=$(tput cols 2>/dev/null || echo 80)
     : > "$BW_STATUS_FILE"
@@ -450,17 +451,25 @@ start_bw_monitor() {
         done
     ) &
     BW_MONITOR_PID=$!
+    echo "$BW_MONITOR_PID" > "$BW_PIDFILE"
+}
+BW_PIDFILE="$MEISTER_DIR/bw.pid"
+kill_orphan_bw() {
+    [ -f "$BW_PIDFILE" ] || return 0
+    local old_pid; old_pid=$(cat "$BW_PIDFILE" 2>/dev/null)
+    [ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null
+    rm -f "$BW_PIDFILE"
 }
 stop_bw_monitor() {
-    if [ -n "$BW_MONITOR_PID" ]; then
-        kill "$BW_MONITOR_PID" 2>/dev/null
-        wait "$BW_MONITOR_PID" 2>/dev/null
-        BW_MONITOR_PID=""
-        # Reset scroll region to full terminal, clear status line
-        local lines; lines=$(tput lines 2>/dev/null || echo 24)
-        printf '\033[1;%dr' "$lines"
-        printf '\0337\033[%d;1H\033[2K\0338' "$lines"
-    fi
+    [ -n "$BW_MONITOR_PID" ] || return 0
+    kill "$BW_MONITOR_PID" 2>/dev/null
+    wait "$BW_MONITOR_PID" 2>/dev/null
+    BW_MONITOR_PID=""
+    rm -f "$BW_PIDFILE"
+    [ -t 1 ] || return 0
+    local lines; lines=$(tput lines 2>/dev/null || echo 24)
+    # Save cursor, clear status line at N, reset scroll region (DECSTBM-safe via save/restore), restore cursor
+    printf '\0337\033[%d;1H\033[2K\033[1;%dr\0338' "$lines" "$lines"
 }
 
 trap 'CLEANUP_SIGNAL=INT; stop_bw_monitor; cleanup' INT
@@ -3319,7 +3328,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v5.1+)
+# 7b. EXTRA MODULES (v5.2+)
 #############################
 
 module_healer() {
@@ -3808,7 +3817,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v5.1 | ${total_mins}min | $summary"
+    echo "Meister v5.2 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4703,7 +4712,11 @@ if [ "${1:-}" = "heal" ]; then
             sudo -v 2>/dev/null || log WARN "sudo unavailable — some fixes will skip"
         fi
     fi
+    MODULE_TOTAL=1
+    start_bw_monitor
+    bw_set_status 1 1 "Healer"
     module_healer
+    stop_bw_monitor
     exit 0
 fi
 
@@ -4946,7 +4959,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v5.1                     ║"
+echo "  ║        MEISTER v5.2                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4954,7 +4967,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v5.1 started ($(date))"
+log INFO "Meister v5.2 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
