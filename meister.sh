@@ -603,10 +603,34 @@ ai_heal() {
 Error: $error_output
 Reply ONLY with a single shell command that fixes the problem. No explanation, just the command. If no fix is possible, reply with: NO_FIX"
 
+    # Build request body (jq when available — handles all JSON escapes correctly)
+    local request_body
+    if command_exists jq; then
+        request_body=$(jq -nc --arg model "$OLLAMA_MODEL" --arg prompt "$prompt" \
+            '{model:$model, prompt:$prompt, stream:false}')
+    else
+        request_body=$(printf '{"model":"%s","prompt":"%s","stream":false}' \
+            "$OLLAMA_MODEL" \
+            "$(printf '%s' "$prompt" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')")
+    fi
+
+    local raw_response
+    raw_response=$(curl -sf --max-time 30 "${OLLAMA_URL}/api/generate" \
+        -d "$request_body" 2>/dev/null)
+
+    # Parse .response — must decode \uXXXX, \n, \t, \", \\ correctly.
+    # Bug history: a sed-only parser left && literal, so AI-Heal
+    # ran `xcode-select --reset && ...` which xcode-select rejected.
     local ai_response
-    ai_response=$(curl -sf --max-time 30 "${OLLAMA_URL}/api/generate" \
-        -d "$(printf '{"model":"%s","prompt":"%s","stream":false}' "$OLLAMA_MODEL" "$(echo "$prompt" | sed 's/"/\\"/g; s/$/\\n/' | tr -d '\n')")" \
-        2>/dev/null | sed -n 's/.*"response":"\([^"]*\)".*/\1/p' | sed 's/\\n/\n/g; s/\\t/\t/g' | head -3)
+    if command_exists jq; then
+        ai_response=$(printf '%s' "$raw_response" | jq -r '.response // ""' 2>/dev/null | head -3)
+    else
+        # Fallback: perl is always present on macOS and handles full JSON escapes
+        ai_response=$(printf '%s' "$raw_response" \
+            | perl -nle 'print $1 if /"response":"((?:[^"\\]|\\.)*)"/' \
+            | perl -CSD -pe 's/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge; s/\\n/\n/g; s/\\t/\t/g; s/\\r/\r/g; s/\\"/"/g; s/\\\\/\\/g' \
+            | head -3)
+    fi
 
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
@@ -614,10 +638,28 @@ Reply ONLY with a single shell command that fixes the problem. No explanation, j
         return 1
     fi
 
+    # Reject responses that still contain raw JSON unicode escapes — means
+    # the parser above failed, executing them produces garbage like &.
+    if echo "$ai_response" | grep -qE '\\u[0-9a-fA-F]{4}'; then
+        log WARN "AI-Heal: Malformed response (unicode escapes leaked) — skipping"
+        log_heal_event "ai-heal" "$module_name" "malformed" "$ai_response"
+        return 1
+    fi
+
     # Security check: block dangerous commands
     if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|mkfs|dd if=|:(){ :|> /dev/sd|shutdown|reboot|halt"; then
         log WARN "AI-Heal: Dangerous command blocked: $ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked" "$ai_response"
+        return 1
+    fi
+
+    # Block writes to system paths without sudo — reason: an AI-Heal run
+    # tried `chmod 700 /etc/ssh` and burned an attempt with a guaranteed-fail.
+    # If sudo is needed, the response must request it explicitly.
+    if echo "$ai_response" | grep -qE "(chmod|chown|rm|mv|mkdir|touch|tee|>>?)[^|]*[[:space:]]+/(etc|System|Library|private|usr|bin|sbin|var)(/|[[:space:]]|$)" \
+        && ! echo "$ai_response" | grep -qE "^[[:space:]]*sudo[[:space:]]"; then
+        log WARN "AI-Heal: System-path mutation without sudo blocked: $ai_response"
+        log_heal_event "ai-heal" "$module_name" "blocked-syspath" "$ai_response"
         return 1
     fi
 
@@ -2325,6 +2367,7 @@ module_spotlight_fix() {
             /System/Volumes/VM|/System/Volumes/Preboot|/System/Volumes/Update)    continue ;;
             /System/Volumes/xarts|/System/Volumes/iSCPreboot|/System/Volumes/Hardware) continue ;;
             /System/Volumes/Data|/System/Volumes/Data/*)                          continue ;;
+            /Library/Developer/CoreSimulator/Volumes/*)                           continue ;;
         esac
         volumes_checked=$((volumes_checked + 1))
         local vol_status=$(mdutil -s "$vol" 2>/dev/null)
@@ -3547,6 +3590,7 @@ module_ios_sim() {
     local after; after=$(du -sh "$sim_dir" 2>/dev/null | awk '{print $1}')
     log STEP "   Simulators: ${before} → ${after}"
     [ "$before" != "$after" ] && report_add FIX "iOS Simulators: ${before} → ${after}"
+    return 0
 }
 
 module_docker_prune() {
@@ -3596,6 +3640,7 @@ module_ssh_audit() {
     done
     log STEP "   ${total} keys audited, ${weak} weak"
     [ "$weak" -gt 0 ] && report_add WARN "${weak} weak SSH keys"
+    return 0
 }
 
 module_broken_symlinks() {
