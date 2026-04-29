@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.9
+# Version: 5.10
 # Date: 2026-04-29
 #
 # NEW in v1.1:
@@ -3544,13 +3544,18 @@ module_healer() {
     fi
 
     # 8. Orphan TCC entries — apps that were uninstalled but still hold
-    # AppleEvents / Accessibility / etc. permissions. tccutil reset is the
-    # supported path; paths-as-client (CLIs without a bundle id) are left
-    # alone because direct sqlite mutation on TCC.db is risky.
+    # AppleEvents / Accessibility / etc. permissions.
+    #
+    # tccutil reset rejects unknown bundle ids (it asks LaunchServices to
+    # resolve first) so it cannot clean entries for apps that are gone.
+    # We first try tccutil; on failure we fall back to a direct DELETE on
+    # the user TCC.db. Backup is taken before any DELETE; on sqlite error
+    # the backup is restored. Path-based clients are skipped.
     bw_phase "Healer: TCC orphans"
     local user_tcc="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
     if [ -f "$user_tcc" ] && command_exists sqlite3; then
-        # Map kTCCService<X> → tccutil's <X> argument
+        local tcc_backup_taken=false
+        local tcc_backup="${user_tcc}.meister-backup-$(date +%Y%m%d_%H%M%S)"
         local -a tcc_services=(AppleEvents Accessibility ScreenCapture Microphone Camera SystemPolicyAllFiles SystemPolicySysAdminFiles)
         for svc in "${tcc_services[@]}"; do
             local clients
@@ -3563,22 +3568,47 @@ module_healer() {
                 tcc_client_exists "$client" && continue
 
                 if [[ "$client" == /* ]]; then
-                    # Path-based clients can't be reset by tccutil — note for
-                    # manual review; auto-deleting from TCC.db risks corruption.
-                    log STEP "   orphan TCC ($svc) path-based: $client (manual cleanup needed)"
+                    log STEP "   orphan TCC ($svc) path-based: $client (skipped, manual)"
                     continue
                 fi
 
-                bw_phase "Healer: tccutil reset $svc $client"
-                log HEAL "   orphan TCC: $client → resetting ${svc}"
+                bw_phase "Healer: TCC reset $svc $client"
+                log HEAL "   orphan TCC: $client → ${svc}"
                 fixed=$((fixed + 1))
                 $DRY_RUN && continue
-                if ! tccutil reset "$svc" "$client" >/dev/null 2>&1; then
-                    log WARN "     tccutil reset $svc $client failed"
+
+                # Try the supported path first
+                if tccutil reset "$svc" "$client" >/dev/null 2>&1; then
+                    continue
+                fi
+
+                # Fallback: direct DELETE with one-shot backup
+                if ! $tcc_backup_taken; then
+                    if cp "$user_tcc" "$tcc_backup" 2>/dev/null; then
+                        tcc_backup_taken=true
+                        log STEP "     TCC.db backup → $(basename "$tcc_backup")"
+                    else
+                        log WARN "     could not back up TCC.db — skipping sqlite fallback"
+                        fixed=$((fixed - 1))
+                        continue
+                    fi
+                fi
+                # busy_timeout — TCC.db uses rollback journaling (not WAL),
+                # so concurrent tccd locks are possible; wait up to 5s.
+                local sql_err
+                sql_err=$(sqlite3 "$user_tcc" \
+                    "PRAGMA busy_timeout=5000; DELETE FROM access WHERE service='kTCCService${svc}' AND client='${client//\'/\'\'}';" 2>&1)
+                if [ -n "$sql_err" ]; then
+                    log WARN "     sqlite DELETE failed: $sql_err — restoring backup"
+                    cp "$tcc_backup" "$user_tcc" 2>/dev/null
                     fixed=$((fixed - 1))
                 fi
             done <<< "$clients"
         done
+        # Keep a small backup-rotation: prune all but the 3 newest meister-backups
+        if $tcc_backup_taken; then
+            ls -1t "${user_tcc}.meister-backup-"* 2>/dev/null | tail -n +4 | xargs -I{} rm -f "{}" 2>/dev/null
+        fi
     fi
 
     if [ "$fixed" -gt 0 ]; then
