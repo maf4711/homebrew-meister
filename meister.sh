@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.13
+# Version: 5.14
 # Date: 2026-04-29
 #
 # NEW in v1.1:
@@ -5544,9 +5544,17 @@ if $INSTALL_LAUNCHAGENT; then install_launchagent; release_lock; exit 0; fi
 # Fix #145: Get sudo FIRST - before Ollama and all modules
 # Prevents password prompt mid-run (e.g. during brew cask upgrade)
 if ! $DRY_RUN && $NEEDS_SUDO; then
-    if [ -t 0 ]; then
+    # Fix #161 (2026-05): seed sudo up-front via the CONTROLLING TERMINAL, not just stdin.
+    # When meister is launched with stdin redirected (pipe / wrapper / launchd), [ -t 0 ]
+    # is false, so the old code skipped the interactive `sudo -v` and never started
+    # keep_sudo. `brew upgrade --cask --greedy` then hit sudo, which prompts on /dev/tty,
+    # and blocked mid-run on "Password:". Prompt up-front whenever a tty is reachable.
+    if sudo -n true 2>/dev/null; then
+        keep_sudo
+        log INFO "   Sudo OK (cached)"
+    elif [ -t 0 ] || ( : < /dev/tty ) 2>/dev/null; then
         log INFO "Requesting Sudo..."
-        if sudo -v; then
+        if sudo -v < /dev/tty; then
             keep_sudo
             log INFO "   Sudo OK"
         else
@@ -5554,13 +5562,8 @@ if ! $DRY_RUN && $NEEDS_SUDO; then
             log INFO "   Sudo not available"
         fi
     else
-        if sudo -n true 2>/dev/null; then
-            keep_sudo
-            log INFO "   Sudo OK (non-interactive/cached)"
-        else
-            log WARN "No interaktives Terminal + no Sudo-Cache - sudo-Operationen skipped"
-            log INFO "   Sudo not available (non-interactive)"
-        fi
+        log WARN "No TTY + no Sudo-Cache - sudo-Operationen skipped"
+        log INFO "   Sudo not available (non-interactive)"
     fi
 fi
 
