@@ -4,8 +4,8 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.14
-# Date: 2026-04-29
+# Version: 5.15
+# Date: 2026-05-31
 #
 # NEW in v1.1:
 #  - Dotfiles Sync: meister push/pull/setup/init/scan/clone/bootstrap/status
@@ -1342,7 +1342,11 @@ module_git_repos() {
             # Self-Healing - Auto-Commit
             if $SELFHEAL_GIT_AUTOCOMMIT && ! $DRY_RUN; then
                 local commit_msg="[meister] auto-commit: ${dirty_count} changes in ${repo_name}"
-                timeout 10 git -C "$repo_dir" add -A 2>/dev/null
+                # add -u (not -A): stage only already-tracked changes, never new
+                # untracked files. Prevents auto-committing/pushing PII, secrets or
+                # build junk that isn't gitignored yet. Untracked-only repos produce
+                # an empty commit that fails harmlessly below.
+                timeout 10 git -C "$repo_dir" add -u 2>/dev/null
                 if timeout 10 git -C "$repo_dir" commit -m "$commit_msg" 2>/dev/null; then
                     log FIX "     ${repo_name}: Auto-Commit successful"
                     repos_autocommitted=$((repos_autocommitted + 1))
