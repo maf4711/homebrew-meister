@@ -4,8 +4,8 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.15
-# Date: 2026-05-31
+# Version: 5.16
+# Date: 2026-06-08
 #
 # NEW in v1.1:
 #  - Dotfiles Sync: meister push/pull/setup/init/scan/clone/bootstrap/status
