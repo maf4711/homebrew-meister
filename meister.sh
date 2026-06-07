@@ -405,7 +405,16 @@ bw_phase() {
 }
 start_bw_monitor() {
     [ ! -t 1 ] && return
-    kill_orphan_bw
+    kill_orphan_bw   # reap any stale status-bar process from a prior/crashed run
+    # The bottom-pinned bandwidth/progress bar is redrawn from a background
+    # process into a DECSTBM scroll region. That races fatally with this run's
+    # own interactive `sudo` password prompt and the verbose TTY output of
+    # brew/mas/softwareupdate, and with terminal resizes (the size is sampled
+    # once at start): status snapshots leak into the scrollback and overwrite
+    # log lines, garbling the whole run. The "[N/$MODULE_TOTAL] <module>"
+    # section headers already convey progress, so the live bar is opt-in only:
+    #   export MEISTER_STATUS_BAR=1
+    case "${MEISTER_STATUS_BAR:-0}" in 1|true|yes|on|TRUE|YES|ON) ;; *) return ;; esac
     BW_TERM_LINES=$(tput lines 2>/dev/null || echo 24)
     BW_TERM_COLS=$(tput cols 2>/dev/null || echo 80)
     : > "$BW_STATUS_FILE"
