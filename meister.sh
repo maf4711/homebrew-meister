@@ -4,8 +4,14 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.16
-# Date: 2026-06-08
+# Version: 5.17
+# Date: 2026-07-02
+#
+# NEW in v5.17:
+#  - App Remover: meister remove <App> (AppCleaner-style uninstall)
+#    Finds the .app bundle + every leftover (Application Support, Caches,
+#    Preferences, Containers, Saved State, Logs, LaunchAgents) and moves
+#    it all to Trash (reversible). --purge for permanent rm, --dry-run, -y.
 #
 # NEW in v1.1:
 #  - Dotfiles Sync: meister push/pull/setup/init/scan/clone/bootstrap/status
@@ -5229,6 +5235,190 @@ if [ "${1:-}" = "thermal" ]; then
     done
 fi
 
+# ── App Remover (meister remove <AppName>) ──
+# AppCleaner-style uninstall: find the .app bundle, read its bundle-id, collect
+# every leftover (Application Support, Caches, Preferences, Containers, Saved
+# State, Logs, LaunchAgents, ...) and move it all to Trash (reversible).
+#   --purge   permanent rm instead of Trash
+#   --dry-run show what would be removed, change nothing
+#   -y/--yes  skip the confirmation prompt
+if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
+    shift
+    REMOVE_DRY=false; REMOVE_PURGE=false; REMOVE_YES=false; REMOVE_NAME=""
+    for _a in "$@"; do
+        case "$_a" in
+            --dry-run|-n) REMOVE_DRY=true ;;
+            --purge)      REMOVE_PURGE=true ;;
+            -y|--yes)     REMOVE_YES=true ;;
+            -*)           echo "[ERROR] Unknown flag: $_a"; echo "Usage: meister remove <AppName> [--dry-run] [--purge] [-y]"; exit 1 ;;
+            *)            [ -z "$REMOVE_NAME" ] && REMOVE_NAME="$_a" || REMOVE_NAME="$REMOVE_NAME $_a" ;;
+        esac
+    done
+    if [ -z "$REMOVE_NAME" ]; then
+        echo "Usage: meister remove <AppName> [--dry-run] [--purge] [-y]"
+        echo "  Uninstall an app bundle + all its leftover files."
+        echo "  Default: moves everything to Trash (reversible).  --purge: permanent rm."
+        exit 1
+    fi
+
+    echo -e "\033[1;34m  MEISTER REMOVE — Uninstall app + leftovers\033[0m"
+    echo ""
+    DRY_RUN=$REMOVE_DRY
+    $DRY_RUN && echo "  [DRY-RUN — no changes]" && echo ""
+    shopt -s nullglob
+
+    _hkb() { awk -v k="${1:-0}" 'BEGIN{ if(k<1024) printf "%d KB",k; else if(k<1048576) printf "%.1f MB",k/1024; else printf "%.2f GB",k/1048576 }'; }
+
+    # ── 1. Locate the .app bundle ──
+    _name="${REMOVE_NAME%.app}"
+    _app=""
+    if [ -d "$REMOVE_NAME" ] && [[ "$REMOVE_NAME" == *.app ]]; then _app="$REMOVE_NAME"; fi
+    if [ -z "$_app" ]; then
+        for _cand in "/Applications/$_name.app" "$HOME/Applications/$_name.app" "/Applications/Utilities/$_name.app"; do
+            [ -d "$_cand" ] && _app="$_cand" && break
+        done
+    fi
+    if [ -z "$_app" ]; then
+        _hits=()
+        while IFS= read -r _line; do
+            [ -d "$_line" ] || continue
+            case "$_line" in /System/*) continue ;; esac
+            _hits+=("$_line")
+        done < <(mdfind "kMDItemContentType == 'com.apple.application-bundle' && kMDItemFSName == '$_name.app'c" 2>/dev/null)
+        if [ "${#_hits[@]}" -eq 1 ]; then
+            _app="${_hits[0]}"
+        elif [ "${#_hits[@]}" -gt 1 ]; then
+            log WARN "Multiple apps match '$_name' — pass the full path to disambiguate:"
+            for _h in "${_hits[@]}"; do echo "    $_h"; done
+            exit 1
+        fi
+    fi
+    if [ -z "$_app" ]; then
+        log ERROR "No app named '$_name' found (checked /Applications, ~/Applications, Spotlight)."
+        if command -v brew >/dev/null 2>&1 && { brew list --cask "$_name" &>/dev/null || brew list --formula "$_name" &>/dev/null; }; then
+            echo "  Hint: '$_name' is a Homebrew package — use:  brew uninstall $_name"
+        fi
+        exit 1
+    fi
+    case "$_app" in /System/*) log ERROR "Refusing to remove a system app: $_app"; exit 1 ;; esac
+
+    # ── 2. Bundle identifier ──
+    _bid="$(defaults read "$_app/Contents/Info" CFBundleIdentifier 2>/dev/null)"
+    [ -z "$_bid" ] && _bid="$(mdls -name kMDItemCFBundleIdentifier -raw "$_app" 2>/dev/null)"
+    [ "$_bid" = "(null)" ] && _bid=""
+    _base="$(basename "$_app" .app)"
+    log INFO "App:       $_app"
+    if [ -n "$_bid" ]; then log INFO "Bundle-ID: $_bid"; else log WARN "No bundle-id — leftover match limited to app name."; fi
+
+    # ── 3. Collect targets (app bundle + existing leftovers) ──
+    _targets=("$_app")
+    _add() { local p="$1" t; [ -e "$p" ] || return 0; for t in "${_targets[@]}"; do [ "$t" = "$p" ] && return 0; done; _targets+=("$p"); }
+    # name-based (specific base name — safe)
+    for _p in \
+        "$HOME/Library/Application Support/$_base" \
+        "$HOME/Library/Caches/$_base" \
+        "$HOME/Library/Logs/$_base"; do
+        _add "$_p"
+    done
+    # bundle-id based (ONLY when a bundle-id exists — an empty id would turn globs catastrophic)
+    if [ -n "$_bid" ]; then
+        for _p in \
+            "$HOME/Library/Application Support/$_bid" \
+            "$HOME/Library/Caches/$_bid" \
+            "$HOME/Library/Containers/$_bid" \
+            "$HOME/Library/HTTPStorages/$_bid" \
+            "$HOME/Library/HTTPStorages/$_bid.binarycookies" \
+            "$HOME/Library/WebKit/$_bid" \
+            "$HOME/Library/Cookies/$_bid.binarycookies" \
+            "$HOME/Library/Application Scripts/$_bid" \
+            "$HOME/Library/Saved Application State/$_bid.savedState" \
+            "$HOME/Library/Logs/$_bid" \
+            "$HOME/Library/Preferences/$_bid.plist"; do
+            _add "$_p"
+        done
+        for _p in \
+            "$HOME/Library/Preferences/$_bid"[._]*.plist \
+            "$HOME/Library/Preferences/ByHost/$_bid".*.plist \
+            "$HOME/Library/LaunchAgents/$_bid"*.plist \
+            "$HOME/Library/Group Containers/"*"$_bid"*; do
+            _add "$_p"
+        done
+    fi
+
+    # ── 4. Size + preview ──
+    _total_kb=0
+    echo ""
+    echo "  Will remove:"
+    for _t in "${_targets[@]}"; do
+        _kb=$(du -sk "$_t" 2>/dev/null | awk '{print $1}'); _kb=${_kb:-0}
+        _total_kb=$((_total_kb + _kb))
+        printf '    %-10s %s\n' "$(_hkb "$_kb")" "${_t/#$HOME/~}"
+    done
+    echo "    ----------"
+    printf '    %s item(s), %s total\n' "${#_targets[@]}" "$(_hkb "$_total_kb")"
+    echo ""
+
+    # ── 5. Quit the app if running ──
+    if pgrep -f "$_app/Contents/MacOS/" >/dev/null 2>&1; then
+        log INFO "Quitting running app '$_base'..."
+        run_or_dry osascript -e "tell application \"$_base\" to quit" >/dev/null 2>&1 || true
+        if ! $DRY_RUN; then
+            _w=0
+            while [ $_w -lt 5 ] && pgrep -f "$_app/Contents/MacOS/" >/dev/null 2>&1; do sleep 1; _w=$((_w + 1)); done
+            pgrep -f "$_app/Contents/MacOS/" >/dev/null 2>&1 && run_or_dry pkill -f "$_app/Contents/MacOS/"
+        fi
+    fi
+
+    # ── 6. Confirm ──
+    if ! $DRY_RUN && ! $REMOVE_YES; then
+        if [ ! -t 0 ]; then
+            log ERROR "Non-interactive terminal and no -y/--yes given — aborting."
+            exit 1
+        fi
+        if $REMOVE_PURGE; then
+            printf "  \033[1;31mPERMANENTLY delete\033[0m these %s item(s)? [y/N] " "${#_targets[@]}"
+        else
+            printf "  Move these %s item(s) to Trash? [y/N] " "${#_targets[@]}"
+        fi
+        read -r _reply
+        case "$_reply" in [yY]|[yY][eE][sS]) ;; *) echo "  Aborted."; exit 0 ;; esac
+    fi
+
+    # ── 7. Remove ──
+    _need_sudo=false
+    for _t in "${_targets[@]}"; do [ -w "$(dirname "$_t")" ] || { _need_sudo=true; break; }; done
+    if $_need_sudo && ! $DRY_RUN && [ -t 0 ]; then
+        sudo -v 2>/dev/null || log WARN "sudo unavailable — system-owned files may be skipped"
+    fi
+    _trash="$HOME/.Trash"
+    _removed=0; _failed=0
+    for _t in "${_targets[@]}"; do
+        case "$_t" in
+            "" | "/" | "$HOME" | "$HOME/" | "/Applications" | "/Library" | /System*)
+                log WARN "Skipping unsafe path: $_t"; _failed=$((_failed + 1)); continue ;;
+        esac
+        _sudo=""; [ -w "$(dirname "$_t")" ] || _sudo="sudo"
+        if $REMOVE_PURGE; then
+            if [ -n "$_sudo" ]; then run_or_dry sudo rm -rf "$_t"; else run_or_dry rm -rf "$_t"; fi
+        else
+            _dest="$_trash/$(basename "$_t")"
+            [ -e "$_dest" ] && _dest="$_dest.$(date +%Y%m%d%H%M%S)"
+            if [ -n "$_sudo" ]; then run_or_dry sudo mv "$_t" "$_dest"; else run_or_dry mv "$_t" "$_dest"; fi
+        fi
+        if [ $? -eq 0 ]; then _removed=$((_removed + 1)); else log WARN "Failed: $_t"; _failed=$((_failed + 1)); fi
+    done
+
+    echo ""
+    if $DRY_RUN; then
+        log INFO "Dry-run complete — nothing changed. ($_removed item(s) would be removed)"
+    elif $REMOVE_PURGE; then
+        log INFO "Permanently removed $_removed item(s). ($_failed failed/skipped)"
+    else
+        log INFO "Moved $_removed item(s) to Trash. ($_failed failed/skipped)  Restore from ~/.Trash if needed."
+    fi
+    exit 0
+fi
+
 # ── Simulator Fix (meister simfix) ──
 if [ "${1:-}" = "simfix" ]; then
     echo -e "\033[1;34m  MEISTER SIMFIX — Repair iOS Simulator\033[0m"
@@ -5406,6 +5596,11 @@ TOOLS:
   meister certs [host] SSL certificate checker
   meister thermal [N]  Live temperature & fan monitor (default: 2s)
   meister speed        Download/upload speed test
+
+APP MANAGEMENT:
+  meister remove <App> [--dry-run] [--purge] [-y]
+                       Uninstall app + all leftovers (caches, prefs, containers,
+                       saved state, logs). Default: to Trash (reversible). --purge: rm.
 
 DOTFILES SYNC:
   meister push         Collect configs, commit, push
