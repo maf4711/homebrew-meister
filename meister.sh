@@ -4,8 +4,15 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.18
+# Version: 5.19
 # Date: 2026-07-03
+#
+# NEW in v5.19:
+#  - Orphan Scanner: meister orphans — finds leftovers (prefs, caches, containers,
+#    launchd, HTTPStorages, ...) of apps that are no longer installed, biggest
+#    first, and lets you pick which to Trash. Conservative matching (skips
+#    com.apple.*, live services, installed-app helpers/containers/siblings via a
+#    single awk pass) keeps false positives low. bash-3.2 safe.
 #
 # NEW in v5.18:
 #  - App Remover now CleanMyMac-aggressive: escalates to root on failure
@@ -5486,6 +5493,225 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
     exit 0
 fi
 
+# ── Orphan Leftover Scanner (meister orphans) ──
+# Finds files in ~/Library and /Library whose bundle-id belongs to an app that
+# is no longer installed — CleanMyMac's "Leftovers". Conservative by design so
+# it never eats data of an app that IS installed:
+#   - only reverse-DNS id-form names (>=2 dots); human-named dirs are skipped
+#   - never com.apple.* or known updaters (Keystone, AutoUpdate)
+#   - skip ids with a live launchd service (in use) or a related installed app
+#     (helpers/containers share a parent-or-child id)
+# Moves to Trash (reversible) by default. --purge, --dry-run, -y as with remove.
+if [ "${1:-}" = "orphans" ]; then
+    shift
+    ORPH_DRY=false; ORPH_PURGE=false; ORPH_YES=false
+    for _a in "$@"; do
+        case "$_a" in
+            --dry-run|-n) ORPH_DRY=true ;;
+            --purge)      ORPH_PURGE=true ;;
+            -y|--yes)     ORPH_YES=true ;;
+            -*) echo "[ERROR] Unknown flag: $_a"; echo "Usage: meister orphans [--dry-run] [--purge] [-y]"; exit 1 ;;
+            *)  echo "[ERROR] Unexpected argument: $_a"; echo "Usage: meister orphans [--dry-run] [--purge] [-y]"; exit 1 ;;
+        esac
+    done
+
+    echo -e "\033[1;34m  MEISTER ORPHANS — Leftovers of uninstalled apps\033[0m"
+    echo ""
+    DRY_RUN=$ORPH_DRY
+    $DRY_RUN && echo "  [DRY-RUN — no changes]" && echo ""
+    shopt -s nullglob
+
+    _hkb() { awk -v k="${1:-0}" 'BEGIN{ if(k<1024) printf "%d KB",k; else if(k<1048576) printf "%.1f MB",k/1024; else printf "%.2f GB",k/1048576 }'; }
+
+    # ── 1. Index installed bundle-ids (one Spotlight call + /Applications fallback) ──
+    log INFO "Indexing installed apps..."
+    _installed="$(mktemp)"; _cand="$(mktemp)"
+    trap 'rm -f "$_installed" "$_cand"' EXIT
+    {
+        # -attr returns "<path>  kMDItemCFBundleIdentifier = <id>" in a single process
+        mdfind -attr kMDItemCFBundleIdentifier \
+            "kMDItemContentType == 'com.apple.application-bundle'" 2>/dev/null \
+            | sed -n 's/.*kMDItemCFBundleIdentifier = //p'
+        for _d in /Applications "$HOME/Applications" /Applications/Utilities; do
+            [ -d "$_d" ] || continue
+            while IFS= read -r _ip; do
+                defaults read "${_ip%.plist}" CFBundleIdentifier 2>/dev/null
+            done < <(find "$_d" -maxdepth 3 -path "*.app/Contents/Info.plist" 2>/dev/null)
+        done
+        # PreferencePanes are "installed" apps without a .app (e.g. Hazel) — index them too
+        for _pp in "$HOME/Library/PreferencePanes"/*.prefPane /Library/PreferencePanes/*.prefPane; do
+            [ -d "$_pp" ] && defaults read "$_pp/Contents/Info" CFBundleIdentifier 2>/dev/null
+        done
+    } | grep -v '^(null)$' | tr '[:upper:]' '[:lower:]' | grep -E '^[a-z0-9].*\.' | sort -u > "$_installed"
+
+    _icount=$(grep -c . "$_installed")
+    if [ "$_icount" -lt 20 ]; then
+        log ERROR "Only $_icount apps indexed — Spotlight looks incomplete; everything would"
+        log ERROR "appear orphaned. Refusing to run. Rebuild the index with: sudo mdutil -E /"
+        exit 1
+    fi
+    log INFO "Indexed $_icount installed bundle-ids."
+
+    _svc="$(mktemp)"; _raw="$(mktemp)"; _picked="$(mktemp)"
+    trap 'rm -f "$_installed" "$_cand" "$_svc" "$_raw" "$_picked" "$_annot" "$_sizes"' EXIT
+    launchctl list 2>/dev/null | awk 'NR>1{print tolower($3)}' | sort -u > "$_svc"
+
+    # ── 2. Collect raw candidates from id-named locations (basename encodes the id) ──
+    for _dir in \
+        "$HOME/Library/Preferences" \
+        "$HOME/Library/Containers" \
+        "$HOME/Library/Saved Application State" \
+        "$HOME/Library/HTTPStorages" \
+        "$HOME/Library/Application Scripts" \
+        "$HOME/Library/WebKit" \
+        "$HOME/Library/Caches" \
+        "$HOME/Library/Application Support" \
+        "$HOME/Library/Logs" \
+        "$HOME/Library/LaunchAgents" \
+        "/Library/Application Support" \
+        "/Library/LaunchDaemons" \
+        "/Library/LaunchAgents" \
+        "/Library/PrivilegedHelperTools"; do
+        [ -d "$_dir" ] || continue
+        for _e in "$_dir"/*; do
+            [ -e "$_e" ] || continue
+            _bn="${_e##*/}"                                       # basename, no fork
+            case "$_bn" in *" "*|*_tmp_*|*.dat) continue ;; esac  # skip temp/non-id junk
+            printf '%s\t%s\n' "$_bn" "$_e" >> "$_raw"
+        done
+    done
+
+    # ── Classify in ONE awk pass — portable to bash 3.2 (no associative arrays in bash). ──
+    # awk loads installed ids + their >=3-label prefixes + loaded services, then for each
+    # candidate decides whether an installed app owns it (exact / helper / container /
+    # sibling-extension, incl. the <TeamID>.<bundleid> naming of Application Scripts).
+    awk -F'\t' -v svcfile="$_svc" '
+        function ndots(s,  t){ t=s; return gsub(/\./,"",t) }
+        function hasteam(id,  a){ return (split(id,a,".")>=2 && length(a[1])==10 && a[1] ~ /^[a-z0-9]+$/) }
+        function check(p){ while(1){ if(p in inst || p in pref) return 1; if(sub(/\.[^.]*$/,"",p)==0) return 0 } }
+        function owned(id,  v){ if(check(id)) return 1; if(hasteam(id)){ v=id; sub(/^[^.]*\./,"",v); if(check(v)) return 1 } return 0 }
+        BEGIN{ while((getline s < svcfile) > 0) loaded[s]=1 }
+        NR==FNR {                                         # installed ids (lowercased, sorted)
+            if($0!=""){ inst[$0]=1; p=$0
+                while(sub(/\.[^.]*$/,"",p)){ if(ndots(p)>=2) pref[p]=1; else break } }
+            next
+        }
+        {                                                 # raw candidate: base \t path
+            id=tolower($1)
+            sub(/\.plist$/,"",id); sub(/\.savedstate$/,"",id); sub(/\.binarycookies$/,"",id)
+            if(id=="") next
+            if(id ~ /^com\.apple\./ || id ~ /^apple\./ || id ~ /\.com\.apple\./) next
+            if(id ~ /^com\.google\.keystone/ || id ~ /^com\.google\.googleupdater/ || id ~ /^com\.microsoft\.autoupdate/ || id ~ /^com\.oracle\.java/ || id ~ /^org\.swift\./) next
+            if(ndots(id) < 2) next                        # need reverse-DNS; skip human-named dirs
+            if(id in loaded) next                         # live launchd service → in use
+            if(owned(id)) next                            # an installed app owns it
+            print id "\t" $2
+        }
+    ' "$_installed" "$_raw" | sort -u > "$_cand"
+
+    if [ ! -s "$_cand" ]; then
+        log INFO "No orphaned leftovers found. 🎉"
+        exit 0
+    fi
+
+    # ── 3. Size each item, group by app, preview (numbered, biggest first) ──
+    _annot="$(mktemp)"; _sizes="$(mktemp)"
+    while IFS=$'\t' read -r _cid _path; do
+        _kb=$(du -sk "$_path" 2>/dev/null | awk '{print $1}')
+        printf '%s\t%s\t%s\n' "$_cid" "${_kb:-0}" "$_path" >> "$_annot"
+    done < "$_cand"
+    awk -F'\t' '{k[$1]+=$2} END{for(i in k) printf "%d\t%s\n", k[i], i}' "$_annot" | sort -rn > "$_sizes"
+
+    _gids=(); _total_kb=0; _i=0
+    echo "  Orphaned leftovers — no installed app owns these (biggest first):"
+    echo ""
+    while IFS=$'\t' read -r _gkb _gid; do
+        _i=$((_i + 1)); _gids+=("$_gid"); _total_kb=$((_total_kb + _gkb))
+        printf '  \033[1m[%3d]\033[0m %-10s %s\n' "$_i" "$(_hkb "$_gkb")" "$_gid"
+    done < "$_sizes"
+    echo "        ----------"
+    printf '  %s app(s), %s total\n' "${#_gids[@]}" "$(_hkb "$_total_kb")"
+
+    # ── 4. Select which apps' leftovers to remove ──
+    # Review first: shared components (Office licensing, Python, VPN helpers) can appear
+    # here if their parent app is uninstalled. Deselect anything you still use — and note
+    # everything goes to the Trash, so a wrong pick is recoverable.
+    _pick_all=false
+    if $DRY_RUN || $ORPH_YES; then
+        _pick_all=true
+    else
+        [ -t 0 ] || { log ERROR "Non-interactive terminal and no -y/--yes given — aborting."; exit 1; }
+        echo ""
+        echo "  Select:  [a]=all   \"3 7\"=only these   \"!3 7\"=all except these   [Enter]=cancel"
+        printf "  → "
+        read -r _sel
+        case "$_sel" in
+            a|A|all|ALL) _pick_all=true ;;
+            "") echo "  Cancelled."; exit 0 ;;
+            "!"*)
+                _ex=" ${_sel#!} "
+                for _k in $(seq 1 "${#_gids[@]}"); do
+                    case "$_ex" in *" $_k "*) continue ;; esac
+                    echo "${_gids[$((_k - 1))]}" >> "$_picked"
+                done ;;
+            *)
+                for _k in $_sel; do
+                    case "$_k" in ''|*[!0-9]*) continue ;; esac
+                    [ "$_k" -ge 1 ] && [ "$_k" -le "${#_gids[@]}" ] && echo "${_gids[$((_k - 1))]}" >> "$_picked"
+                done ;;
+        esac
+        if ! $_pick_all && [ ! -s "$_picked" ]; then echo "  Nothing selected — aborting."; exit 0; fi
+        $_pick_all && _cnt="${#_gids[@]}" || _cnt="$(grep -c . "$_picked")"
+        if $ORPH_PURGE; then printf "  \033[1;31mPERMANENTLY delete\033[0m leftovers of %s app(s)? [y/N] " "$_cnt"
+        else printf "  Move leftovers of %s app(s) to Trash? [y/N] " "$_cnt"; fi
+        read -r _reply
+        case "$_reply" in [yY]|[yY][eE][sS]) ;; *) echo "  Aborted."; exit 0 ;; esac
+    fi
+
+    # ── 5. Reap (unprivileged first, escalate to root on failure — like remove) ──
+    _authed=false
+    _ensure_sudo() {
+        $_authed && return 0
+        [ -t 0 ] || return 1
+        log INFO "System-owned (root) items present — authorizing removal..."
+        sudo -v 2>/dev/null && { _authed=true; return 0; }
+        log WARN "Authorization failed — root-owned items will be skipped."
+        return 1
+    }
+    _trash="$HOME/.Trash"; _removed=0; _failed=0
+    while IFS=$'\t' read -r _cid _t; do
+        $_pick_all || grep -qxF "$_cid" "$_picked" || continue   # honor per-app selection
+        case "$_t" in
+            "" | "/" | "$HOME" | "$HOME/" | /System*) log WARN "Skipping unsafe path: $_t"; _failed=$((_failed + 1)); continue ;;
+        esac
+        if $DRY_RUN; then log STEP "   [DRY-RUN] remove ${_t/#$HOME/~}"; _removed=$((_removed + 1)); continue; fi
+        if $ORPH_PURGE; then
+            if rm -rf "$_t" 2>/dev/null || { _ensure_sudo && sudo rm -rf "$_t" 2>/dev/null; }; then
+                _removed=$((_removed + 1)); continue
+            fi
+        else
+            _dest="$_trash/$(basename "$_t")"
+            [ -e "$_dest" ] && _dest="$_dest.$(date +%Y%m%d%H%M%S)"
+            if mv "$_t" "$_dest" 2>/dev/null; then _removed=$((_removed + 1)); continue; fi
+            if _ensure_sudo && sudo mv "$_t" "$_dest" 2>/dev/null; then
+                sudo chown -R "$(id -u):$(id -g)" "$_dest" 2>/dev/null
+                _removed=$((_removed + 1)); continue
+            fi
+        fi
+        log WARN "Failed: $_t"; _failed=$((_failed + 1))
+    done < "$_cand"
+
+    echo ""
+    if $DRY_RUN; then
+        log INFO "Dry-run complete — nothing changed. ($_removed item(s) would be removed)"
+    elif $ORPH_PURGE; then
+        log INFO "Permanently removed $_removed item(s). ($_failed failed/skipped)"
+    else
+        log INFO "Moved $_removed item(s) to Trash. ($_failed failed/skipped)  Restore from ~/.Trash if needed."
+    fi
+    exit 0
+fi
+
 # ── Simulator Fix (meister simfix) ──
 if [ "${1:-}" = "simfix" ]; then
     echo -e "\033[1;34m  MEISTER SIMFIX — Repair iOS Simulator\033[0m"
@@ -5668,6 +5894,9 @@ APP MANAGEMENT:
   meister remove <App> [--dry-run] [--purge] [-y]
                        Uninstall app + all leftovers (caches, prefs, containers,
                        saved state, logs). Default: to Trash (reversible). --purge: rm.
+  meister orphans [--dry-run] [--purge] [-y]
+                       Scan ~/Library + /Library for leftovers of apps that are no
+                       longer installed; pick which to remove. Default: Trash.
 
 DOTFILES SYNC:
   meister push         Collect configs, commit, push
