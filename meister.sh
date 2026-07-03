@@ -4,8 +4,15 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.17
-# Date: 2026-07-02
+# Version: 5.18
+# Date: 2026-07-03
+#
+# NEW in v5.18:
+#  - App Remover now CleanMyMac-aggressive: escalates to root on failure
+#    (root-owned apps installed by pkg installers were silently left behind),
+#    deep-scans /Library (Application Support, Caches, Preferences, Logs,
+#    LaunchDaemons, LaunchAgents, PrivilegedHelperTools), unloads the app's
+#    launchd services first, and `pkgutil --forget`s its receipts.
 #
 # NEW in v5.17:
 #  - App Remover: meister remove <App> (AppCleaner-style uninstall)
@@ -5344,6 +5351,28 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
             _add "$_p"
         done
     fi
+    # system-level (root-owned) leftovers — the CleanMyMac-style deep scan.
+    # These are what a pkg installer drops outside ~/Library; the app-name and
+    # bundle-id are specific enough to be safe. Removed via elevation in step 7.
+    for _p in \
+        "/Library/Application Support/$_base" \
+        "/Library/Logs/$_base"; do
+        _add "$_p"
+    done
+    if [ -n "$_bid" ]; then
+        for _p in \
+            "/Library/Application Support/$_bid" \
+            "/Library/Caches/$_bid" \
+            "/Library/Preferences/$_bid.plist"; do
+            _add "$_p"
+        done
+        for _p in \
+            /Library/LaunchDaemons/"$_bid"*.plist \
+            /Library/LaunchAgents/"$_bid"*.plist \
+            /Library/PrivilegedHelperTools/"$_bid"*; do
+            _add "$_p"
+        done
+    fi
 
     # ── 4. Size + preview ──
     _total_kb=0
@@ -5384,29 +5413,67 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         case "$_reply" in [yY]|[yY][eE][sS]) ;; *) echo "  Aborted."; exit 0 ;; esac
     fi
 
-    # ── 7. Remove ──
-    _need_sudo=false
-    for _t in "${_targets[@]}"; do [ -w "$(dirname "$_t")" ] || { _need_sudo=true; break; }; done
-    if $_need_sudo && ! $DRY_RUN && [ -t 0 ]; then
-        sudo -v 2>/dev/null || log WARN "sudo unavailable — system-owned files may be skipped"
+    # ── 7. Remove (unprivileged first, escalate to root on failure — like CleanMyMac) ──
+    # Why not pre-guess: moving a root-owned .app to Trash needs write on the bundle
+    # itself (its ".." link is rewritten), not just on /Applications. The old parent-dir
+    # check saw /Applications as writable and never escalated, so the app was left behind.
+    # Correct + simple: try as the user, and only if that fails escalate — one auth prompt.
+    _authed=false
+    _ensure_sudo() {
+        $_authed && return 0
+        [ -t 0 ] || return 1            # never block on auth in a non-interactive run
+        log INFO "System-owned (root) items present — authorizing removal..."
+        sudo -v 2>/dev/null && { _authed=true; return 0; }
+        log WARN "Authorization failed — root-owned items will be skipped."
+        return 1
+    }
+
+    # Unload any launchd services the app registered (else they respawn / hold files open)
+    if [ -n "$_bid" ]; then
+        while IFS= read -r _svc; do
+            [ -z "$_svc" ] && continue
+            if $DRY_RUN; then log STEP "   [DRY-RUN] launchctl bootout $_svc"; continue; fi
+            launchctl bootout "gui/$(id -u)/$_svc" 2>/dev/null && { log FIX "Unloaded service: $_svc"; continue; }
+            _ensure_sudo && sudo launchctl bootout "system/$_svc" 2>/dev/null && log FIX "Unloaded service: $_svc"
+        done < <(launchctl list 2>/dev/null | awk -v b="$_bid" 'BEGIN{b=tolower(b)} NR>1 { s=tolower($3); if (index(s,b)==1) print $3 }')
     fi
+
     _trash="$HOME/.Trash"
     _removed=0; _failed=0
     for _t in "${_targets[@]}"; do
         case "$_t" in
-            "" | "/" | "$HOME" | "$HOME/" | "/Applications" | "/Library" | /System*)
+            "" | "/" | "$HOME" | "$HOME/" | "/Applications" | "/Library" | "/Library/Application Support" | /System*)
                 log WARN "Skipping unsafe path: $_t"; _failed=$((_failed + 1)); continue ;;
         esac
-        _sudo=""; [ -w "$(dirname "$_t")" ] || _sudo="sudo"
+        if $DRY_RUN; then log STEP "   [DRY-RUN] remove ${_t/#$HOME/~}"; _removed=$((_removed + 1)); continue; fi
         if $REMOVE_PURGE; then
-            if [ -n "$_sudo" ]; then run_or_dry sudo rm -rf "$_t"; else run_or_dry rm -rf "$_t"; fi
+            if rm -rf "$_t" 2>/dev/null || { _ensure_sudo && sudo rm -rf "$_t" 2>/dev/null; }; then
+                _removed=$((_removed + 1)); continue
+            fi
         else
             _dest="$_trash/$(basename "$_t")"
             [ -e "$_dest" ] && _dest="$_dest.$(date +%Y%m%d%H%M%S)"
-            if [ -n "$_sudo" ]; then run_or_dry sudo mv "$_t" "$_dest"; else run_or_dry mv "$_t" "$_dest"; fi
+            if mv "$_t" "$_dest" 2>/dev/null; then
+                _removed=$((_removed + 1)); continue
+            fi
+            if _ensure_sudo && sudo mv "$_t" "$_dest" 2>/dev/null; then
+                sudo chown -R "$(id -u):$(id -g)" "$_dest" 2>/dev/null   # user-owned so Trash restore/empty needs no auth
+                _removed=$((_removed + 1)); continue
+            fi
         fi
-        if [ $? -eq 0 ]; then _removed=$((_removed + 1)); else log WARN "Failed: $_t"; _failed=$((_failed + 1)); fi
+        log WARN "Failed: $_t"; _failed=$((_failed + 1))
     done
+
+    # Forget package receipts so a reinstall starts clean (removes only the receipt record,
+    # touches no files). Tightly matched: same vendor prefix AND app name — never a stray pkg.
+    if [ -n "$_bid" ] && ! $DRY_RUN; then
+        _vendor="$(printf '%s' "$_bid" | cut -d. -f1,2)"
+        _lname="$(printf '%s' "$_base" | tr '[:upper:]' '[:lower:]')"
+        while IFS= read -r _rcpt; do
+            [ -z "$_rcpt" ] && continue
+            _ensure_sudo && sudo pkgutil --forget "$_rcpt" >/dev/null 2>&1 && log FIX "Forgot pkg receipt: $_rcpt"
+        done < <(pkgutil --pkgs 2>/dev/null | awk -v v="$_vendor" -v n="$_lname" 'index($0,v)==1 && index(tolower($0),n)')
+    fi
 
     echo ""
     if $DRY_RUN; then
