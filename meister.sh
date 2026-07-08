@@ -4,8 +4,15 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.19
-# Date: 2026-07-03
+# Version: 5.20
+# Date: 2026-07-08
+#
+# NEW in v5.20:
+#  - Homebrew Quiet: module_homebrew now ensures HOMEBREW_NO_ENV_HINTS=1 and
+#    HOMEBREW_NO_AUTO_UPDATE=1 — persisted once to the login shell's env file
+#    (idempotent) and exported for the run. Kills the env-hint block and
+#    auto-update chatter on every brew command. (The macOS pre-release
+#    "Tier 2" support warning is not env-suppressible and is left as-is.)
 #
 # NEW in v5.19:
 #  - Orphan Scanner: meister orphans — finds leftovers (prefs, caches, containers,
@@ -882,6 +889,39 @@ ensure_brew() {
     return 0
 }
 
+# Keep Homebrew quiet: no env hints, no auto-update chatter on every command.
+# Exports for the current run AND persists to the login shell's env file once
+# (idempotent — guarded by the marker so re-running never duplicates).
+ensure_brew_quiet() {
+    export HOMEBREW_NO_ENV_HINTS=1
+    export HOMEBREW_NO_AUTO_UPDATE=1
+
+    local rc
+    case "$(basename "${SHELL:-/bin/zsh}")" in
+        zsh)  rc="$HOME/.zshenv" ;;
+        bash) rc="$HOME/.bash_profile" ;;
+        *)    rc="$HOME/.profile" ;;
+    esac
+
+    if [ -f "$rc" ] && grep -q 'HOMEBREW_NO_ENV_HINTS' "$rc" 2>/dev/null; then
+        log STEP "   Homebrew already quiet ($rc)"
+        return 0
+    fi
+
+    if $DRY_RUN; then
+        log STEP "   [DRY-RUN] would silence Homebrew in $rc"
+        return 0
+    fi
+
+    {
+        printf '\n# meister: keep Homebrew quiet (env hints + auto-update)\n'
+        printf 'export HOMEBREW_NO_ENV_HINTS=1\n'
+        printf 'export HOMEBREW_NO_AUTO_UPDATE=1\n'
+    } >> "$rc"
+    log FIX "   Homebrew silenced (HOMEBREW_NO_* added to $rc)"
+    report_add FIX "Silenced Homebrew noise in $rc"
+}
+
 ensure_tool() {
     local cmd="$1"
     local pkg="$2"
@@ -915,6 +955,7 @@ ensure_tool() {
 module_homebrew() {
     log INFO "Homebrew Maintenance..."
     ensure_brew || return 1
+    ensure_brew_quiet
 
     local brew_version=$(brew --version 2>/dev/null | head -1)
     log STEP "   Version: $brew_version"
