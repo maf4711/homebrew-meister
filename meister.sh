@@ -4,8 +4,15 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.20
-# Date: 2026-07-08
+# Version: 5.21
+# Date: 2026-07-11
+#
+# NEW in v5.21:
+#  - Docs Order: new module module_docs_order — order check for ~/Documents:
+#    root strangers (unknown top-level entries), empty iCloud ghost folders
+#    ("X 2"/"X 3", cleanup config-gated), corrupt stubs (65535 links), unsorted
+#    _Inbox files, dataless stats (content only in iCloud → backup warning).
+#    Config: DOCS_ORDER_* in ~/.meister/config
 #
 # NEW in v5.20:
 #  - Homebrew Quiet: module_homebrew now ensures HOMEBREW_NO_ENV_HINTS=1 and
@@ -127,6 +134,14 @@ ICLOUD_STUBS_DELETE=false          # Auto-delete corrupt stubs (default: off, sa
 ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
 ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
 
+# Docs Order check v5.21 (automatic on every run if root exists)
+DOCS_ORDER_ENABLED=true            # Order check for DOCS_ORDER_ROOT
+DOCS_ORDER_ROOT="$HOME/Documents"  # Directory to check
+DOCS_ORDER_KNOWN=""                # Extra allowed top-level entries ("|"-separated), on top of learned baseline
+DOCS_ORDER_GHOST_CLEAN=true        # Remove EMPTY "X 2"/"X 3" ghost folders at root
+DOCS_ORDER_DATALESS_SCAN=true      # Scan for dataless files (content only in iCloud)
+DOCS_ORDER_DATALESS_WARN_GB=5      # WARN when more than X GB exist only in iCloud
+
 # Self-Healing v0.06: Automatic repair for all warnings
 SELFHEAL_APPSTORE_OPEN=false       # Open App Store on missing login
 SELFHEAL_FDA_OPEN=true             # Open privacy settings for FDA
@@ -174,9 +189,9 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS PERF_CLEAN_OLLAMA SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH "
-    _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH "
-    _STR_KEYS=" OLLAMA_MODEL OLLAMA_FALLBACK_MODEL OLLAMA_URL NET_CHECK_HOSTS OLLAMA_KEEP_MODELS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE "
+    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS PERF_CLEAN_OLLAMA SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN "
+    _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
+    _STR_KEYS=" OLLAMA_MODEL OLLAMA_FALLBACK_MODEL OLLAMA_URL NET_CHECK_HOSTS OLLAMA_KEEP_MODELS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
@@ -4115,6 +4130,103 @@ module_dsstore_cleanup() {
     [ "$total" -eq 0 ] && log STEP "   None found"
 }
 
+# v5.21: Order check for DOCS_ORDER_ROOT (default ~/Documents)
+module_docs_order() {
+    $DOCS_ORDER_ENABLED || { log STEP "Docs order check disabled"; return 0; }
+    local root="$DOCS_ORDER_ROOT"
+    [ -d "$root" ] || { log STEP "   $root missing - skip"; return 0; }
+    log INFO "Checking order in $root ..."
+
+    # 1) Empty iCloud ghost folders ("X 2", "X 3") at root — before baseline
+    #    check so removed ghosts never show up as new entries
+    bw_phase "Docs: ghost folders"
+    local ghosts; ghosts=$(find "$root" -mindepth 1 -maxdepth 1 -type d -name "* [2-9]" -empty 2>/dev/null)
+    if [ -n "$ghosts" ]; then
+        local gcount; gcount=$(printf '%s\n' "$ghosts" | wc -l | tr -d ' ')
+        if $DOCS_ORDER_GHOST_CLEAN && ! $DRY_RUN; then
+            printf '%s\n' "$ghosts" | while IFS= read -r g; do
+                rmdir "$g" 2>/dev/null && log STEP "     rmdir: $(basename "$g")"
+            done
+            log FIX "   ${gcount} empty ghost folders removed"
+            report_add FIX "${gcount} ghost folders in $(basename "$root")"
+        else
+            log WARN "   ${gcount} empty ghost folders (\"X 2\"/\"X 3\"):"
+            printf '%s\n' "$ghosts" | head -5 | while IFS= read -r g; do log STEP "     - $(basename "$g")"; done
+            report_add WARN "${gcount} ghost folders in $(basename "$root")"
+        fi
+    else
+        log STEP "   No ghost folders"
+    fi
+
+    # 2) Root strangers: top-level entries vs learned baseline
+    bw_phase "Docs: root entries"
+    local baseline="$MEISTER_DIR/docs_order.baseline"
+    local entries; entries=$(find "$root" -mindepth 1 -maxdepth 1 ! -name ".*" 2>/dev/null | sed 's|.*/||' | sort)
+    if [ ! -f "$baseline" ]; then
+        printf '%s\n' "$entries" > "$baseline"
+        log STEP "   Baseline learned: $(printf '%s\n' "$entries" | wc -l | tr -d ' ') top-level entries → $baseline"
+    else
+        local new_entries
+        new_entries=$(printf '%s\n' "$entries" | while IFS= read -r e; do
+            [ -z "$e" ] && continue
+            grep -qxF "$e" "$baseline" && continue
+            [ -n "$DOCS_ORDER_KNOWN" ] && [[ "|$DOCS_ORDER_KNOWN|" == *"|$e|"* ]] && continue
+            printf '%s\n' "$e"
+        done)
+        if [ -n "$new_entries" ]; then
+            local ncount; ncount=$(printf '%s\n' "$new_entries" | wc -l | tr -d ' ')
+            log WARN "   ${ncount} new top-level entries (not in baseline):"
+            printf '%s\n' "$new_entries" | head -10 | while IFS= read -r e; do log STEP "     + $e"; done
+            log STEP "   Accept: delete $baseline (re-learn) or add to DOCS_ORDER_KNOWN"
+            report_add WARN "${ncount} new entries in $(basename "$root") root"
+        else
+            log STEP "   Root entries match baseline"
+        fi
+    fi
+
+    # 3) _Inbox: unsorted files waiting for the filing daemon
+    local inbox="$root/_Inbox"
+    if [ -d "$inbox" ]; then
+        local unsorted
+        unsorted=$(find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$unsorted" -gt 0 ]; then
+            log WARN "   _Inbox: ${unsorted} unsorted files"
+            report_add WARN "_Inbox: ${unsorted} unsorted files"
+        else
+            log STEP "   _Inbox empty"
+        fi
+    fi
+
+    # 4) Full-tree pass: dataless files (content only in iCloud) + corrupt stubs (65535 links)
+    if $DOCS_ORDER_DATALESS_SCAN; then
+        bw_phase "Docs: dataless scan"
+        local scan
+        scan=$(find "$root" -type f -not -path "*/.git/*" -print0 2>/dev/null \
+            | xargs -0 stat -f "%b%t%z%t%l%t%N" 2>/dev/null \
+            | awk -F'\t' '$3==65535 {print "STUB\t" $4}
+                          $1==0 && $2>0 {n++; sz+=$2}
+                          END {printf "SUM\t%d\t%.1f\n", n, sz/1e9}')
+        local stubs; stubs=$(printf '%s\n' "$scan" | awk -F'\t' '$1=="STUB" {print $2}')
+        local dl_count; dl_count=$(printf '%s\n' "$scan" | awk -F'\t' '$1=="SUM" {print $2}')
+        local dl_gb; dl_gb=$(printf '%s\n' "$scan" | awk -F'\t' '$1=="SUM" {print $3}')
+        if [ "${dl_count:-0}" -gt 0 ]; then
+            log WARN "   ${dl_count} dataless files (~${dl_gb} GB exist only in iCloud)"
+            if awk -v g="$dl_gb" -v t="$DOCS_ORDER_DATALESS_WARN_GB" 'BEGIN{exit !(g>=t)}'; then
+                log WARN "   → content is NOT on this disk; no local backup covers it"
+                report_add WARN "${dl_gb} GB in $(basename "$root") only in iCloud (dataless)"
+            fi
+        else
+            log STEP "   No dataless files - all content local"
+        fi
+        if [ -n "$stubs" ]; then
+            local scount; scount=$(printf '%s\n' "$stubs" | wc -l | tr -d ' ')
+            log WARN "   ${scount} corrupt iCloud stubs (65535 links, need rm -rf):"
+            printf '%s\n' "$stubs" | head -5 | while IFS= read -r s; do log STEP "     - $s"; done
+            report_add WARN "${scount} corrupt iCloud stubs in $(basename "$root")"
+        fi
+    fi
+}
+
 module_tcc_privacy_audit() {
     log INFO "Privacy grants audit (camera/mic/screen recording)..."
     bw_phase "TCC: reading user DB"
@@ -6123,8 +6235,8 @@ else
     OLLAMA_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance + 6 killer + 1 simfix)
-MODULE_TOTAL=37
+# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance + 6 killer + 1 simfix + 1 docs order)
+MODULE_TOTAL=38
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -6167,6 +6279,7 @@ if check_net; then
     run_module_safe "node_modules"   module_node_modules_aged
     run_module_safe "Sleep Blockers" module_sleep_blockers
     run_module_safe ".DS_Store"      module_dsstore_cleanup
+    run_module_safe "Docs Order"     module_docs_order
     run_module_safe "LaunchServices" module_launchservices_rebuild
     run_module_safe "Privacy Audit"  module_tcc_privacy_audit
     run_module_safe "Simulator Fix"  module_simfix
