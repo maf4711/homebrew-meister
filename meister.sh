@@ -4,8 +4,38 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.23
+# Version: 5.24
 # Date: 2026-07-12
+#
+# NEW in v5.24 — "ULTRA": absorb the best of the Mac-tool ecosystem
+#  Output (topgrade-style):
+#  - section separators: one line with timestamp ── HH:MM:SS · [n/N] Module ──
+#  - end-of-run module ledger: ✓ ok / ↻ fixed / ⚠ warned / ✗ failed + duration
+#  AI-Healer (emphasized):
+#  - Learned-Fixes: AI fixes confirmed by a module retest are remembered
+#    (~/.meister/learned_fixes) and tried before asking Ollama again
+#  - iterative healing: 2nd AI round is told what round 1 tried
+#  - meister ai: on-demand AI system diagnosis (read-only, local Ollama)
+#  - report shows a dedicated ⚕ SELF-HEALING section
+#  New module:
+#  - Dev Updates (topgrade): npm -g, pipx, pip-report, rustup, cargo-update,
+#    uv, gcloud, tldr, oh-my-zsh, conda (gated) — UNIVERSAL_UPDATES=false to off
+#  New subcommands (tool absorption):
+#  - meister pkg <f>   — Suspicious-Package-style installer inspector
+#  - meister watch     — BlockBlock-style persistence watcher (WatchPaths agent)
+#  - meister tweaks    — OnyX-style hidden settings toggles
+#  - meister adopt     — Latest-style: bring unmanaged apps under brew (--adopt)
+#  - meister dash      — Stats-style live terminal dashboard
+#  - meister files     — Sloth-style lsof wrapper (port/process/file)
+#  - meister win       — Rectangle-style window snapping via AppleScript
+#  - meister clip      — Maccy-style clipboard history (chmod 600 + --purge)
+#  - meister keys      — Karabiner-light: caps2esc/caps2ctrl via hidutil
+#  - meister tcc-clean — remove privacy grants (FDA/Accessibility/...) whose
+#    app/binary no longer exists (deleted apps stay in System Settings forever)
+#  - meister appupdates — MacUpdater-style unified update check: brew casks +
+#    Mac App Store + Sparkle appcast scan (SUFeedURL) per app
+#  Security:
+#  - Persistence-Audit prints SHA256 + VirusTotal link per suspicious binary
 #
 # NEW in v5.23 (feature release):
 #  - meister touchid [--off]: enable Touch ID for sudo via /etc/pam.d/sudo_local
@@ -223,7 +253,7 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS PERF_CLEAN_OLLAMA SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN "
+    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS PERF_CLEAN_OLLAMA SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA "
     _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
     _STR_KEYS=" OLLAMA_MODEL OLLAMA_FALLBACK_MODEL OLLAMA_URL NET_CHECK_HOSTS OLLAMA_KEEP_MODELS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN "
 
@@ -265,6 +295,7 @@ LIST_LARGE_FILES=false
 NEEDS_SUDO=true  # Fix #145: Always-on self-healing - always request sudo
 HEAL_COUNT=0     # heal events this run (for history.log HEAL: field)
 MODULE_TIMINGS=() # "secs|name" per module — top-3 land in history.log (INSIGHTS #7)
+MODULE_LEDGER=()  # "status|name|secs" per module — topgrade-style summary (v5.24)
 SHOW_HEALTH=false
 DRY_RUN=false
 INSTALL_LAUNCHAGENT=false
@@ -326,10 +357,30 @@ section_header() {
     local title="$1"
     MODULE_STEP=$((MODULE_STEP + 1))
     bw_set_status "$MODULE_STEP" "$MODULE_TOTAL" "$title"
+    # v5.24: topgrade-style one-line separator: ── HH:MM:SS · [n/N] Title ────
+    local ts; ts=$(date +%H:%M:%S)
+    # Measure with an ASCII twin of the header ('--'/'*' have the same display
+    # width as '──'/'·') — ${#var} is chars in UTF-8 locales but bytes under
+    # launchd's C locale, so measuring the real string is locale-dependent.
+    local plain="-- ${ts} * [${MODULE_STEP}/${MODULE_TOTAL}] ${title} "
+    local fill_len=$(( 68 - ${#plain} )); [ "$fill_len" -lt 3 ] && fill_len=3
+    local fill; fill=$(printf '─%.0s' $(seq 1 "$fill_len"))
     echo ""
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BLUE}  [${MODULE_STEP}/${MODULE_TOTAL}] ${BOLD}${title}${NC}"
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}── ${ts} · [${MODULE_STEP}/${MODULE_TOTAL}] ${BOLD}${title}${NC}${BLUE} ${fill}${NC}"
+}
+
+# v5.24: per-module status ledger for the topgrade-style end summary.
+# Status is derived from what the module ADDED to the report arrays:
+# ERR > WARN > FIX > OK (rc != 0 always wins as ERR).
+ledger_add() {
+    local name="$1" fix0="$2" warn0="$3" err0="$4" rc="$5"
+    local status="OK"
+    if [ "$rc" -ne 0 ] || [ ${#REPORT_ERRORS[@]} -gt "$err0" ]; then status="ERR"
+    elif [ ${#REPORT_WARNINGS[@]} -gt "$warn0" ]; then status="WARN"
+    elif [ ${#REPORT_FIXED[@]} -gt "$fix0" ]; then status="FIX"
+    fi
+    local elapsed=$(( $(date +%s) - MODULE_START_TS ))
+    MODULE_LEDGER+=("${status}|${name}|${elapsed}")
 }
 
 module_timer_start() {
@@ -682,20 +733,69 @@ ollama_list_invalidate() {
 # Heal telemetry: append to ~/.meister/heal.log
 log_heal_event() {
     local type="$1" module="$2" result="$3" detail="${4:-}"
+    # detail can be a multi-line AI command — flatten, or heal.log line counts
+    # (report section, HEAL_COUNT mapping) break
+    detail=$(printf '%s' "$detail" | tr '\n' ' ')
     echo "$(date '+%Y-%m-%d %H:%M:%S') | $type | $module | $result | $detail" >> "$HEAL_LOG"
     HEAL_COUNT=$((HEAL_COUNT + 1))
 }
 
-# AI-Heal: Ollama fallback when known_fix() fails
+# v5.24: Learned-Fixes — AI fixes that worked once are remembered per module
+# and tried BEFORE asking Ollama again (self-healing that gets smarter).
+# Format: module<TAB>command, one line each, newest wins.
+try_learned_fix() {
+    local module_name="$1"
+    local learned="$MEISTER_DIR/learned_fixes"
+    [ -f "$learned" ] || return 1
+    local cmd
+    cmd=$(awk -F'\t' -v m="$module_name" '$1 == m {c=$2} END {if (c) print c}' "$learned")
+    [ -z "$cmd" ] && return 1
+    log HEAL "Learned-Fix: trying remembered fix for $module_name: $cmd"
+    if $DRY_RUN; then log STEP "   [DRY-RUN] Would execute: $cmd"; return 0; fi
+    if timeout 30 bash -o pipefail -c "$cmd" >/dev/null 2>&1; then
+        log_heal_event "learned-fix" "$module_name" "applied" "$cmd"
+        return 0
+    fi
+    # stopped working → forget it, fall through to Ollama.
+    # NB: no && on grep — BSD grep -v exits 1 when it selects zero lines
+    # (i.e. when this module's entry is the ONLY line), which silently
+    # skipped the mv and kept the stale fix forever.
+    grep -v "^${module_name}$(printf '\t')" "$learned" > "$learned.tmp" 2>/dev/null
+    mv "$learned.tmp" "$learned"
+    log HEAL "Learned-Fix failed — forgotten, asking Ollama fresh"
+    return 1
+}
+
+remember_fix() {
+    local module_name="$1" cmd="$2"
+    local learned="$MEISTER_DIR/learned_fixes"
+    # flatten multi-line commands (newline == ';' in bash) — the file format
+    # is one TAB-separated line per module, a raw newline would corrupt it
+    cmd=$(printf '%s' "$cmd" | tr '\n' ';')
+    # replace any older entry for this module
+    grep -v "^${module_name}$(printf '\t')" "$learned" > "$learned.tmp" 2>/dev/null
+    printf '%s\t%s\n' "$module_name" "$cmd" >> "$learned.tmp"
+    mv "$learned.tmp" "$learned"
+}
+
+# AI-Heal: Ollama fallback when known_fix() fails.
+# $3 (optional): a previously tried command that did NOT fix it — the model
+# is told to take a different approach (iterative healing, v5.24).
+AI_LAST_CMD=""
 ai_heal() {
     local module_name="$1"
     local error_output="$2"
+    local prev_attempt="${3:-}"
 
     if ! ollama_available; then return 1; fi
 
     log HEAL "AI-Heal: Asking Ollama for fix for $module_name..."
+    local retry_hint=""
+    [ -n "$prev_attempt" ] && retry_hint="
+A previous suggestion was already executed and did NOT fix it: $prev_attempt
+Suggest a DIFFERENT approach."
     local prompt="You are a macOS sysadmin. A maintenance script module '$module_name' has failed.
-Error: $error_output
+Error: $error_output${retry_hint}
 Reply ONLY with a single shell command that fixes the problem. No explanation, no markdown, just the command.
 Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placeholders like /path/to or <file> — use only real absolute paths that appear in the error above. If no such fix is possible, reply with: NO_FIX"
 
@@ -790,8 +890,10 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if [ $ai_rc -eq 0 ]; then
         log FIX "AI-Heal: Command successful"
         [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
-        report_add FIX "$module_name via AI-Heal repaired"
+        # NO report_add here — the command exiting 0 proves nothing; the caller
+        # adds the FIX entry only after the module retest actually passes
         log_heal_event "ai-heal" "$module_name" "success" "$ai_response"
+        AI_LAST_CMD="$ai_response"
         return 0
     else
         log WARN "AI-Heal: Command failed (Exit: $ai_rc)"
@@ -864,12 +966,15 @@ run_module_safe() {
     section_header "$module_name"
     module_timer_start
     local log_lines_before=$(wc -l < "$LOGFILE" 2>/dev/null || echo 0)
+    # Snapshot report counts — ledger_add derives the module status from the delta
+    local fix0=${#REPORT_FIXED[@]} warn0=${#REPORT_WARNINGS[@]} err0=${#REPORT_ERRORS[@]}
 
     $module_func
     local rc=$?
 
     if [ $rc -eq 0 ]; then
         module_timer_stop "$module_name"
+        ledger_add "$module_name" "$fix0" "$warn0" "$err0" 0
         return 0
     fi
 
@@ -885,18 +990,43 @@ run_module_safe() {
         [ $rc -eq 0 ] && report_add FIX "$module_name via Known-Fix repaired"
     fi
 
-    # AI-Heal Fallback: Ask Ollama if Known-Fix didn't help
-    if [ $rc -ne 0 ] && $OLLAMA_ENABLED; then
-        if ai_heal "$module_name" "Exit: $rc. $module_output"; then
-            log HEAL "AI-Heal applied, retrying..."
+    # v5.24: Learned-Fix — a remembered AI fix that worked before, no Ollama call
+    if [ $rc -ne 0 ] && try_learned_fix "$module_name"; then
+        log HEAL "Learned-Fix applied, retrying..."
+        sleep 1
+        $module_func
+        rc=$?
+        [ $rc -eq 0 ] && report_add FIX "$module_name via Learned-Fix repaired"
+    fi
+
+    # AI-Heal Fallback: up to 2 rounds — round 2 tells the model what round 1
+    # tried, so it takes a different approach instead of repeating itself.
+    local ai_round=1 last_ai_cmd=""
+    while [ $rc -ne 0 ] && $OLLAMA_ENABLED && [ $ai_round -le 2 ]; do
+        # LATEST lines of the module window (tail, not head) — round 2 must see
+        # the retry's fresh error, not the same first-50 lines as round 1
+        module_output=$(tail -n +$((log_lines_before + 1)) "$LOGFILE" 2>/dev/null | tail -"$LOG_CAPTURE_LINES")
+        if ai_heal "$module_name" "Exit: $rc. $module_output" "$last_ai_cmd"; then
+            last_ai_cmd="$AI_LAST_CMD"
+            log HEAL "AI-Heal applied (round $ai_round), retrying..."
             sleep 1
             $module_func
             rc=$?
+            if [ $rc -eq 0 ] && [ -n "$last_ai_cmd" ] && ! $DRY_RUN; then
+                # FIX entry + remembering only after the retest confirms the fix
+                report_add FIX "$module_name via AI-Heal repaired"
+                remember_fix "$module_name" "$last_ai_cmd"
+                log HEAL "Learned: fix for $module_name remembered for next time"
+            fi
+        else
+            break
         fi
-    fi
+        ai_round=$((ai_round + 1))
+    done
 
     [ $rc -ne 0 ] && report_add ERROR "$module_name failed"
     module_timer_stop "$module_name"
+    ledger_add "$module_name" "$fix0" "$warn0" "$err0" "$rc"
     return $rc
 }
 
@@ -1397,6 +1527,197 @@ module_ollama() {
 
 }
 
+# ── UNIVERSAL UPDATES (v5.24, topgrade-style) ──
+# Everything brew/mas/softwareupdate do NOT cover: language package managers,
+# toolchains, CLI SDKs, shell frameworks. Each step: detect → update → count.
+# Config: UNIVERSAL_UPDATES=false disables the module, UPDATE_GCLOUD/UPDATE_CONDA
+# gate the heavy ones.
+
+module_universal_updates() {
+    if [ "${UNIVERSAL_UPDATES:-true}" != "true" ]; then
+        log STEP "   disabled (UNIVERSAL_UPDATES=false in config)"
+        return 0
+    fi
+    log INFO "Universal Updates (npm/pipx/rust/gcloud/tldr/omz)..."
+    local tools_updated=0 tools_current=0 tools_failed=0
+
+    # npm globals (nvm-based installs only appear when npm is on PATH)
+    if command_exists npm; then
+        bw_phase "Updates: npm -g"
+        local npm_outdated
+        npm_outdated=$(timeout 60 npm outdated -g --parseable 2>/dev/null | grep -c . || true)
+        if [ "${npm_outdated:-0}" -gt 0 ]; then
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] npm -g: ${npm_outdated} outdated"
+            elif timeout 300 npm update -g >/dev/null 2>&1; then
+                log FIX "   npm -g: ${npm_outdated} package(s) updated"
+                tools_updated=$((tools_updated + 1))
+            else
+                log WARN "   npm -g: update failed"
+                tools_failed=$((tools_failed + 1))
+            fi
+        else
+            log STEP "   npm -g: up to date"
+            tools_current=$((tools_current + 1))
+        fi
+    fi
+
+    # pipx-managed CLI tools
+    if command_exists pipx; then
+        bw_phase "Updates: pipx"
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] pipx upgrade-all"
+        else
+            local pipx_out
+            pipx_out=$(timeout 300 pipx upgrade-all 2>&1)
+            local pipx_n
+            pipx_n=$(echo "$pipx_out" | grep -c "upgraded package" || true)
+            if [ "${pipx_n:-0}" -gt 0 ]; then
+                log FIX "   pipx: ${pipx_n} package(s) upgraded"
+                tools_updated=$((tools_updated + 1))
+            else
+                log STEP "   pipx: up to date"
+                tools_current=$((tools_current + 1))
+            fi
+        fi
+    fi
+
+    # pip user packages: REPORT ONLY — auto-upgrading pip packages under a
+    # conda/miniforge python breaks environments faster than it helps.
+    if command_exists pip3; then
+        bw_phase "Updates: pip (report)"
+        local pip_outdated
+        pip_outdated=$(timeout 60 pip3 list --outdated 2>/dev/null | tail -n +3 | grep -c . || true)
+        if [ "${pip_outdated:-0}" -gt 0 ]; then
+            log STEP "   pip: ${pip_outdated} outdated (report-only — update via conda/pipx)"
+        else
+            log STEP "   pip: up to date"
+        fi
+    fi
+
+    # Rust toolchain
+    if command_exists rustup; then
+        bw_phase "Updates: rustup"
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] rustup update"
+        else
+            local rust_out
+            rust_out=$(timeout 300 rustup update 2>&1)
+            if echo "$rust_out" | grep -q "updated"; then
+                log FIX "   rustup: toolchain updated"
+                tools_updated=$((tools_updated + 1))
+            else
+                log STEP "   rustup: up to date"
+                tools_current=$((tools_current + 1))
+            fi
+        fi
+    fi
+
+    # cargo binaries (only with cargo-install-update helper present)
+    if command_exists cargo-install-update; then
+        bw_phase "Updates: cargo"
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] cargo install-update -a"
+        else
+            local cargo_out
+            cargo_out=$(timeout 600 cargo install-update -a 2>&1)
+            if [ $? -ne 0 ]; then
+                log WARN "   cargo install-update failed"
+                tools_failed=$((tools_failed + 1))
+            elif echo "$cargo_out" | grep -qi "updating\|installing"; then
+                log FIX "   cargo: binaries updated"
+                tools_updated=$((tools_updated + 1))
+            else
+                log STEP "   cargo: up to date"
+                tools_current=$((tools_current + 1))
+            fi
+        fi
+    fi
+
+    # uv (python package manager, self-managed when not from brew)
+    if command_exists uv && ! brew list uv &>/dev/null; then
+        bw_phase "Updates: uv"
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] uv self update"
+        elif timeout 120 uv self update 2>&1 | grep -q "Upgraded"; then
+            log FIX "   uv: updated"
+            tools_updated=$((tools_updated + 1))
+        else
+            log STEP "   uv: up to date"
+            tools_current=$((tools_current + 1))
+        fi
+    fi
+
+    # Google Cloud SDK (heavy — gated, default on)
+    if command_exists gcloud && [ "${UPDATE_GCLOUD:-true}" = "true" ]; then
+        bw_phase "Updates: gcloud"
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] gcloud components update"
+        elif timeout 600 gcloud components update --quiet >/dev/null 2>&1; then
+            log STEP "   gcloud: components checked/updated"
+            tools_current=$((tools_current + 1))
+        else
+            log STEP "   gcloud: update skipped (managed install or offline)"
+        fi
+    fi
+
+    # tldr pages cache
+    if command_exists tldr; then
+        bw_phase "Updates: tldr"
+        $DRY_RUN || timeout 60 tldr --update >/dev/null 2>&1
+        log STEP "   tldr: pages cache refreshed"
+        tools_current=$((tools_current + 1))
+    fi
+
+    # oh-my-zsh (git-based — ff-only so a dirty checkout never breaks)
+    if [ -d "$HOME/.oh-my-zsh/.git" ]; then
+        bw_phase "Updates: oh-my-zsh"
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] git -C ~/.oh-my-zsh pull"
+        else
+            local omz_before omz_after
+            omz_before=$(git -C "$HOME/.oh-my-zsh" rev-parse HEAD 2>/dev/null)
+            timeout 60 git -C "$HOME/.oh-my-zsh" pull --ff-only --quiet 2>/dev/null
+            omz_after=$(git -C "$HOME/.oh-my-zsh" rev-parse HEAD 2>/dev/null)
+            if [ -n "$omz_before" ] && [ "$omz_before" != "$omz_after" ]; then
+                log FIX "   oh-my-zsh: updated"
+                tools_updated=$((tools_updated + 1))
+            else
+                log STEP "   oh-my-zsh: up to date"
+                tools_current=$((tools_current + 1))
+            fi
+        fi
+    fi
+
+    # conda: OFF by default — `conda update --all` reshuffles entire envs
+    if command_exists conda; then
+        if [ "${UPDATE_CONDA:-false}" = "true" ]; then
+            bw_phase "Updates: conda"
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] conda update -n base conda"
+            elif timeout 600 conda update -n base -c conda-forge conda -y >/dev/null 2>&1; then
+                log STEP "   conda: base checked"
+                tools_current=$((tools_current + 1))
+            else
+                log WARN "   conda: base update failed"
+                tools_failed=$((tools_failed + 1))
+            fi
+        else
+            log STEP "   conda: present, skipped (enable: UPDATE_CONDA=true)"
+        fi
+    fi
+
+    log INFO "   Universal Updates: ${tools_updated} updated, ${tools_current} current, ${tools_failed} failed"
+    # failures must surface in report + ledger, not hide behind a SUCCESS line
+    [ "$tools_failed" -gt 0 ] && report_add WARN "Universal Updates: ${tools_failed} toolchain update(s) failed"
+    if [ "$tools_updated" -gt 0 ]; then
+        report_add FIX "Universal Updates: ${tools_updated} toolchain(s) updated"
+    elif [ "$tools_failed" -eq 0 ]; then
+        report_add SUCCESS "Dev-Toolchains up to date"
+    fi
+    return 0
+}
+
 # ── GIT REPO MANAGEMENT (Fix #101-102) ──
 
 module_git_repos() {
@@ -1780,6 +2101,13 @@ module_persistence_audit() {
                 log STEP "     Label:   $label"
                 log STEP "     Binary:  ${program:-unbekannt}"
                 log STEP "     Problem: $issues"
+                # v5.24 (KnockKnock-style): hash + VirusTotal lookup link —
+                # no API key needed, the link works in any browser
+                if [ -n "$program" ] && [ -f "$program" ]; then
+                    local bin_sha
+                    bin_sha=$(shasum -a 256 "$program" 2>/dev/null | awk '{print $1}')
+                    [ -n "$bin_sha" ] && log STEP "     Check:   https://www.virustotal.com/gui/file/$bin_sha"
+                fi
                 findings="${findings}\n${plist_name}: ${issues}"
             fi
         done < <(find "$plist_dir" -name "*.plist" -print0 2>/dev/null)
@@ -4491,6 +4819,33 @@ print_report() {
     $DRY_RUN && echo -e "${YELLOW}   [DRY-RUN MODE]${NC}"
     echo -e "${BLUE}====================================================${NC}"
 
+    # v5.24: topgrade-style per-module summary — one glance shows what ran,
+    # what fixed something, what warned, what failed.
+    if [ ${#MODULE_LEDGER[@]} -gt 0 ]; then
+        echo ""
+        local entry status name secs icon color dur
+        for entry in "${MODULE_LEDGER[@]}"; do
+            IFS='|' read -r status name secs <<< "$entry"
+            case "$status" in
+                FIX)  icon="↻"; color="$CYAN" ;;
+                WARN) icon="⚠"; color="$YELLOW" ;;
+                ERR)  icon="✗"; color="$RED" ;;
+                *)    icon="✓"; color="$GREEN" ;;
+            esac
+            if [ "${secs:-0}" -ge 60 ]; then dur="$((secs / 60))m$((secs % 60))s"; else dur="${secs}s"; fi
+            printf "  ${color}%s${NC} %-24s %7s\n" "$icon" "$name" "$dur"
+        done
+    fi
+
+    # v5.24: AI-Healer front and center — what the healer did this run
+    if [ "${HEAL_COUNT:-0}" -gt 0 ] && [ -f "$HEAL_LOG" ]; then
+        echo -e "\n${CYAN}⚕ SELF-HEALING (${HEAL_COUNT} Events):${NC}"
+        tail -n "$HEAL_COUNT" "$HEAL_LOG" | awk -F' \\| ' '{
+            r = $4; if (r == "success" || r == "applied") r = "OK"
+            printf "  - [%s] %s: %s\n", $2, $3, r
+        }'
+    fi
+
     if [ ${#REPORT_SUCCESS[@]} -gt 0 ]; then
         echo -e "\n${GREEN}SUCCESS (${#REPORT_SUCCESS[@]}):${NC}"
         printf '  - %s\n' "${REPORT_SUCCESS[@]}"
@@ -6023,6 +6378,760 @@ if [ "${1:-}" = "simfix" ]; then
 fi
 
 # ── Free RAM (meister free) ──
+# ── TCC Orphan Cleanup (meister tcc-clean) ──
+# Removes privacy grants (Full Disk Access, Accessibility, ...) whose app or
+# binary no longer exists — deleted apps like Malwarebytes otherwise stay in
+# System Settings forever. Reading/writing TCC.db needs the terminal to have
+# Full Disk Access; the system DB additionally needs sudo.
+if [ "${1:-}" = "tcc-clean" ]; then
+    echo -e "\033[1;34m  MEISTER TCC-CLEAN — verwaiste Privacy-Eintraege\033[0m"
+    echo ""
+    _T_DO=false; [ "${2:-}" = "--do" ] && _T_DO=true
+    _T_USER_DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    _T_SYS_DB="/Library/Application Support/com.apple.TCC/TCC.db"
+    _T_FOUND=0
+
+    # LaunchServices register as second source of truth — Spotlight misses
+    # apps outside indexed locations (OneDrive, helpers), which must NOT be
+    # reported as orphans. Dumped once, grepped per bundle id.
+    _T_LSREG_CACHE=$(mktemp)
+    /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
+        -dump 2>/dev/null | grep -iE 'bundle id|CFBundleIdentifier' > "$_T_LSREG_CACHE" 2>/dev/null
+
+    # exists check: client_type 1 = absolute path, 0 = bundle id.
+    # Conservative by design: any hit in ANY source = exists. Only entries with
+    # no trace anywhere are orphans.
+    _tcc_exists() {
+        local client="$1" ctype="$2"
+        if [ "$ctype" = "1" ]; then
+            [ -e "$client" ]
+            return $?
+        fi
+        # Apple components are never orphans (system binaries aren't indexed)
+        case "$client" in com.apple.*) return 0 ;; esac
+        [ -n "$(mdfind "kMDItemCFBundleIdentifier == '$client'" 2>/dev/null | head -1)" ] && return 0
+        [ -e "/Library/PrivilegedHelperTools/$client" ] && return 0
+        pgrep -qf "$client" 2>/dev/null && return 0
+        grep -qiF "$client" "$_T_LSREG_CACHE" 2>/dev/null && return 0
+        return 1
+    }
+
+    _tcc_scan() {  # $1: db path, $2: "sudo" | ""
+        local db="$1" use_sudo="$2" rows
+        if [ "$use_sudo" = "sudo" ]; then
+            rows=$(sudo sqlite3 "$db" "SELECT DISTINCT client, client_type FROM access;" 2>/dev/null)
+        else
+            rows=$(sqlite3 "$db" "SELECT DISTINCT client, client_type FROM access;" 2>/dev/null)
+        fi
+        [ -z "$rows" ] && return 1
+        echo "$rows" | while IFS='|' read -r client ctype; do
+            [ -z "$client" ] && continue
+            if ! _tcc_exists "$client" "$ctype"; then
+                echo "${client}|${ctype}"
+            fi
+        done
+        return 0
+    }
+
+    _tcc_clean_db() {  # $1: db, $2: "sudo"|"", $3: label
+        local db="$1" use_sudo="$2" dblabel="$3"
+        echo -e "  \033[1m${dblabel}\033[0m"
+        local orphans
+        orphans=$(_tcc_scan "$db" "$use_sudo")
+        if [ $? -ne 0 ]; then
+            echo "    (nicht lesbar — Terminal braucht Festplattenvollzugriff$([ -n "$use_sudo" ] && echo ' + sudo'))"
+            return 0
+        fi
+        if [ -z "$orphans" ]; then
+            echo "    Keine verwaisten Eintraege"
+            return 0
+        fi
+        local backup="$MEISTER_DIR/backups/tcc_orphans_$(date +%Y%m%d_%H%M%S)_${dblabel}.txt"
+        mkdir -p "$MEISTER_DIR/backups"
+        echo "$orphans" | while IFS='|' read -r client ctype; do
+            local kind="Pfad"; [ "$ctype" = "0" ] && kind="Bundle-ID"
+            echo "    ORPHAN ($kind): $client"
+            if $_T_DO; then
+                # escape single quotes for SQL (paths can contain them)
+                local sql_client="${client//\'/\'\'}"
+                if [ "$use_sudo" = "sudo" ]; then
+                    sudo sqlite3 "$db" "SELECT * FROM access WHERE client='$sql_client';" >> "$backup" 2>/dev/null
+                    sudo sqlite3 "$db" "DELETE FROM access WHERE client='$sql_client';" 2>/dev/null \
+                        && echo "      → entfernt (Backup: $backup)" \
+                        || echo "      → FEHLER beim Entfernen (FDA fuers Terminal?)"
+                else
+                    sqlite3 "$db" "SELECT * FROM access WHERE client='$sql_client';" >> "$backup" 2>/dev/null
+                    sqlite3 "$db" "DELETE FROM access WHERE client='$sql_client';" 2>/dev/null \
+                        && echo "      → entfernt (Backup: $backup)" \
+                        || echo "      → FEHLER beim Entfernen (FDA fuers Terminal?)"
+                fi
+            fi
+        done
+        return 0
+    }
+
+    command_exists sqlite3 || { echo "  sqlite3 fehlt"; exit 1; }
+    _tcc_clean_db "$_T_USER_DB" ""     "User-TCC"
+    echo ""
+    _tcc_clean_db "$_T_SYS_DB"  "sudo" "System-TCC"
+    echo ""
+    if $_T_DO; then
+        echo "  Fertig. Systemeinstellungen ggf. neu oeffnen (killall 'System Settings')."
+    else
+        echo "  Nur Analyse. Entfernen mit: meister tcc-clean --do"
+        echo "  (Backup jeder geloeschten Zeile landet in ~/.meister/backups/)"
+    fi
+    exit 0
+fi
+
+# ── App Updates (meister appupdates) — MacUpdater-style unified check ──
+# One list for ALL app updates: brew casks, Mac App Store, and Sparkle-based
+# apps (reads each app's SUFeedURL appcast — the same mechanism MacUpdater uses).
+if [ "${1:-}" = "appupdates" ] || [ "${1:-}" = "macupdate" ]; then
+    echo -e "\033[1;34m  MEISTER APPUPDATES — alle App-Updates (MacUpdater-Style)\033[0m"
+    echo ""
+    _AU_TOTAL=0
+
+    if command_exists brew; then
+        echo -e "  \033[1mHomebrew Casks\033[0m"
+        _AU_BREW=$(brew outdated --cask --greedy --verbose 2>/dev/null | grep -v '(latest)')
+        if [ -n "$_AU_BREW" ]; then
+            echo "$_AU_BREW" | sed 's/^/    /'
+            _AU_TOTAL=$((_AU_TOTAL + $(echo "$_AU_BREW" | grep -c .)))
+            echo "    → brew upgrade --cask"
+        else
+            echo "    alle aktuell"
+        fi
+        echo ""
+    fi
+
+    if command_exists mas; then
+        echo -e "  \033[1mMac App Store\033[0m"
+        _AU_MAS=$(mas outdated 2>/dev/null)
+        if [ -n "$_AU_MAS" ]; then
+            echo "$_AU_MAS" | sed 's/^/    /'
+            _AU_TOTAL=$((_AU_TOTAL + $(echo "$_AU_MAS" | grep -c .)))
+            echo "    → mas upgrade"
+        else
+            echo "    alle aktuell"
+        fi
+        echo ""
+    fi
+
+    echo -e "  \033[1mSparkle-Apps (Appcast-Check)\033[0m"
+    _AU_SPARKLE=0
+    for _app in /Applications/*.app; do
+        [ -d "$_app" ] || continue
+        _feed=$(defaults read "$_app/Contents/Info.plist" SUFeedURL 2>/dev/null)
+        [ -z "$_feed" ] && continue
+        _cur=$(defaults read "$_app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)
+        [ -z "$_cur" ] && continue
+        _latest=$(curl -sfL --max-time 8 "$_feed" 2>/dev/null | \
+            grep -oE 'sparkle:shortVersionString="[^"]+"' | head -1 | cut -d'"' -f2)
+        [ -z "$_latest" ] && continue
+        if [ "$_cur" != "$_latest" ]; then
+            echo "    $(basename "$_app" .app): ${_cur} → ${_latest}  (App-Menue: Nach Updates suchen)"
+            _AU_SPARKLE=$((_AU_SPARKLE + 1))
+            _AU_TOTAL=$((_AU_TOTAL + 1))
+        fi
+    done
+    [ "$_AU_SPARKLE" -eq 0 ] && echo "    alle aktuell (oder kein Sparkle-Feed)"
+    echo ""
+
+    if [ -d "/Applications/MacUpdater.app" ]; then
+        echo "  MacUpdater ist installiert — Vollscan: open -a MacUpdater"
+        echo ""
+    fi
+    echo "  ${_AU_TOTAL} Update(s) insgesamt. Nicht-brew-Apps adoptieren: meister adopt"
+    exit 0
+fi
+
+# ── AI System-Doktor (meister ai) — Ollama-Diagnose auf Abruf ──
+# Feeds the last run's warnings/errors + live system facts to the local
+# Ollama model and prints a prioritized diagnosis. Read-only, nothing runs.
+if [ "${1:-}" = "ai" ]; then
+    echo -e "\033[1;34m  MEISTER AI — System-Diagnose (${OLLAMA_MODEL})\033[0m"
+    echo ""
+    if ! ollama_available && ! ensure_ollama_running ""; then
+        echo "  Ollama nicht erreichbar — starte mit: ollama serve"
+        exit 1
+    fi
+    echo "  Sammle Systemzustand..."
+    _AI_WARNS=$(grep -E '^[0-9-]+ [0-9:]+ - (WARN|ERROR) - ' "$LOGFILE" 2>/dev/null | tail -25 | sed 's/^.\{19\} - //')
+    _AI_DISK=$(df -h / | awk 'NR==2 {print $5" belegt, "$4" frei"}')
+    _AI_RAM=$(vm_stat | awk '/Pages free/ {gsub(/\./,""); printf "%.1f GB frei", $3*16384/1073741824}')
+    _AI_UPTIME=$(uptime | sed 's/^ *//')
+    _AI_TOP=$(ps -Areo pcpu,comm | sort -rn | head -4 | awk '{c=$2; sub(/.*\//,"",c); printf "%s(%s%%) ", c, $1}')
+    _AI_HEALS=$(tail -5 "$HEAL_LOG" 2>/dev/null)
+    _AI_PROMPT="Du bist ein macOS-Systemdoktor. Analysiere diesen Zustand und antworte auf Deutsch.
+
+Letzte Warnungen/Fehler des Wartungslaufs:
+${_AI_WARNS:-keine}
+
+System: Disk ${_AI_DISK} | RAM ${_AI_RAM} | ${_AI_UPTIME}
+Top-CPU: ${_AI_TOP}
+Letzte Self-Healing-Events:
+${_AI_HEALS:-keine}
+
+Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Kurz und praezise, keine Einleitung."
+    if command_exists jq; then
+        _AI_BODY=$(jq -nc --arg m "$OLLAMA_MODEL" --arg p "$_AI_PROMPT" '{model:$m, prompt:$p, stream:false}')
+    else
+        _AI_BODY=$(printf '{"model":"%s","prompt":"%s","stream":false}' "$OLLAMA_MODEL" \
+            "$(printf '%s' "$_AI_PROMPT" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')")
+    fi
+    echo "  Frage ${OLLAMA_MODEL}..."
+    echo ""
+    _AI_RESP=$(curl -sf --max-time 120 "${OLLAMA_URL}/api/generate" -d "$_AI_BODY" 2>/dev/null)
+    if command_exists jq; then
+        printf '%s' "$_AI_RESP" | jq -r '.response // "keine Antwort"' | sed 's/^/  /'
+    else
+        printf '%s' "$_AI_RESP" | perl -nle 'print $1 if /"response":"((?:[^"\\]|\\.)*)"/' \
+            | perl -CSD -pe 's/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge; s/\\n/\n/g; s/\\"/"/g; s/\\\\/\\/g' | sed 's/^/  /'
+    fi
+    echo ""
+    exit 0
+fi
+
+# ── Package Inspector (meister pkg) — Suspicious-Package-style ──
+# Inspect a .pkg BEFORE installing: signature, payload, install scripts.
+if [ "${1:-}" = "pkg" ]; then
+    _PKG="${2:-}"
+    if [ -z "$_PKG" ] || [ ! -f "$_PKG" ]; then
+        echo "Usage: meister pkg <file.pkg>"; exit 1
+    fi
+    echo -e "\033[1;34m  MEISTER PKG — Installer-Inspektor\033[0m"
+    echo ""
+    echo -e "  \033[1mFile:\033[0m $_PKG ($(du -h "$_PKG" | awk '{print $1}'))"
+    echo ""
+    echo -e "  \033[1mSignature\033[0m"
+    pkgutil --check-signature "$_PKG" 2>&1 | sed -n '1,6p' | sed 's/^/  /'
+    echo ""
+    echo -e "  \033[1mPayload\033[0m"
+    _pl_count=$(pkgutil --payload-files "$_PKG" 2>/dev/null | grep -c . || true)
+    echo "  ${_pl_count:-0} files. Top-level targets:"
+    pkgutil --payload-files "$_PKG" 2>/dev/null | awk -F/ 'NF<=3' | sort -u | head -20 | sed 's/^/    /'
+    echo ""
+    echo -e "  \033[1mInstall-Skripte (laufen als root!)\033[0m"
+    _PKG_TMP=$(mktemp -d)
+    if pkgutil --expand "$_PKG" "$_PKG_TMP/x" 2>/dev/null; then
+        _scripts=$(find "$_PKG_TMP/x" -name preinstall -o -name postinstall 2>/dev/null)
+        if [ -n "$_scripts" ]; then
+            echo "$_scripts" | while IFS= read -r _s; do
+                echo "  ── $(basename "$(dirname "$(dirname "$_s")")")/$(basename "$_s") ──"
+                head -25 "$_s" | sed 's/^/    /'
+                echo ""
+            done
+        else
+            echo "  Keine pre/postinstall-Skripte — gut."
+        fi
+        # red flags in any script
+        if grep -rqiE 'curl.*\|.*sh|base64 -d|nvram|csrutil|spctl --master-disable' "$_PKG_TMP/x" 2>/dev/null; then
+            echo -e "  \033[1;31mWARNUNG: verdaechtige Muster in Skripten (Download+Execute / SIP / Gatekeeper)\033[0m"
+        fi
+    else
+        echo "  (expand fehlgeschlagen — evtl. kein flat package)"
+    fi
+    rm -rf "$_PKG_TMP"
+    exit 0
+fi
+
+# ── Persistence Watch (meister watch) — BlockBlock-style ──
+# LaunchAgent with WatchPaths on the persistence dirs: any new/changed plist
+# triggers a check against the baseline + notification.
+if [ "${1:-}" = "watch" ]; then
+    _W_BASE="$MEISTER_DIR/persistence.baseline"
+    _W_LOG="$MEISTER_DIR/watch.log"
+    _W_AGENT="$HOME/Library/LaunchAgents/com.meister.watch.plist"
+    _W_SELF=$(command -v meister 2>/dev/null)
+    [ -z "$_W_SELF" ] && _W_SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+    _watch_snapshot() {
+        local d
+        for d in "$HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons; do
+            [ -d "$d" ] || continue
+            find "$d" -maxdepth 1 -name '*.plist' -exec shasum -a 256 {} \; 2>/dev/null
+        done | sort -k2
+    }
+
+    case "${2:-}" in
+        --install)
+            echo "  Baseline: $(_watch_snapshot | tee "$_W_BASE" | grep -c .) plists erfasst"
+            cat > "$_W_AGENT" <<WATCHEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>Label</key><string>com.meister.watch</string>
+    <key>ProgramArguments</key><array>
+        <string>/bin/bash</string>
+        <string>${_W_SELF}</string>
+        <string>watch</string>
+        <string>--check</string>
+    </array>
+    <key>WatchPaths</key><array>
+        <string>${HOME}/Library/LaunchAgents</string>
+        <string>/Library/LaunchAgents</string>
+        <string>/Library/LaunchDaemons</string>
+    </array>
+    <key>ThrottleInterval</key><integer>30</integer>
+</dict></plist>
+WATCHEOF
+            launchctl bootout "gui/$(id -u)/com.meister.watch" 2>/dev/null
+            launchctl bootstrap "gui/$(id -u)" "$_W_AGENT" 2>/dev/null \
+                && echo "  Watcher aktiv: meldet neue/geaenderte LaunchAgents & Daemons sofort" \
+                || echo "  [WARN] bootstrap fehlgeschlagen — pruefe: launchctl bootstrap gui/$(id -u) $_W_AGENT"
+            ;;
+        --uninstall)
+            launchctl bootout "gui/$(id -u)/com.meister.watch" 2>/dev/null
+            rm -f "$_W_AGENT"
+            echo "  Watcher entfernt"
+            ;;
+        --check)
+            if [ ! -f "$_W_BASE" ]; then _watch_snapshot > "$_W_BASE"; exit 0; fi
+            _W_CUR=$(mktemp)
+            _watch_snapshot > "$_W_CUR"
+            _W_NEW=$(comm -13 <(awk '{print $2}' "$_W_BASE" | sort) <(awk '{print $2}' "$_W_CUR" | sort))
+            _W_GONE=$(comm -23 <(awk '{print $2}' "$_W_BASE" | sort) <(awk '{print $2}' "$_W_CUR" | sort))
+            _W_CHANGED=$(comm -13 <(sort "$_W_BASE") <(sort "$_W_CUR") | awk '{print $2}' | grep -vxF "$_W_NEW" 2>/dev/null || true)
+            if [ -n "$_W_NEW$_W_GONE$_W_CHANGED" ]; then
+                # Notify only when the diff changed since the last alert —
+                # the baseline is NOT auto-updated (an attacker would get one
+                # notification and then be silently accepted). User blesses
+                # legit changes with: meister watch --accept
+                _W_DIFF_HASH=$(printf '%s\n%s\n%s' "$_W_NEW" "$_W_CHANGED" "$_W_GONE" | shasum -a 256 | awk '{print $1}')
+                _W_LAST_HASH=$(cat "$MEISTER_DIR/watch.lastnotify" 2>/dev/null)
+                if [ "$_W_DIFF_HASH" != "$_W_LAST_HASH" ]; then
+                    {
+                        echo "$(date '+%Y-%m-%d %H:%M:%S') persistence change:"
+                        [ -n "$_W_NEW" ]     && echo "$_W_NEW"     | sed 's/^/  NEU:      /'
+                        [ -n "$_W_CHANGED" ] && echo "$_W_CHANGED" | sed 's/^/  GEAENDERT: /'
+                        [ -n "$_W_GONE" ]    && echo "$_W_GONE"    | sed 's/^/  ENTFERNT: /'
+                    } >> "$_W_LOG"
+                    _W_MSG=$(printf '%s\n%s\n%s' "$_W_NEW" "$_W_CHANGED" "$_W_GONE" | grep -c . || true)
+                    send_notification "Meister Watch" "${_W_MSG} Persistence-Aenderung(en) — pruefen: meister watch" "LaunchAgents/Daemons"
+                    echo "$_W_DIFF_HASH" > "$MEISTER_DIR/watch.lastnotify"
+                fi
+            fi
+            rm -f "$_W_CUR"
+            ;;
+        --accept)
+            _watch_snapshot > "$_W_BASE"
+            rm -f "$MEISTER_DIR/watch.lastnotify"
+            echo "  Baseline aktualisiert ($(grep -c . "$_W_BASE") plists) — aktuelle Eintraege gelten als OK"
+            ;;
+        *)
+            echo -e "\033[1;34m  MEISTER WATCH — Persistence-Waechter (BlockBlock-Style)\033[0m"
+            echo ""
+            if launchctl print "gui/$(id -u)/com.meister.watch" &>/dev/null; then
+                echo "  Status: AKTIV"
+            else
+                echo "  Status: nicht installiert  (meister watch --install)"
+            fi
+            [ -f "$_W_BASE" ] && echo "  Baseline: $(grep -c . "$_W_BASE") plists"
+            if [ -f "$_W_BASE" ]; then
+                _W_CUR=$(mktemp); _watch_snapshot > "$_W_CUR"
+                _W_PEND=$(comm -13 <(sort "$_W_BASE") <(sort "$_W_CUR") | awk '{print $2}')
+                rm -f "$_W_CUR"
+                if [ -n "$_W_PEND" ]; then
+                    echo "  UNBESTAETIGTE Aenderungen (legitim? → meister watch --accept):"
+                    echo "$_W_PEND" | sed 's/^/    /'
+                fi
+            fi
+            if [ -f "$_W_LOG" ]; then
+                echo "  Letzte Ereignisse:"
+                tail -10 "$_W_LOG" | sed 's/^/    /'
+            else
+                echo "  Keine Ereignisse bisher"
+            fi
+            ;;
+    esac
+    exit 0
+fi
+
+# ── System Tweaks (meister tweaks) — OnyX-style hidden settings ──
+if [ "${1:-}" = "tweaks" ]; then
+    _tweak_get() {  # $1 domain $2 key
+        defaults read "$1" "$2" 2>/dev/null || echo "-"
+    }
+    _TW_NAMES="showhidden extensions pathbar keyrepeat savepanel dockfast screenshots-jpg"
+    _tweak_status() {
+        echo "  showhidden      Finder zeigt versteckte Dateien        [$(_tweak_get com.apple.finder AppleShowAllFiles)]"
+        echo "  extensions      Alle Datei-Endungen anzeigen           [$(_tweak_get NSGlobalDomain AppleShowAllExtensions)]"
+        echo "  pathbar         Finder Pfad- & Statusleiste            [$(_tweak_get com.apple.finder ShowPathbar)]"
+        echo "  keyrepeat       Schnelle Tastenwiederholung (2/15)     [$(_tweak_get NSGlobalDomain KeyRepeat)]"
+        echo "  savepanel       Sichern-Dialog immer ausgeklappt       [$(_tweak_get NSGlobalDomain NSNavPanelExpandedStateForSaveMode)]"
+        echo "  dockfast        Dock-Autohide ohne Verzoegerung        [$(_tweak_get com.apple.dock autohide-time-modifier)]"
+        echo "  screenshots-jpg Screenshots als JPG statt PNG          [$(_tweak_get com.apple.screencapture type)]"
+    }
+    _T="${2:-}"; _V="${3:-on}"
+    if [ -z "$_T" ]; then
+        echo -e "\033[1;34m  MEISTER TWEAKS — versteckte macOS-Einstellungen (OnyX-Style)\033[0m"
+        echo ""
+        _tweak_status
+        echo ""
+        echo "  Umschalten: meister tweaks <name> [on|off]"
+        exit 0
+    fi
+    _ON=true; [ "$_V" = "off" ] && _ON=false
+    case "$_T" in
+        showhidden)
+            defaults write com.apple.finder AppleShowAllFiles -bool "$_ON"; killall Finder 2>/dev/null ;;
+        extensions)
+            defaults write NSGlobalDomain AppleShowAllExtensions -bool "$_ON"; killall Finder 2>/dev/null ;;
+        pathbar)
+            defaults write com.apple.finder ShowPathbar -bool "$_ON"
+            defaults write com.apple.finder ShowStatusBar -bool "$_ON"; killall Finder 2>/dev/null ;;
+        keyrepeat)
+            if $_ON; then
+                defaults write NSGlobalDomain KeyRepeat -int 2
+                defaults write NSGlobalDomain InitialKeyRepeat -int 15
+            else
+                defaults delete NSGlobalDomain KeyRepeat 2>/dev/null
+                defaults delete NSGlobalDomain InitialKeyRepeat 2>/dev/null
+            fi
+            echo "  (greift nach Ab-/Anmelden)" ;;
+        savepanel)
+            defaults write NSGlobalDomain NSNavPanelExpandedStateForSaveMode -bool "$_ON"
+            defaults write NSGlobalDomain NSNavPanelExpandedStateForSaveMode2 -bool "$_ON" ;;
+        dockfast)
+            if $_ON; then
+                defaults write com.apple.dock autohide-time-modifier -float 0.15
+                defaults write com.apple.dock autohide-delay -float 0
+            else
+                defaults delete com.apple.dock autohide-time-modifier 2>/dev/null
+                defaults delete com.apple.dock autohide-delay 2>/dev/null
+            fi
+            killall Dock 2>/dev/null ;;
+        screenshots-jpg)
+            if $_ON; then defaults write com.apple.screencapture type jpg
+            else defaults delete com.apple.screencapture type 2>/dev/null; fi
+            killall SystemUIServer 2>/dev/null ;;
+        *) echo "Unbekannter Tweak: $_T"; echo "Verfuegbar: $_TW_NAMES"; exit 1 ;;
+    esac
+    echo "  $_T → $_V"
+    exit 0
+fi
+
+# ── App Adoption (meister adopt) — Latest-style update coverage ──
+# Finds apps in /Applications that neither brew nor mas manages and checks
+# whether a Homebrew cask exists — adopting them makes updates automatic.
+if [ "${1:-}" = "adopt" ]; then
+    echo -e "\033[1;34m  MEISTER ADOPT — Apps unter Homebrew-Verwaltung bringen\033[0m"
+    echo ""
+    command_exists brew || { echo "  brew fehlt"; exit 1; }
+    _A_CASKS=$(brew list --cask 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    _A_MAS=$(command_exists mas && mas list 2>/dev/null | sed 's/^[0-9]* *//;s/ *([^)]*)$//' | tr '[:upper:]' '[:lower:]')
+    _A_FOUND=0; _A_ADOPTABLE=""
+    for _app in /Applications/*.app; do
+        [ -d "$_app" ] || continue
+        _name=$(basename "$_app" .app)
+        _lname=$(echo "$_name" | tr '[:upper:]' '[:lower:]')
+        _cask_guess=$(echo "$_lname" | tr ' ' '-')
+        # skip Apple apps + already managed
+        case "$_lname" in safari|mail|calendar|notes|music|tv|photos|facetime|messages|maps|reminders|freeform|news|stocks|home|books|podcasts|shortcuts|numbers|pages|keynote|garageband|imovie|xcode) continue ;; esac
+        echo "$_A_CASKS" | grep -qx "$_cask_guess" && continue
+        echo "$_A_MAS" | grep -qxF "$_lname" && continue
+        _A_FOUND=$((_A_FOUND + 1))
+        if brew info --cask "$_cask_guess" &>/dev/null; then
+            echo "  ✓ $_name  →  Cask '$_cask_guess' existiert"
+            _A_ADOPTABLE="${_A_ADOPTABLE}${_cask_guess} "
+        else
+            echo "  · $_name  (kein passender Cask gefunden)"
+        fi
+    done
+    echo ""
+    echo "  ${_A_FOUND} unverwaltete App(s) geprueft"
+    if [ -n "$_A_ADOPTABLE" ]; then
+        echo ""
+        if [ "${2:-}" = "--do" ]; then
+            # name→cask matching is a heuristic — confirm each app individually
+            # (a wrong guess would install a DIFFERENT app over the existing one)
+            for _c in $_A_ADOPTABLE; do
+                if [ -t 0 ]; then
+                    printf '  %s adoptieren? [y/N]: ' "$_c"
+                    read -r _yn
+                    [ "$_yn" = "y" ] || [ "$_yn" = "Y" ] || { echo "    uebersprungen"; continue; }
+                fi
+                echo "  Adoptiere $_c..."
+                brew install --cask --adopt "$_c" 2>&1 | tail -1 | sed 's/^/    /'
+            done
+        else
+            echo "  Adoptieren (App bleibt, Updates laufen kuenftig ueber brew):"
+            echo "    meister adopt --do"
+            echo "  oder einzeln: brew install --cask --adopt <name>"
+        fi
+    fi
+    exit 0
+fi
+
+# ── Live Dashboard (meister dash) — Stats-style terminal monitor ──
+if [ "${1:-}" = "dash" ]; then
+    _D_INT="${2:-3}"
+    case "$_D_INT" in *[!0-9]*) _D_INT=3 ;; esac
+    [ "$_D_INT" -lt 1 ] && _D_INT=3   # 0 would divide by zero in the rate math
+    # bytes columns counted from the RIGHT — link rows without a MAC (utun,
+    # gif, stf) have one field less, absolute $7/$10 would grab packet counts
+    _d_net() { netstat -ib 2>/dev/null | awk '$1 !~ /lo0/ && $3 ~ /Link/ {i+=$(NF-4); o+=$(NF-1)} END {print i+0, o+0}'; }
+    _D_PREV=$(_d_net)
+    trap 'tput cnorm 2>/dev/null; exit 0' INT TERM
+    tput civis 2>/dev/null
+    while true; do
+        _D_CPU=$(top -l 1 -n 0 2>/dev/null | awk -F'[:,%]' '/CPU usage/ {gsub(/ /,""); printf "user %s%%  sys %s%%  idle %s%%", $2, $4, $6}')
+        _D_LOAD=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}')
+        _D_PGSZ=$(sysctl -n hw.pagesize 2>/dev/null); : "${_D_PGSZ:=16384}"
+        _D_RAM=$(vm_stat 2>/dev/null | awk -v pgsz="$_D_PGSZ" '
+            /Pages free/ {free=$3} /Pages active/ {act=$3} /Pages inactive/ {inact=$3}
+            /Pages wired/ {wired=$4} /Pages occupied by compressor/ {comp=$5}
+            END {gsub(/\./,"",free); gsub(/\./,"",act); gsub(/\./,"",wired); gsub(/\./,"",comp)
+                 pg=pgsz/1048576
+                 printf "used %.1f GB  wired %.1f GB  compressed %.1f GB  free %.1f GB",
+                 (act+wired+comp)*pg/1024, wired*pg/1024, comp*pg/1024, free*pg/1024}')
+        # Data volume, not the sealed system snapshot (df / shows only ~12 GB)
+        _D_DISK=$(df -h /System/Volumes/Data 2>/dev/null | awk 'NR==2 {printf "%s / %s (%s belegt)", $3, $2, $5}')
+        _D_CUR=$(_d_net)
+        _D_RX=$(( ($(echo "$_D_CUR" | awk '{print $1}') - $(echo "$_D_PREV" | awk '{print $1}')) / _D_INT / 1024 ))
+        _D_TX=$(( ($(echo "$_D_CUR" | awk '{print $2}') - $(echo "$_D_PREV" | awk '{print $2}')) / _D_INT / 1024 ))
+        _D_PREV=$_D_CUR
+        clear
+        echo -e "\033[1;34m  MEISTER DASH — $(date '+%H:%M:%S')   (q beendet, Intervall ${_D_INT}s)\033[0m"
+        echo ""
+        echo -e "  \033[1mCPU \033[0m  ${_D_CPU}    load ${_D_LOAD}"
+        echo -e "  \033[1mRAM \033[0m  ${_D_RAM}"
+        echo -e "  \033[1mDisk\033[0m  ${_D_DISK}"
+        echo -e "  \033[1mNetz\033[0m  ↓ ${_D_RX} KB/s   ↑ ${_D_TX} KB/s"
+        echo ""
+        echo -e "  \033[1mTop-Prozesse (CPU)\033[0m"
+        ps -Areo pcpu,pmem,comm 2>/dev/null | sort -rn | head -6 | \
+            awk '{c=$3; sub(/.*\//,"",c); printf "    %5.1f%%  %4.1f%%  %s\n", $1, $2, c}'
+        # read rc: 0 = key, >128 = timeout (the normal tick), 1 = EOF (non-tty).
+        # On EOF sleep manually — otherwise the loop spins hot without a tty.
+        _D_KEY=""
+        read -r -t "$_D_INT" -n 1 _D_KEY
+        _D_RC=$?
+        [ "$_D_RC" -eq 0 ] && [ "$_D_KEY" = "q" ] && break
+        [ "$_D_RC" -ge 1 ] && [ "$_D_RC" -le 128 ] && sleep "$_D_INT"
+    done
+    tput cnorm 2>/dev/null
+    exit 0
+fi
+
+# ── Open Files (meister files) — Sloth-style lsof wrapper ──
+if [ "${1:-}" = "files" ]; then
+    _F="${2:-}"
+    if [ -z "$_F" ]; then
+        echo "Usage: meister files <port|prozessname|pfad>"
+        echo "  meister files 8080      → wer lauscht/verbindet auf Port 8080"
+        echo "  meister files node      → was hat Prozess 'node' offen"
+        echo "  meister files ~/foo.db  → wer haelt diese Datei offen"
+        exit 1
+    fi
+    echo -e "\033[1;34m  MEISTER FILES — offene Dateien/Ports (Sloth-Style)\033[0m"
+    echo ""
+    # NB: no case-in-$() here — bash 3.2 parses $() lazily and chokes on the
+    # unbalanced ')' of case patterns at RUNTIME (bash -n does not catch it)
+    if echo "$_F" | grep -q '[^0-9]'; then
+        if [ -e "$_F" ]; then
+            _F_OUT=$(lsof -- "$_F" 2>/dev/null | head -30)
+        else
+            _F_OUT=$(lsof -c "$_F" 2>/dev/null | grep -vE 'REG.*/(Frameworks|dyld)' | head -40)
+        fi
+    else
+        _F_OUT=$(lsof -nP -i ":$_F" 2>/dev/null)
+    fi
+    if [ -n "$_F_OUT" ]; then
+        echo "$_F_OUT" | sed 's/^/  /'
+    else
+        echo "  Keine Treffer fuer '$_F' (Port frei / Prozess laeuft nicht / Datei nicht offen)"
+    fi
+    echo ""
+    exit 0
+fi
+
+# ── Window Management (meister win) — Rectangle-style via AppleScript ──
+if [ "${1:-}" = "win" ]; then
+    _W_POS="${2:-}"
+    if [ -z "$_W_POS" ]; then
+        echo "Usage: meister win <left|right|max|center|tl|tr|bl|br>"
+        echo "  Positioniert das vorderste Fenster (braucht Bedienungshilfen-Rechte fuers Terminal)."
+        echo "  Hinweis: Geometrie bezieht sich auf den Gesamt-Desktop — bei mehreren"
+        echo "  Displays landet das Fenster ggf. auf dem falschen. Single-Display: exakt."
+        exit 1
+    fi
+    _W_BOUNDS=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null)
+    _W_SW=$(echo "$_W_BOUNDS" | awk -F', ' '{print $3}')
+    _W_SH=$(echo "$_W_BOUNDS" | awk -F', ' '{print $4}')
+    if [ -z "$_W_SW" ] || [ -z "$_W_SH" ]; then echo "  [ERROR] Bildschirmgroesse nicht lesbar"; exit 1; fi
+    _W_MB=25  # menu bar
+    _W_HW=$((_W_SW / 2)); _W_HH=$(( (_W_SH - _W_MB) / 2 ))
+    case "$_W_POS" in
+        left)   _X=0;      _Y=$_W_MB; _W=$_W_HW;  _H=$((_W_SH - _W_MB)) ;;
+        right)  _X=$_W_HW; _Y=$_W_MB; _W=$_W_HW;  _H=$((_W_SH - _W_MB)) ;;
+        max)    _X=0;      _Y=$_W_MB; _W=$_W_SW;  _H=$((_W_SH - _W_MB)) ;;
+        center) _X=$((_W_SW / 8)); _Y=$((_W_MB + (_W_SH - _W_MB) / 8)); _W=$((_W_SW * 3 / 4)); _H=$(( (_W_SH - _W_MB) * 3 / 4 )) ;;
+        tl)     _X=0;      _Y=$_W_MB;               _W=$_W_HW; _H=$_W_HH ;;
+        tr)     _X=$_W_HW; _Y=$_W_MB;               _W=$_W_HW; _H=$_W_HH ;;
+        bl)     _X=0;      _Y=$((_W_MB + _W_HH));   _W=$_W_HW; _H=$_W_HH ;;
+        br)     _X=$_W_HW; _Y=$((_W_MB + _W_HH));   _W=$_W_HW; _H=$_W_HH ;;
+        *) echo "Unbekannte Position: $_W_POS (left|right|max|center|tl|tr|bl|br)"; exit 1 ;;
+    esac
+    if ! osascript >/dev/null 2>&1 <<WINEOF
+tell application "System Events"
+    set frontApp to first application process whose frontmost is true
+    tell front window of frontApp
+        set position to {${_X}, ${_Y}}
+        set size to {${_W}, ${_H}}
+    end tell
+end tell
+WINEOF
+    then
+        echo "  [ERROR] Fenster nicht steuerbar — Terminal braucht Bedienungshilfen-Rechte:"
+        echo "  Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen"
+        exit 1
+    fi
+    exit 0
+fi
+
+# ── Clipboard History (meister clip) — Maccy-style ──
+# ACHTUNG: speichert Klartext (chmod 600). Passwoerter, die kopiert werden,
+# landen mit in der History — --purge loescht alles sofort.
+if [ "${1:-}" = "clip" ]; then
+    _C_HIST="$MEISTER_DIR/clip.history"
+    _C_AGENT="$HOME/Library/LaunchAgents/com.meister.clip.plist"
+    _C_SEP="\x1e----MEISTERCLIP----"
+    _C_SELF=$(command -v meister 2>/dev/null)
+    [ -z "$_C_SELF" ] && _C_SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    case "${2:-}" in
+        --install)
+            touch "$_C_HIST" && chmod 600 "$_C_HIST"
+            cat > "$_C_AGENT" <<CLIPEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>Label</key><string>com.meister.clip</string>
+    <key>ProgramArguments</key><array>
+        <string>/bin/bash</string>
+        <string>${_C_SELF}</string>
+        <string>clip</string>
+        <string>--snap</string>
+    </array>
+    <key>StartInterval</key><integer>5</integer>
+</dict></plist>
+CLIPEOF
+            launchctl bootout "gui/$(id -u)/com.meister.clip" 2>/dev/null
+            launchctl bootstrap "gui/$(id -u)" "$_C_AGENT" 2>/dev/null \
+                && echo "  Clipboard-History aktiv (5s-Intervall, ~/.meister/clip.history, chmod 600)" \
+                || echo "  [WARN] bootstrap fehlgeschlagen"
+            echo "  ACHTUNG: kopierte Passwoerter landen im Klartext in der History (meister clip --purge loescht)"
+            ;;
+        --uninstall)
+            launchctl bootout "gui/$(id -u)/com.meister.clip" 2>/dev/null
+            rm -f "$_C_AGENT"
+            echo "  Clipboard-Watcher entfernt (History bleibt: $_C_HIST)"
+            ;;
+        --purge)
+            rm -f "$_C_HIST" "$_C_HIST.last" "$_C_HIST.tmp"; echo "  History geloescht"
+            ;;
+        --snap)
+            _C_CUR=$(pbpaste 2>/dev/null | head -c 10240)
+            [ -z "$_C_CUR" ] && exit 0
+            # dedup via companion file (robust vs. awk-RS quirks across awks)
+            _C_LAST=$(cat "$_C_HIST.last" 2>/dev/null)
+            [ "$_C_CUR" = "$_C_LAST" ] && exit 0
+            # ensure 600 BEFORE writing — --purge removes the file and the
+            # agent would otherwise recreate it umask-default world-readable
+            if [ ! -f "$_C_HIST" ]; then : > "$_C_HIST"; chmod 600 "$_C_HIST"; fi
+            printf '%s' "$_C_CUR" > "$_C_HIST.last"; chmod 600 "$_C_HIST.last"
+            { printf '\x1e----MEISTERCLIP----\n'; printf '%s\n' "$_C_CUR"; } >> "$_C_HIST"
+            # keep last 200 entries
+            _C_N=$(grep -c $'\x1e----MEISTERCLIP----' "$_C_HIST" 2>/dev/null || echo 0)
+            if [ "${_C_N:-0}" -gt 200 ]; then
+                awk -v RS="$(printf '\x1e')----MEISTERCLIP----\n" -v keep=200 \
+                    'NR>1 {a[NR]=$0} END {for (i=NR-keep+1; i<=NR; i++) printf "\x1e----MEISTERCLIP----\n%s", a[i]}' \
+                    "$_C_HIST" > "$_C_HIST.tmp" && mv "$_C_HIST.tmp" "$_C_HIST" && chmod 600 "$_C_HIST"
+            fi
+            ;;
+        ''|*[0-9]*)
+            if [ ! -s "$_C_HIST" ]; then
+                echo "  Keine History. Aktivieren: meister clip --install"; exit 0
+            fi
+            if [ -n "${2:-}" ]; then
+                _C_PICK=$(awk -v RS="$(printf '\x1e')----MEISTERCLIP----\n" -v n="$2" 'NR==n+1 {printf "%s", $0}' "$_C_HIST")
+                if [ -n "$_C_PICK" ]; then
+                    printf '%s' "$_C_PICK" | sed -e '$ { /^$/d; }' | pbcopy
+                    echo "  Eintrag $2 → Zwischenablage"
+                else
+                    echo "  Eintrag $2 nicht gefunden"
+                fi
+                exit 0
+            fi
+            echo -e "\033[1;34m  MEISTER CLIP — Clipboard-History (Maccy-Style)\033[0m"
+            echo ""
+            awk -v RS="$(printf '\x1e')----MEISTERCLIP----\n" \
+                'NR>1 {line=$0; sub(/\n.*/,"",line); if (length(line)>70) line=substr(line,1,67)"..."; a[NR-1]=line}
+                 END {n=NR-1; start=(n>20)?n-19:1; for (i=n; i>=start && i>=1; i--) printf "  [%d] %s\n", i, a[i]}' "$_C_HIST"
+            echo ""
+            echo "  Kopieren: meister clip <nr>   Loeschen: meister clip --purge"
+            ;;
+    esac
+    exit 0
+fi
+
+# ── Key Remapping (meister keys) — Karabiner-light via hidutil ──
+if [ "${1:-}" = "keys" ]; then
+    _K_AGENT="$HOME/Library/LaunchAgents/com.meister.keys.plist"
+    _K_MODE="${2:-status}"
+    _k_map() {  # $1: JSON UserKeyMapping array
+        hidutil property --set "{\"UserKeyMapping\":$1}" >/dev/null 2>&1
+    }
+    _k_persist() {  # $1: JSON array — LaunchAgent re-applies after reboot
+        cat > "$_K_AGENT" <<KEYSEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>Label</key><string>com.meister.keys</string>
+    <key>ProgramArguments</key><array>
+        <string>/usr/bin/hidutil</string>
+        <string>property</string>
+        <string>--set</string>
+        <string>{"UserKeyMapping":$1}</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+</dict></plist>
+KEYSEOF
+        launchctl bootout "gui/$(id -u)/com.meister.keys" 2>/dev/null
+        launchctl bootstrap "gui/$(id -u)" "$_K_AGENT" 2>/dev/null
+    }
+    # HID usage IDs: CapsLock 0x39, Escape 0x29, LeftCtrl 0xE0 (+0x700000000)
+    case "$_K_MODE" in
+        caps2esc)
+            _K_JSON='[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x700000029}]'
+            _k_map "$_K_JSON" && _k_persist "$_K_JSON" && echo "  Caps Lock → Escape (persistent via LaunchAgent)" ;;
+        caps2ctrl)
+            _K_JSON='[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x7000000E0}]'
+            _k_map "$_K_JSON" && _k_persist "$_K_JSON" && echo "  Caps Lock → Control (persistent via LaunchAgent)" ;;
+        reset)
+            _k_map '[]'
+            launchctl bootout "gui/$(id -u)/com.meister.keys" 2>/dev/null
+            rm -f "$_K_AGENT"
+            echo "  Key-Mapping zurueckgesetzt" ;;
+        status)
+            echo -e "\033[1;34m  MEISTER KEYS — Tastatur-Remapping (hidutil)\033[0m"
+            echo ""
+            _K_ACTIVE=$(hidutil property --get "UserKeyMapping" 2>/dev/null | grep -v '(null)' | grep -E 'Mapping(Src|Dst)|^\(' | head -15)
+            if [ -n "$_K_ACTIVE" ]; then
+                echo "  Aktives Mapping:"
+                echo "$_K_ACTIVE" | sed 's/^/    /'
+            else
+                echo "  Kein Mapping aktiv"
+            fi
+            [ -f "$_K_AGENT" ] && echo "  Persistent: ja (com.meister.keys LaunchAgent)"
+            echo ""
+            echo "  Befehle: meister keys caps2esc | caps2ctrl | reset" ;;
+        *) echo "Usage: meister keys [caps2esc|caps2ctrl|reset|status]"; exit 1 ;;
+    esac
+    exit 0
+fi
+
 # ── Touch ID for sudo (meister touchid) ──
 # Writes pam_tid.so into /etc/pam.d/sudo_local (Sonoma+: survives macOS updates,
 # unlike editing /etc/pam.d/sudo directly). One sudo password — then fingerprint.
@@ -6347,6 +7456,24 @@ TOOLS:
   meister report [N]   Run-history report from history.log (default: last 10)
   meister touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
   meister backup [--now]   Time Machine status; set up destination if none
+  meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
+  meister files <x>    Who has port/file/process open (Sloth-style lsof)
+  meister ai           AI system diagnosis via local Ollama (read-only)
+
+SECURITY:
+  meister pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
+  meister watch        Persistence watcher: notify on new LaunchAgents/Daemons
+                       (--install / --uninstall / --check)
+  meister tcc-clean [--do]  Remove privacy grants of DELETED apps (FDA list etc.)
+
+SYSTEM:
+  meister tweaks       Hidden macOS settings (OnyX-style): showhidden,
+                       extensions, pathbar, keyrepeat, savepanel, dockfast
+  meister adopt [--do] Bring unmanaged /Applications apps under brew (updates!)
+  meister appupdates   ALL app updates in one list: brew + App Store + Sparkle
+  meister win <pos>    Move frontmost window: left|right|max|center|tl|tr|bl|br
+  meister clip         Clipboard history (Maccy-style): --install, <nr>, --purge
+  meister keys <mode>  Key remapping: caps2esc | caps2ctrl | reset | status
 
 APP MANAGEMENT:
   meister remove <App> [--dry-run] [--purge] [-y]
@@ -6543,20 +7670,23 @@ else
 fi
 
 # Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance + 6 killer + 1 simfix + 1 docs order)
-MODULE_TOTAL=38
+MODULE_TOTAL=39
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
 section_header "Self-Healing Preflight"
 module_timer_start
+_pf_fix0=${#REPORT_FIXED[@]}; _pf_warn0=${#REPORT_WARNINGS[@]}; _pf_err0=${#REPORT_ERRORS[@]}
 selfheal_preflight
 module_timer_stop "Preflight"
+ledger_add "Preflight" "$_pf_fix0" "$_pf_warn0" "$_pf_err0" 0
 
 if check_net; then
     run_module_safe "Healer"         module_healer
     run_module_safe "Homebrew"       module_homebrew
     run_module_safe "App Store"      module_mas
     run_module_safe "Ollama Models"  module_ollama
+    run_module_safe "Dev Updates"    module_universal_updates
     run_module_safe "macOS System"   module_system
     run_module_safe "Cleanup"        module_cleanup
     run_module_safe "Deep Clean"     module_deepclean
@@ -6594,6 +7724,7 @@ if check_net; then
     if $RUN_SUDO_TASKS; then
         section_header "System maintenance (sudo)"
         module_timer_start
+        _sm_fix0=${#REPORT_FIXED[@]}; _sm_warn0=${#REPORT_WARNINGS[@]}; _sm_err0=${#REPORT_ERRORS[@]}
         log INFO "Starting periodic scripts..."
         log STEP "   periodic daily..."
         run_or_dry sudo -n periodic daily
@@ -6605,6 +7736,7 @@ if check_net; then
         run_or_dry sudo -n dscacheutil -flushcache
         report_add FIX "Ran periodic scripts & DNS flush"
         module_timer_stop "System maintenance"
+        ledger_add "System maintenance" "$_sm_fix0" "$_sm_warn0" "$_sm_err0" 0
     fi
 else
     log ERROR "Aborting: No internet"
