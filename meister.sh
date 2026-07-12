@@ -4,8 +4,18 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.25
+# Version: 5.26
 # Date: 2026-07-12
+#
+# NEW in v5.26 — tcc-clean honesty:
+#  - meister tcc-clean --do now reports the REAL sqlite3 error (was hidden
+#    behind 2>/dev/null with a guessed "FDA?" message), runs a write-probe
+#    up front, and gives an exact fix: run `sudo meister tcc-clean --do` in a
+#    Full-Disk-Access terminal (it lists which terminals have FDA)
+#  - dropped the tccutil path: tccutil reset REJECTS uninstalled bundle ids
+#    (LSApplicationNotFound -10814), so it cannot remove orphans at all —
+#    a direct sqlite3 DELETE from an FDA terminal is the only working method
+#  - PRAGMA busy_timeout rides out a transient tccd lock on the db
 #
 # NEW in v5.25 — intelligence layer on top of the run:
 #  - Maintenance score 0-100 in report + history (SCORE: field) with trend
@@ -6552,39 +6562,72 @@ if [ "${1:-}" = "tcc-clean" ]; then
         return 0
     }
 
+    # Probe whether we can WRITE the db: run a DELETE that matches nothing and
+    # capture the real error. The system TCC.db is world-READABLE, so a failed
+    # write is the real signal (missing Full Disk Access, or a locked db) — the
+    # old code hid it behind 2>/dev/null and printed a guessed cause.
+    _TCC_WRITE_OK=false; _TCC_WRITE_ERR=""
+    _tcc_write_probe() {  # $1 db  $2 sudo|""
+        local db="$1" use_sudo="$2" err
+        if [ "$use_sudo" = "sudo" ]; then
+            err=$(sudo sqlite3 "$db" "DELETE FROM access WHERE client='__meister_probe__';" 2>&1)
+        else
+            err=$(sqlite3 "$db" "DELETE FROM access WHERE client='__meister_probe__';" 2>&1)
+        fi
+        if [ $? -eq 0 ]; then _TCC_WRITE_OK=true; _TCC_WRITE_ERR=""
+        else _TCC_WRITE_OK=false; _TCC_WRITE_ERR="$err"; fi
+    }
+
     _tcc_clean_db() {  # $1: db, $2: "sudo"|"", $3: label
         local db="$1" use_sudo="$2" dblabel="$3"
         echo -e "  \033[1m${dblabel}\033[0m"
+        [ -r "$db" ] || { echo "    (Datei nicht lesbar: $db)"; return 0; }
         local orphans
         orphans=$(_tcc_scan "$db" "$use_sudo")
-        if [ $? -ne 0 ]; then
-            echo "    (nicht lesbar — Terminal braucht Festplattenvollzugriff$([ -n "$use_sudo" ] && echo ' + sudo'))"
-            return 0
-        fi
         if [ -z "$orphans" ]; then
             echo "    Keine verwaisten Eintraege"
             return 0
+        fi
+        # For --do: probe writability ONCE. tccutil is NOT an option for
+        # orphans — it rejects uninstalled bundle ids (LSApplicationNotFound),
+        # so the only removal path is a direct sqlite3 DELETE, which needs the
+        # terminal to hold Full Disk Access.
+        if $_T_DO; then
+            _tcc_write_probe "$db" "$use_sudo"
+            if ! $_TCC_WRITE_OK; then
+                echo -e "    \033[1;31mSchreibzugriff verweigert:\033[0m ${_TCC_WRITE_ERR:-unbekannt}"
+                case "$_TCC_WRITE_ERR" in
+                    *"authorization denied"*|*"not authorized"*|*"unable to open"*)
+                        echo "    → Terminal hat keinen Festplattenvollzugriff (FDA)." ;;
+                    *"locked"*)
+                        echo "    → DB ist gesperrt (tccd) — spaeter erneut versuchen." ;;
+                    *"readonly"*)
+                        echo "    → DB schreibgeschuetzt — FDA fuers Terminal fehlt oder SIP." ;;
+                esac
+                echo "    → Bitte in iTerm oder Ghostty ausfuehren (die haben FDA):"
+                echo "        sudo meister tcc-clean --do"
+                echo "      Oder FDA fuer dein Terminal aktivieren: Systemeinstellungen →"
+                echo "      Datenschutz & Sicherheit → Festplattenvollzugriff."
+                return 0
+            fi
         fi
         local backup="$MEISTER_DIR/backups/tcc_orphans_$(date +%Y%m%d_%H%M%S)_${dblabel}.txt"
         mkdir -p "$MEISTER_DIR/backups"
         echo "$orphans" | while IFS='|' read -r client ctype; do
             local kind="Pfad"; [ "$ctype" = "0" ] && kind="Bundle-ID"
             echo "    ORPHAN ($kind): $client"
-            if $_T_DO; then
-                # escape single quotes for SQL (paths can contain them)
-                local sql_client="${client//\'/\'\'}"
-                if [ "$use_sudo" = "sudo" ]; then
-                    sudo sqlite3 "$db" "SELECT * FROM access WHERE client='$sql_client';" >> "$backup" 2>/dev/null
-                    sudo sqlite3 "$db" "DELETE FROM access WHERE client='$sql_client';" 2>/dev/null \
-                        && echo "      → entfernt (Backup: $backup)" \
-                        || echo "      → FEHLER beim Entfernen (FDA fuers Terminal?)"
-                else
-                    sqlite3 "$db" "SELECT * FROM access WHERE client='$sql_client';" >> "$backup" 2>/dev/null
-                    sqlite3 "$db" "DELETE FROM access WHERE client='$sql_client';" 2>/dev/null \
-                        && echo "      → entfernt (Backup: $backup)" \
-                        || echo "      → FEHLER beim Entfernen (FDA fuers Terminal?)"
-                fi
+            $_T_DO || continue
+            local sql_client="${client//\'/\'\'}" q
+            # PRAGMA busy_timeout rides out a transient tccd lock
+            if [ "$use_sudo" = "sudo" ]; then
+                sudo sqlite3 "$db" "SELECT * FROM access WHERE client='$sql_client';" >> "$backup" 2>/dev/null
+                q=$(sudo sqlite3 "$db" "PRAGMA busy_timeout=3000; DELETE FROM access WHERE client='$sql_client';" 2>&1)
+            else
+                sqlite3 "$db" "SELECT * FROM access WHERE client='$sql_client';" >> "$backup" 2>/dev/null
+                q=$(sqlite3 "$db" "PRAGMA busy_timeout=3000; DELETE FROM access WHERE client='$sql_client';" 2>&1)
             fi
+            if [ -z "$q" ]; then echo "      → entfernt (Backup: $backup)"
+            else echo "      → FEHLER: $(echo "$q" | head -1)"; fi
         done
         return 0
     }
@@ -6598,7 +6641,16 @@ if [ "${1:-}" = "tcc-clean" ]; then
         echo "  Fertig. Systemeinstellungen ggf. neu oeffnen (killall 'System Settings')."
     else
         echo "  Nur Analyse. Entfernen mit: meister tcc-clean --do"
-        echo "  (Backup jeder geloeschten Zeile landet in ~/.meister/backups/)"
+        echo "  Wichtig: das Entfernen braucht ein Terminal mit Festplattenvollzugriff"
+        echo "  (FDA) — sonst verweigert macOS den Schreibzugriff auf die TCC-DB."
+        _fda_terms=$(sqlite3 "$_T_SYS_DB" "SELECT client FROM access WHERE service='kTCCServiceSystemPolicyAllFiles' AND auth_value=2;" 2>/dev/null \
+            | grep -iE 'iterm|ghostty|terminal|warp|kitty|alacritty|wezterm')
+        if [ -n "$_fda_terms" ]; then
+            echo "  Terminals mit FDA auf diesem Mac:"
+            echo "$_fda_terms" | sed 's/^/    ✓ /'
+        else
+            echo "  Kein Terminal hat FDA — erst in Systemeinstellungen aktivieren."
+        fi
     fi
     exit 0
 fi
