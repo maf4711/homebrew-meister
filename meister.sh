@@ -4,8 +4,20 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.24
+# Version: 5.25
 # Date: 2026-07-12
+#
+# NEW in v5.25 — intelligence layer on top of the run:
+#  - Maintenance score 0-100 in report + history (SCORE: field) with trend
+#    arrow vs. previous run; `meister score` shows the sparkline history
+#  - meister diff — time-travel: snapshots apps/autostart/brew/settings after
+#    each run and shows what changed since last time (new autostart = flagged)
+#  - meister undo [--do|--list] — reverts the last run's REVERSIBLE actions
+#    from an undo journal (e.g. deleted orphan prefs restored from backup)
+#  - meister explain <text> — Ollama explains a warning/log line in plain German
+#    (no arg = explains the last WARN/ERROR from the log)
+#  - meister fleet — aggregates score/status of several Macs over SSH
+#    (FLEET_HOSTS in ~/.meister/config; read-only, key-based SSH)
 #
 # NEW in v5.24 — "ULTRA": absorb the best of the Mac-tool ecosystem
 #  Output (topgrade-style):
@@ -162,6 +174,22 @@ MEISTER_DIR="$HOME/.meister"
 HEAL_LOG="$MEISTER_DIR/heal.log"
 mkdir -p "$MEISTER_DIR/patches" "$MEISTER_DIR/output" 2>/dev/null
 
+# v5.25: undo journal — reversible FIX actions as "RUN_ID<TAB>epoch<TAB>desc<TAB>src<TAB>dst".
+# RUN_ID groups a run's actions so `meister undo` targets the latest run.
+# NB: restore is ALWAYS a plain `cp -- src dst` executed WITHOUT a shell — the
+# review found that shelling out a stored command allows injection via a
+# preference filename containing a single quote (evil';touch pwned;'.plist).
+UNDO_JOURNAL="$MEISTER_DIR/undo.journal"
+RUN_ID=$(date +%Y%m%d-%H%M%S)
+undo_record() {
+    local desc="$1" src="$2" dst="$3"
+    # flatten tabs+newlines — they are the field/line delimiters
+    desc=$(printf '%s' "$desc" | tr '\n\t' '  ')
+    src=$(printf '%s' "$src" | tr '\n\t' '  ')
+    dst=$(printf '%s' "$dst" | tr '\n\t' '  ')
+    printf '%s\t%s\t%s\t%s\t%s\n' "$RUN_ID" "$(date +%s)" "$desc" "$src" "$dst" >> "$UNDO_JOURNAL"
+}
+
 # Defaults
 LOGFILE="$MEISTER_DIR/meister.log"
 LOCKFILE="$MEISTER_DIR/meister.lock"
@@ -255,11 +283,18 @@ if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
     _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS PERF_CLEAN_OLLAMA SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA "
     _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
-    _STR_KEYS=" OLLAMA_MODEL OLLAMA_FALLBACK_MODEL OLLAMA_URL NET_CHECK_HOSTS OLLAMA_KEEP_MODELS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN "
+    _STR_KEYS=" OLLAMA_MODEL OLLAMA_FALLBACK_MODEL OLLAMA_URL NET_CHECK_HOSTS OLLAMA_KEEP_MODELS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
         value="${value#"${value%%[![:space:]]*}"}"; value="${value%"${value##*[![:space:]]}"}"
+        # strip ONE layer of matching surrounding quotes — the help/docs show
+        # values like FLEET_HOSTS="a b c", but the file is parsed (not sourced),
+        # so without this the literal quotes would end up in the value
+        case "$value" in
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+            \'*\') value="${value#\'}"; value="${value%\'}" ;;
+        esac
         [ -z "$key" ] || [ "${key:0:1}" = "#" ] && continue
         if [[ " $_BOOL_KEYS " == *" $key "* ]]; then
             [[ "$value" =~ ^(true|false)$ ]] && declare "$key=$value"
@@ -296,6 +331,7 @@ NEEDS_SUDO=true  # Fix #145: Always-on self-healing - always request sudo
 HEAL_COUNT=0     # heal events this run (for history.log HEAL: field)
 MODULE_TIMINGS=() # "secs|name" per module — top-3 land in history.log (INSIGHTS #7)
 MODULE_LEDGER=()  # "status|name|secs" per module — topgrade-style summary (v5.24)
+MAINT_SCORE=""    # 0-100 maintenance score for this run (v5.25)
 SHOW_HEALTH=false
 DRY_RUN=false
 INSTALL_LAUNCHAGENT=false
@@ -2557,8 +2593,13 @@ module_deepclean() {
             local deleted=0
             while IFS= read -r orphan_plist; do
                 [ -z "$orphan_plist" ] && continue
-                cp "$orphan_plist" "$backup_dir/" 2>/dev/null
-                rm -f "$orphan_plist" 2>/dev/null && deleted=$((deleted + 1))
+                local _bn; _bn=$(basename "$orphan_plist")
+                # Only record undo if the BACKUP succeeded — otherwise undo would
+                # point at a file that isn't there (review finding).
+                if cp "$orphan_plist" "$backup_dir/" 2>/dev/null && rm -f "$orphan_plist" 2>/dev/null; then
+                    deleted=$((deleted + 1))
+                    undo_record "prefs: $_bn" "$backup_dir/$_bn" "$orphan_plist"
+                fi
             done < "$orphan_list_file"
             log FIX "   ${deleted} orphaned Preferences deleted (Backup: $backup_dir)"
             report_add FIX "Deepclean: ${deleted} orphaned Preferences deleted (Backup in ~/.meister/backups/)"
@@ -4787,6 +4828,67 @@ keep_sudo() {
 }
 
 # Fix #16: Run-History
+# v5.25: System time-travel snapshot. Captures the state that tends to change
+# silently (apps, persistence, brew packages, key settings) into one sorted
+# text file per run. `meister diff` compares the two newest.
+SNAPSHOT_DIR="$MEISTER_DIR/snapshots"
+
+write_system_snapshot() {
+    mkdir -p "$SNAPSHOT_DIR"
+    local f="$SNAPSHOT_DIR/snap-$(date +%Y%m%d-%H%M%S).txt"
+    {
+        echo "# meister snapshot $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "## apps"
+        # name + version, one per line, from both app locations
+        local appdir
+        for appdir in /Applications "$HOME/Applications"; do
+            [ -d "$appdir" ] || continue
+            /bin/ls -1 "$appdir" 2>/dev/null | grep '\.app$' | while IFS= read -r a; do
+                local v
+                v=$(defaults read "$appdir/$a/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)
+                echo "app|${a%.app}|${v:-?}"
+            done
+        done
+        echo "## launch"
+        local d
+        for d in "$HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons; do
+            [ -d "$d" ] || continue
+            /bin/ls -1 "$d" 2>/dev/null | grep '\.plist$' | while IFS= read -r p; do
+                echo "launch|$d/$p"
+            done
+        done
+        echo "## brew"
+        if command_exists brew; then
+            brew leaves 2>/dev/null | sed 's/^/formula|/'
+            brew list --cask 2>/dev/null | sed 's/^/cask|/'
+        fi
+        echo "## settings"
+        echo "setting|firewall|$(defaults read /Library/Preferences/com.apple.alf globalstate 2>/dev/null || echo '?')"
+        echo "setting|sip|$(csrutil status 2>/dev/null | grep -o 'enabled\|disabled' | head -1)"
+        echo "setting|hostname|$(scutil --get LocalHostName 2>/dev/null || echo '?')"
+    } | LC_ALL=C sort > "$f"
+    # keep the 30 most recent snapshots
+    /bin/ls -1t "$SNAPSHOT_DIR"/snap-*.txt 2>/dev/null | tail -n +31 | while IFS= read -r old; do
+        rm -f "$old"
+    done
+    echo "$f"
+}
+
+# v5.25: Maintenance score 0-100. Starts at 100, subtracts weighted penalties
+# for what the run found. Echoes the score; caller stores it in MAINT_SCORE.
+compute_score() {
+    local score=100
+    score=$((score - ${#REPORT_ERRORS[@]} * 8))      # errors hurt most
+    score=$((score - ${#REPORT_WARNINGS[@]} * 3))     # warnings moderate
+    # Standing security/backup facts weigh heavier than transient warnings
+    printf '%s\n' "${REPORT_WARNINGS[@]}" | grep -qiE 'Time Machine|no backup|single copy' && score=$((score - 12))
+    printf '%s\n' "${REPORT_WARNINGS[@]}" | grep -qiE 'XProtect|Gatekeeper|SIP|Firewall' && score=$((score - 6))
+    printf '%s\n' "${REPORT_WARNINGS[@]}" | grep -qiE 'persistence|suspicious|VERDAECHTIG' && score=$((score - 6))
+    [ "$score" -lt 0 ] && score=0
+    [ "$score" -gt 100 ] && score=100
+    echo "$score"
+}
+
 save_history() {
     local history_file="$MEISTER_DIR/history.log"
     local end_ts=$(date +%s)
@@ -4794,6 +4896,7 @@ save_history() {
     local total_mins=$((total_secs / 60))
     local total_secs_rem=$((total_secs % 60))
     local ts=$(date +'%Y-%m-%d %H:%M:%S')
+    MAINT_SCORE=$(compute_score)
     # Top-3 slowest modules (INSIGHTS #7): the 27m-outlier run of 2026-07-04 was
     # unattributable without per-module timing in the history.
     local top_modules=""
@@ -4803,7 +4906,8 @@ save_history() {
                        printf "%s%s %s", (out++ ? ", " : ""), $2, d}')
     fi
     # HEAL: field kept — older lines have it, dropping it broke parsers (INSIGHTS #5)
-    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT}${top_modules:+ | top: $top_modules}" >> "$history_file"
+    # SCORE: field appended v5.25 (trailing → old parsers unaffected)
+    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT} SCORE:${MAINT_SCORE}${top_modules:+ | top: $top_modules}" >> "$history_file"
 }
 
 print_report() {
@@ -4812,10 +4916,25 @@ print_report() {
     local total_mins=$((total_secs / 60))
     local total_secs_rem=$((total_secs % 60))
 
+    # Score (v5.25): computed here if save_history hasn't run yet, with trend
+    # arrow vs. the previous run in history.log
+    [ -z "${MAINT_SCORE:-}" ] && MAINT_SCORE=$(compute_score)
+    local score_color="$GREEN"
+    [ "$MAINT_SCORE" -lt 80 ] && score_color="$YELLOW"
+    [ "$MAINT_SCORE" -lt 55 ] && score_color="$RED"
+    local prev_score trend=""
+    prev_score=$(grep -oE 'SCORE:[0-9]+' "$MEISTER_DIR/history.log" 2>/dev/null | tail -1 | cut -d: -f2)
+    if [ -n "$prev_score" ]; then
+        if [ "$MAINT_SCORE" -gt "$prev_score" ]; then trend=" ↑$((MAINT_SCORE - prev_score))"
+        elif [ "$MAINT_SCORE" -lt "$prev_score" ]; then trend=" ↓$((prev_score - MAINT_SCORE))"
+        else trend=" ="; fi
+    fi
+
     echo ""
     echo -e "${BLUE}====================================================${NC}"
     echo -e "${BLUE}   MEISTER REPORT (v1.0)${NC}"
     echo -e "${BLUE}   Runtime: ${total_mins}m ${total_secs_rem}s${NC}"
+    echo -e "${BLUE}   Wartungs-Score: ${score_color}${MAINT_SCORE}/100${NC}${BLUE}${trend}${NC}"
     $DRY_RUN && echo -e "${YELLOW}   [DRY-RUN MODE]${NC}"
     echo -e "${BLUE}====================================================${NC}"
 
@@ -6546,6 +6665,210 @@ if [ "${1:-}" = "appupdates" ] || [ "${1:-}" = "macupdate" ]; then
     exit 0
 fi
 
+# ── System Diff (meister diff) — Zeitreise: was hat sich geaendert? ──
+if [ "${1:-}" = "diff" ]; then
+    echo -e "\033[1;34m  MEISTER DIFF — Systemaenderungen seit letztem Snapshot\033[0m"
+    echo ""
+    SNAPSHOT_DIR="$MEISTER_DIR/snapshots"
+    if [ "${2:-}" = "--snapshot" ]; then
+        _s=$(write_system_snapshot)
+        echo "  Snapshot geschrieben: $_s"
+        exit 0
+    fi
+    _SNAPS=$(/bin/ls -1t "$SNAPSHOT_DIR"/snap-*.txt 2>/dev/null)
+    _SNAP_N=$(printf '%s\n' "$_SNAPS" | grep -c . || true)
+    if [ "${_SNAP_N:-0}" -lt 2 ]; then
+        echo "  Nicht genug Snapshots (${_SNAP_N:-0}). Es entsteht nach jedem 'meister'-Lauf einer."
+        echo "  Jetzt einen anlegen: meister diff --snapshot"
+        exit 0
+    fi
+    _NEW=$(printf '%s\n' "$_SNAPS" | sed -n '1p')
+    _OLD=$(printf '%s\n' "$_SNAPS" | sed -n '2p')
+    echo "  Vergleich: $(basename "$_OLD")  →  $(basename "$_NEW")"
+    echo ""
+    # LC_ALL=C: snapshots are C-sorted; comm needs the SAME collation or it
+    # silently mis-classifies when the two files were sorted in different
+    # locales (launchd C-locale run vs. interactive UTF-8 run)
+    _ADDED=$(LC_ALL=C comm -13 "$_OLD" "$_NEW" | grep -vE '^(#|##)')
+    _REMOVED=$(LC_ALL=C comm -23 "$_OLD" "$_NEW" | grep -vE '^(#|##)')
+    _print_diff() {
+        local sign="$1" color="$2" data="$3" label="$4"
+        [ -z "$data" ] && return
+        echo -e "  ${color}${label}${NC}"
+        echo "$data" | while IFS='|' read -r kind a b; do
+            case "$kind" in
+                app)     printf "    %s App: %s %s\n" "$sign" "$a" "$b" ;;
+                launch)  printf "    %s Autostart: %s\n" "$sign" "$a" ;;
+                formula) printf "    %s brew: %s\n" "$sign" "$a" ;;
+                cask)    printf "    %s cask: %s\n" "$sign" "$a" ;;
+                setting) printf "    %s Einstellung: %s=%s\n" "$sign" "$a" "$b" ;;
+            esac
+        done
+    }
+    if [ -z "$_ADDED$_REMOVED" ]; then
+        echo "  Keine Aenderungen."
+    else
+        _print_diff "+" "$GREEN" "$_ADDED"   "Neu / geaendert:"
+        _print_diff "-" "$RED"   "$_REMOVED" "Entfernt / alte Version:"
+        if echo "$_ADDED" | grep -q '^launch|'; then
+            echo ""
+            echo -e "  ${YELLOW}⚠ Neue Autostart-Eintraege — pruefen mit: meister watch${NC}"
+        fi
+    fi
+    exit 0
+fi
+
+# ── Maintenance Score (meister score) — Verlauf des Wartungs-Scores ──
+if [ "${1:-}" = "score" ]; then
+    echo -e "\033[1;34m  MEISTER SCORE — Wartungs-Score-Verlauf\033[0m"
+    echo ""
+    _hist="$MEISTER_DIR/history.log"
+    if [ ! -f "$_hist" ] || ! grep -q 'SCORE:' "$_hist"; then
+        echo "  Noch kein Score aufgezeichnet (entsteht ab dem naechsten 'meister'-Lauf)."
+        exit 0
+    fi
+    _LAST=$(grep -oE 'SCORE:[0-9]+' "$_hist" | tail -1 | cut -d: -f2)
+    _col="$GREEN"; [ "$_LAST" -lt 80 ] && _col="$YELLOW"; [ "$_LAST" -lt 55 ] && _col="$RED"
+    echo -e "  Aktuell: ${_col}${_LAST}/100${NC}"
+    echo ""
+    echo "  Verlauf (letzte 15):"
+    grep 'SCORE:' "$_hist" | tail -15 | while IFS= read -r line; do
+        _d=$(echo "$line" | cut -d'|' -f1 | xargs)
+        _sc=$(echo "$line" | grep -oE 'SCORE:[0-9]+' | cut -d: -f2)
+        _bars=$(( _sc / 5 ))
+        # guard: BSD `seq 1 0` counts DOWN and prints "1 0" → 2 bars for score 0-4
+        _bar=""; [ "$_bars" -gt 0 ] && _bar=$(printf '█%.0s' $(seq 1 "$_bars"))
+        printf "    %s  %3s  %s\n" "$_d" "$_sc" "$_bar"
+    done
+    exit 0
+fi
+
+# ── Undo (meister undo) — reversible FIX-Aktionen des letzten Laufs ──
+if [ "${1:-}" = "undo" ]; then
+    echo -e "\033[1;34m  MEISTER UNDO — letzte reversible Aktionen zuruecknehmen\033[0m"
+    echo ""
+    if [ ! -s "$UNDO_JOURNAL" ]; then
+        echo "  Keine rueckgaengig machbaren Aktionen aufgezeichnet."
+        echo "  (meister sichert z.B. verwaiste Prefs vor dem Loeschen — die tauchen hier auf.)"
+        exit 0
+    fi
+    if [ "${2:-}" = "--list" ]; then
+        echo "  Aufgezeichnete Aktionen (neueste zuletzt):"
+        awk -F'\t' '{print $1, $3}' "$UNDO_JOURNAL" | sed 's/^/    /' | tail -30
+        exit 0
+    fi
+    _U_RUN=$(cut -f1 "$UNDO_JOURNAL" | sort -u | tail -1)
+    _U_ROWS=$(awk -F'\t' -v r="$_U_RUN" '$1==r' "$UNDO_JOURNAL")
+    _U_N=$(printf '%s\n' "$_U_ROWS" | grep -c . || true)
+    echo "  Letzter Lauf mit reversiblen Aktionen: ${_U_RUN} (${_U_N} Aktion(en))"
+    echo "$_U_ROWS" | awk -F'\t' '{print "    - "$3}'
+    echo ""
+    if [ "${2:-}" != "--do" ]; then
+        echo "  Wiederherstellen mit: meister undo --do"
+        exit 0
+    fi
+    _U_OK=0; _U_FAIL=0
+    # collect rows that could NOT be restored — they stay in the journal so a
+    # retry (e.g. after fixing perms) is still possible
+    _U_KEEP=$(mktemp)
+    while IFS=$'\t' read -r _rid _ep _desc _src _dst; do
+        [ "$_rid" = "$_U_RUN" ] || continue
+        [ -z "$_src" ] && continue
+        # plain cp, no shell — src/dst can contain any character safely
+        if [ -e "$_src" ] && cp -- "$_src" "$_dst" 2>/dev/null; then
+            echo "    ✓ $_desc"; _U_OK=$((_U_OK + 1))
+        else
+            echo "    ✗ $_desc (Backup nicht mehr da)"; _U_FAIL=$((_U_FAIL + 1))
+            printf '%s\t%s\t%s\t%s\t%s\n' "$_rid" "$_ep" "$_desc" "$_src" "$_dst" >> "$_U_KEEP"
+        fi
+    done <<EOF
+$_U_ROWS
+EOF
+    echo ""
+    echo "  ${_U_OK} wiederhergestellt, ${_U_FAIL} fehlgeschlagen."
+    # rebuild journal: other runs' rows + this run's still-failed rows
+    { grep -v "^${_U_RUN}$(printf '\t')" "$UNDO_JOURNAL" 2>/dev/null; cat "$_U_KEEP" 2>/dev/null; } \
+        > "$UNDO_JOURNAL.tmp" && mv "$UNDO_JOURNAL.tmp" "$UNDO_JOURNAL"
+    rm -f "$_U_KEEP"
+    exit 0
+fi
+
+# ── Explain (meister explain <text>) — Ollama erklaert eine Warnung ──
+if [ "${1:-}" = "explain" ]; then
+    shift
+    _EX_TEXT="$*"
+    if [ -z "$_EX_TEXT" ]; then
+        # anchored timestamp regex — an unanchored ' - WARN - ' also matches STEP
+        # lines that QUOTE old warnings, yielding a mangled stale fragment
+        _EX_TEXT=$(grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} - (WARN|ERROR) - ' "$LOGFILE" 2>/dev/null | tail -1 | sed 's/^.\{19\} - [A-Z]* - //')
+        if [ -z "$_EX_TEXT" ]; then
+            echo "Usage: meister explain <Warnung oder Log-Zeile>"; exit 1
+        fi
+    fi
+    echo -e "\033[1;34m  MEISTER EXPLAIN\033[0m"
+    echo ""
+    echo "  Meldung: $_EX_TEXT"
+    echo ""
+    if ! ollama_available && ! ensure_ollama_running ""; then
+        echo "  Ollama nicht erreichbar — starte mit: ollama serve"
+        exit 1
+    fi
+    _EX_PROMPT="Erklaere diese macOS-Wartungsmeldung einem technisch interessierten Laien auf Deutsch:
+\"$_EX_TEXT\"
+In 3 kurzen Absaetzen: (1) Was bedeutet das? (2) Ist es gefaehrlich/dringend? (3) Konkrete Handlung, mit Befehl falls sinnvoll. Keine Einleitung."
+    if command_exists jq; then
+        _EX_BODY=$(jq -nc --arg m "$OLLAMA_MODEL" --arg p "$_EX_PROMPT" '{model:$m, prompt:$p, stream:false}')
+    else
+        _EX_BODY=$(printf '{"model":"%s","prompt":"%s","stream":false}' "$OLLAMA_MODEL" \
+            "$(printf '%s' "$_EX_PROMPT" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')")
+    fi
+    echo "  Frage ${OLLAMA_MODEL}..."
+    echo ""
+    _EX_RESP=$(curl -sf --max-time 120 "${OLLAMA_URL}/api/generate" -d "$_EX_BODY" 2>/dev/null)
+    if command_exists jq; then
+        printf '%s' "$_EX_RESP" | jq -r '.response // "keine Antwort"' | sed 's/^/  /'
+    else
+        printf '%s' "$_EX_RESP" | perl -nle 'print $1 if /"response":"((?:[^"\\]|\\.)*)"/' \
+            | perl -CSD -pe 's/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge; s/\\n/\n/g; s/\\"/"/g; s/\\\\/\\/g' | sed 's/^/  /'
+    fi
+    echo ""
+    exit 0
+fi
+
+# ── Fleet (meister fleet) — Reports mehrerer Macs per SSH einsammeln ──
+# Config: FLEET_HOSTS="mini.local macbook.local user@host" in ~/.meister/config.
+if [ "${1:-}" = "fleet" ]; then
+    echo -e "\033[1;34m  MEISTER FLEET — Status aller Macs\033[0m"
+    echo ""
+    if [ -z "${FLEET_HOSTS:-}" ]; then
+        echo "  Keine Hosts konfiguriert. In ~/.meister/config eintragen:"
+        echo "    FLEET_HOSTS=\"mini.local macbook.local user@host.local\""
+        echo "  Voraussetzung je Host: meister installiert + SSH-Key (kein Passwort)."
+        exit 0
+    fi
+    printf "  %-22s %-8s %-8s %s\n" "Host" "Score" "Status" "Letzter Lauf"
+    printf '  '; printf '─%.0s' $(seq 1 62); echo ""
+    _F_LOCAL_LINE=$(tail -1 "$MEISTER_DIR/history.log" 2>/dev/null)
+    _F_LOCAL_SCORE=$(echo "$_F_LOCAL_LINE" | grep -oE 'SCORE:[0-9]+' | cut -d: -f2)
+    _F_LOCAL_DATE=$(echo "$_F_LOCAL_LINE" | cut -d'|' -f1 | xargs)
+    printf "  %-22s %-8s %-8s %s\n" "$(scutil --get LocalHostName 2>/dev/null || echo local)" "${_F_LOCAL_SCORE:-?}/100" "lokal" "${_F_LOCAL_DATE:-nie}"
+    for _fh in $FLEET_HOSTS; do
+        _F_LINE=$(timeout 15 ssh -o ConnectTimeout=8 -o BatchMode=yes "$_fh" \
+            'tail -1 ~/.meister/history.log 2>/dev/null' 2>/dev/null)
+        if [ -z "$_F_LINE" ]; then
+            printf "  %-22s %-8s %-8s %s\n" "$_fh" "?" "offline" "nicht erreichbar"
+            continue
+        fi
+        _F_SCORE=$(echo "$_F_LINE" | grep -oE 'SCORE:[0-9]+' | cut -d: -f2)
+        _F_ERR=$(echo "$_F_LINE" | grep -oE 'ERR:[0-9]+' | cut -d: -f2)
+        _F_DATE=$(echo "$_F_LINE" | cut -d'|' -f1 | xargs)
+        _F_ST="ok"; [ "${_F_ERR:-0}" -gt 0 ] 2>/dev/null && _F_ST="ERR:$_F_ERR"
+        printf "  %-22s %-8s %-8s %s\n" "$_fh" "${_F_SCORE:-?}/100" "$_F_ST" "${_F_DATE:-?}"
+    done
+    echo ""
+    exit 0
+fi
+
 # ── AI System-Doktor (meister ai) — Ollama-Diagnose auf Abruf ──
 # Feeds the last run's warnings/errors + live system facts to the local
 # Ollama model and prints a prioritized diagnosis. Read-only, nothing runs.
@@ -7454,6 +7777,11 @@ TOOLS:
   meister thermal [N]  Live temperature & fan monitor (default: 2s)
   meister speed        Download/upload speed test
   meister report [N]   Run-history report from history.log (default: last 10)
+  meister score        Maintenance score 0-100 + trend history
+  meister diff         What changed since the last run (apps/autostart/brew)
+  meister undo [--do]  Revert the last run's reversible actions (--list)
+  meister explain <x>  Ollama explains a warning in plain language
+  meister fleet        Score/status of all Macs (FLEET_HOSTS in config)
   meister touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
   meister backup [--now]   Time Machine status; set up destination if none
   meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
@@ -7743,6 +8071,9 @@ else
 fi
 
 log_analysis
+
+# v5.25: snapshot system state for `meister diff` (skip in dry-run — no changes)
+$DRY_RUN || write_system_snapshot >/dev/null 2>&1
 
 # Fix #141: Ollama stoppen bebefore Report (damit RAM-Info im Report stimmt)
 shutdown_ollama
