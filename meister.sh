@@ -4,8 +4,29 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.21
-# Date: 2026-07-11
+# Version: 5.22
+# Date: 2026-07-12
+#
+# NEW in v5.22 (log-driven bugfix release):
+#  - FIX exit codes: 6 modules ended in `[ cond ] && cmd` — false condition made
+#    the whole module "fail" (Exit 1) and triggered pointless/dangerous AI-Heal
+#    runs (broken_symlinks, dev_caches, dsstore, launchd_orphans, tcc_privacy,
+#    receipts). All now `return 0`.
+#  - AI-Heal hardened: placeholder answers (/path/to, <file>, example) rejected,
+#    markdown fences stripped, `sudo rm` + glob-rm blocked, bash -o pipefail
+#    (pipe masked failing finds as "success"), prompt forbids sudo/rm -rf.
+#  - Sudo: max ONE password prompt per run. Upfront-auth failure sets
+#    NEEDS_SUDO=false (modules skip gracefully); ALL module sudo calls are now
+#    `sudo -n` — nothing can prompt mid-run anymore.
+#  - Git: .meister-nopush marker / `git config meister.nopush true` skips push
+#    per repo; "no push rights" and "SSH unreachable" are WARN with hint
+#    instead of permanent ERROR; error line shows the real fatal line.
+#  - Spotlight: /Volumes/Recovery whitelisted (read-only, mdutil always errors).
+#  - Log-Analyse: anchored timestamp regex (no more quoting its own old output),
+#    .old log ignored when >30d stale, German filter terms added.
+#  - history.log: HEAL: field restored (parsers broke on missing field).
+#  - Sleep Blockers: duplicate assertion lines deduped.
+#  - ~/.meister hygiene: tb-sync-*.log >30d auto-removed.
 #
 # NEW in v5.21:
 #  - Docs Order: new module module_docs_order — order check for ~/Documents:
@@ -229,6 +250,7 @@ RUN_SUDO_TASKS=false
 CLEAN_CACHES=false
 LIST_LARGE_FILES=false
 NEEDS_SUDO=true  # Fix #145: Always-on self-healing - always request sudo
+HEAL_COUNT=0     # heal events this run (for history.log HEAL: field)
 SHOW_HEALTH=false
 DRY_RUN=false
 INSTALL_LAUNCHAGENT=false
@@ -646,6 +668,7 @@ ollama_list_invalidate() {
 log_heal_event() {
     local type="$1" module="$2" result="$3" detail="${4:-}"
     echo "$(date '+%Y-%m-%d %H:%M:%S') | $type | $module | $result | $detail" >> "$HEAL_LOG"
+    HEAL_COUNT=$((HEAL_COUNT + 1))
 }
 
 # AI-Heal: Ollama fallback when known_fix() fails
@@ -658,7 +681,8 @@ ai_heal() {
     log HEAL "AI-Heal: Asking Ollama for fix for $module_name..."
     local prompt="You are a macOS sysadmin. A maintenance script module '$module_name' has failed.
 Error: $error_output
-Reply ONLY with a single shell command that fixes the problem. No explanation, just the command. If no fix is possible, reply with: NO_FIX"
+Reply ONLY with a single shell command that fixes the problem. No explanation, no markdown, just the command.
+Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placeholders like /path/to or <file> — use only real absolute paths that appear in the error above. If no such fix is possible, reply with: NO_FIX"
 
     # Build request body (jq when available — handles all JSON escapes correctly)
     local request_body
@@ -689,9 +713,20 @@ Reply ONLY with a single shell command that fixes the problem. No explanation, j
             | head -3)
     fi
 
+    # Strip markdown fences/backticks (models wrap commands despite the prompt)
+    ai_response=$(printf '%s\n' "$ai_response" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
+
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
         log_heal_event "ai-heal" "$module_name" "no-fix" ""
+        return 1
+    fi
+
+    # Reject placeholder commands — Ollama has answered with the literal
+    # `/path/to/check` before, which then really ran (see INSIGHTS 2026-07-04 #1).
+    if echo "$ai_response" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'; then
+        log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
+        log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
         return 1
     fi
 
@@ -703,8 +738,12 @@ Reply ONLY with a single shell command that fixes the problem. No explanation, j
         return 1
     fi
 
-    # Security check: block dangerous commands
-    if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|mkfs|dd if=|:(){ :|> /dev/sd|shutdown|reboot|halt"; then
+    # Security check: block dangerous commands.
+    # sudo+rm and rm -rf with globs are blocked outright — an AI-Heal run once
+    # executed `sudo rm -rf /Users/*/Library/...` (wildcard over ALL users).
+    # NB: fork-bomb pattern must be escaped — unescaped `:(){ :` is an empty ERE
+    # group; GNU/ugrep abort the WHOLE pattern with exit 2 → nothing gets blocked.
+    if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|rm -rf?[[:space:]]+(/|~)[[:space:]]*(\||;|&|$)|sudo[[:space:]]+rm|rm -rf?[[:space:]][^;|&]*\*|mkfs|dd if=|:\(\)\{ :|> /dev/sd|shutdown|reboot|halt"; then
         log WARN "AI-Heal: Dangerous command blocked: $ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked" "$ai_response"
         return 1
@@ -727,9 +766,10 @@ Reply ONLY with a single shell command that fixes the problem. No explanation, j
         return 0
     fi
 
-    # Execute with timeout
+    # Execute with timeout. pipefail is essential: `find /bad/path | xargs rm -f`
+    # otherwise reports exit 0 (xargs succeeds on empty input) and masks the failure.
     local ai_fix_output
-    ai_fix_output=$(timeout 30 bash -c "$ai_response" 2>&1)
+    ai_fix_output=$(timeout 30 bash -o pipefail -c "$ai_response" 2>&1)
     local ai_rc=$?
 
     if [ $ai_rc -eq 0 ]; then
@@ -1462,7 +1502,12 @@ module_git_repos() {
         [ -n "$unpushed_output" ] && unpushed=$(echo "$unpushed_output" | wc -l) && unpushed=${unpushed##* }
         if [ "${unpushed:-0}" -gt 0 ]; then
             repos_unpushed=$((repos_unpushed + 1))
-            if $GIT_AUTO_PUSH; then
+            # Per-Repo-Opt-out: marker file or `git config meister.nopush true`
+            # (forks without push rights, e.g. machato, produced a permanent ERROR)
+            if [ -f "$repo_dir/.meister-nopush" ] || \
+               [ "$(timeout 5 git -C "$repo_dir" config --get meister.nopush 2>/dev/null)" = "true" ]; then
+                log STEP "     ${repo_name}: ${unpushed} unpushed, push opt-out (.meister-nopush)"
+            elif $GIT_AUTO_PUSH; then
                 log STEP "     ${repo_name}: ${unpushed} commits to push (${branch} -> ${remote})..."
                 local push_output
                 # Fix #105: Push mit timeout 30 (braucht more Zeit als Check)
@@ -1473,9 +1518,14 @@ module_git_repos() {
                     repos_pushed=$((repos_pushed + 1))
                 elif [ $push_rc -eq 124 ]; then
                     log ERROR "     ${repo_name}: Push Timeout (>30s)"
+                elif echo "$push_output" | grep -qiE "permission denied \(publickey\)|denied to |403"; then
+                    log WARN "     ${repo_name}: no push rights — set .meister-nopush or fork"
+                elif echo "$push_output" | grep -qiE "port 22|Could not resolve host|Connection (refused|timed out|reset)"; then
+                    log WARN "     ${repo_name}: network/SSH unreachable (transient?) — hint: ssh.github.com:443 as fallback"
                 else
                     log ERROR "     ${repo_name}: Push failed"
-                    [ -n "$push_output" ] && log STEP "       $(echo "$push_output" | tail -1)"
+                    # tail -1 often shows a useless advice line — prefer the actual error
+                    [ -n "$push_output" ] && log STEP "       $(echo "$push_output" | grep -iE 'fatal|error|denied|rejected|failed' | head -1)"
                 fi
             else
                 log WARN "     ${repo_name}: ${unpushed} unpushed commits (${branch}) [-G to push]"
@@ -1514,7 +1564,7 @@ module_xprotect() {
         log ERROR "   Gatekeeper: DISABLED!"
         issues=$((issues + 1))
         if ! $DRY_RUN; then
-            sudo spctl --master-enable 2>/dev/null && log FIX "   Gatekeeper reenabled" && \
+            sudo -n spctl --master-enable 2>/dev/null && log FIX "   Gatekeeper reenabled" && \
                 report_add FIX "Gatekeeper reenabled"
         fi
     fi
@@ -1970,7 +2020,7 @@ module_system() {
 
         if [ "$has_recommended" -gt 0 ] && [ "$has_restart" -eq 0 ] && $NEEDS_SUDO; then
             log INFO "   Installing recommended updates (no restart needed)..."
-            run_verbose sudo softwareupdate --install --recommended --agree-to-license
+            run_verbose sudo -n softwareupdate --install --recommended --agree-to-license
             if [ $? -eq 0 ]; then
                 report_add FIX "macOS Recommended Updates installed"
             else
@@ -2030,7 +2080,7 @@ module_cleanup() {
         report_add FIX "Cleaned User Caches ($cache_size)"
         if $NEEDS_SUDO; then
             log INFO "   Deleting System Caches (sudo)..."
-            run_or_dry sudo rm -rf /Library/Caches/* /System/Library/Caches/* /private/var/tmp/*
+            run_or_dry sudo -n rm -rf /Library/Caches/* /System/Library/Caches/* /private/var/tmp/*
             report_add FIX "Cleaned System Caches"
         fi
     else
@@ -2080,13 +2130,13 @@ module_deepclean() {
         log STEP "   User-Logs: ${user_log_size} MB (OK)"
     fi
     if $NEEDS_SUDO; then
-        local sys_log_size=$(sudo du -sm /private/var/log 2>/dev/null | awk '{print $1}')
+        local sys_log_size=$(sudo -n du -sm /private/var/log 2>/dev/null | awk '{print $1}')
         [ -z "$sys_log_size" ] && sys_log_size=0
         if [ "$sys_log_size" -gt 200 ]; then
             log INFO "   System-Logs: ${sys_log_size} MB - cleaning up..."
-            run_or_dry sudo find /private/var/log -type f -name "*.log" -mtime +30 -delete
-            run_or_dry sudo rm -rf /private/var/log/asl/*.asl 2>/dev/null
-            local freed_sys=$((sys_log_size - $(sudo du -sm /private/var/log 2>/dev/null | awk '{print $1}')))
+            run_or_dry sudo -n find /private/var/log -type f -name "*.log" -mtime +30 -delete
+            run_or_dry sudo -n rm -rf /private/var/log/asl/*.asl 2>/dev/null
+            local freed_sys=$((sys_log_size - $(sudo -n du -sm /private/var/log 2>/dev/null | awk '{print $1}')))
             [ "$freed_sys" -gt 0 ] 2>/dev/null && { total_freed=$((total_freed + freed_sys)); log FIX "   ${freed_sys} MB System-Logs cleaned up"; }
         else
             log STEP "   System-Logs: ${sys_log_size} MB (OK)"
@@ -2217,7 +2267,7 @@ module_deepclean() {
             log WARN "   Disk ${disk_pct}% full - deleting old TM snapshots..."
             # Fix #69: Korrektes Snapshot-Datum extrahieren (Format: com.apple.TimeMachine.YYYY-MM-DD-HHMMSS.local)
             tmutil listlocalsnapshots / 2>/dev/null | sed -n 's/.*TimeMachine\.\(.*\)\.local/\1/p' | while IFS= read -r snap; do
-                [ -n "$snap" ] && run_or_dry sudo tmutil deletelocalsnapshots "$snap"
+                [ -n "$snap" ] && run_or_dry sudo -n tmutil deletelocalsnapshots "$snap"
             done
             report_add FIX "TM-Snapshots deleted (Disk war ${disk_pct}%)"
         else
@@ -2471,7 +2521,7 @@ module_spotlight_fix() {
                     log WARN "   mds appears stuck (State: ${mds_state:-?})"
                     if $NEEDS_SUDO; then
                         log FIX "   Restarting mds..."
-                        run_or_dry sudo killall mds 2>/dev/null
+                        run_or_dry sudo -n killall mds 2>/dev/null
                         sleep 2
                         log FIX "   mds restarted"
                         report_add FIX "Spotlight: mds restarted (stuck at ${mds_total}% CPU)"
@@ -2498,6 +2548,9 @@ module_spotlight_fix() {
             /System/Volumes/xarts|/System/Volumes/iSCPreboot|/System/Volumes/Hardware) continue ;;
             /System/Volumes/Data|/System/Volumes/Data/*)                          continue ;;
             /Library/Developer/CoreSimulator/Volumes/*)                           continue ;;
+            # Recovery volumes always report mdutil errors (read-only) — reindexing
+            # them every run is pointless noise
+            /Volumes/Recovery|/System/Volumes/Recovery)                           continue ;;
         esac
         volumes_checked=$((volumes_checked + 1))
         local vol_status=$(mdutil -s "$vol" 2>/dev/null)
@@ -2506,8 +2559,8 @@ module_spotlight_fix() {
             log ERROR "   $vol: Spotlight-Index with errors"
             if $SPOTLIGHT_REINDEX_ON_ERROR && $NEEDS_SUDO; then
                 log FIX "   Reindexiere $vol..."
-                run_or_dry sudo mdutil -E "$vol" 2>/dev/null
-                run_or_dry sudo mdutil -i on "$vol" 2>/dev/null
+                run_or_dry sudo -n mdutil -E "$vol" 2>/dev/null
+                run_or_dry sudo -n mdutil -i on "$vol" 2>/dev/null
                 report_add FIX "Spotlight: $vol reindexiert"
                 fixes=$((fixes + 1))
             else
@@ -2518,7 +2571,7 @@ module_spotlight_fix() {
             if [ "$vol" = "/" ]; then
                 log WARN "   /: Spotlight disabled auf Root-Volume!"
                 if $NEEDS_SUDO; then
-                    run_or_dry sudo mdutil -i on / 2>/dev/null
+                    run_or_dry sudo -n mdutil -i on / 2>/dev/null
                     log FIX "   Spotlight auf / enabled"
                     report_add FIX "Spotlight: Root-Volume enabled"
                     fixes=$((fixes + 1))
@@ -2542,7 +2595,7 @@ module_spotlight_fix() {
             log WARN "   Spotlight-DB ungewoehnlich gross: ${db_size} MB (>5 GB)"
             if $SPOTLIGHT_REINDEX_ON_ERROR && $NEEDS_SUDO; then
                 log FIX "   Baue Spotlight-Index neu auf..."
-                run_or_dry sudo mdutil -E / 2>/dev/null
+                run_or_dry sudo -n mdutil -E / 2>/dev/null
                 report_add FIX "Spotlight: Index neu aufgebaut (war ${db_size} MB)"
                 fixes=$((fixes + 1))
             else
@@ -3867,6 +3920,7 @@ module_broken_symlinks() {
     done
     [ "$total" -eq 0 ] && log STEP "   No broken symlinks"
     [ "$total" -gt 0 ] && report_add WARN "${total} broken symlinks"
+    return 0
 }
 
 module_brew_age() {
@@ -3904,6 +3958,7 @@ module_launchd_orphans() {
     done
     [ "$orphans" -eq 0 ] && log STEP "   No orphan LaunchDaemons"
     [ "$orphans" -gt 0 ] && report_add WARN "${orphans} orphan LaunchDaemons"
+    return 0
 }
 
 module_shell_history() {
@@ -4054,6 +4109,7 @@ module_dev_caches() {
     local freed_mb=$(( (total_before - total_after) / 1024 ))
     log STEP "   ${cleaned} dev-cache(s) cleaned, ${freed_mb} MB freed"
     [ "$freed_mb" -gt 100 ] && report_add FIX "Dev caches: ${freed_mb} MB freed"
+    return 0
 }
 
 module_node_modules_aged() {
@@ -4083,7 +4139,7 @@ module_sleep_blockers() {
     log INFO "Sleep assertions (what keeps Mac awake)..."
     bw_phase "Sleep: querying assertions"
     local assertions
-    assertions=$(pmset -g assertions 2>/dev/null | awk '/PreventUserIdleSystemSleep|PreventSystemSleep/ && / pid /' | head -10)
+    assertions=$(pmset -g assertions 2>/dev/null | awk '/PreventUserIdleSystemSleep|PreventSystemSleep/ && / pid /' | sort -u | head -10)
     if [ -z "$assertions" ]; then
         log STEP "   No processes blocking sleep"
         return 0
@@ -4128,6 +4184,7 @@ module_dsstore_cleanup() {
     done
     [ "$total" -gt 0 ] && { log FIX "   ${total} .DS_Store removed"; report_add FIX "${total} .DS_Store files"; }
     [ "$total" -eq 0 ] && log STEP "   None found"
+    return 0
 }
 
 # v5.21: Order check for DOCS_ORDER_ROOT (default ~/Documents)
@@ -4250,6 +4307,7 @@ module_tcc_privacy_audit() {
     done
     sensitive_count=$(echo "$grants" | awk -F'|' '/kTCCServiceCamera|kTCCServiceMicrophone|kTCCServiceScreenCapture|kTCCServiceSystemPolicyAllFiles/' | wc -l | tr -d ' ')
     [ "$sensitive_count" -gt 0 ] && report_add WARN "${sensitive_count} apps with Camera/Mic/Screen/FDA grants"
+    return 0
 }
 
 module_simfix() {
@@ -4325,6 +4383,7 @@ module_receipts_audit() {
     done < <(find "$receipts_dir" -maxdepth 1 -name "*.plist" 2>/dev/null | head -200)
     log STEP "   ${total} receipts total, ${orphans} potentially orphaned"
     [ "$orphans" -gt 0 ] && report_add WARN "${orphans} orphan receipts (review manually)"
+    return 0
 }
 
 #############################
@@ -4344,7 +4403,8 @@ save_history() {
     local total_mins=$((total_secs / 60))
     local total_secs_rem=$((total_secs % 60))
     local ts=$(date +'%Y-%m-%d %H:%M:%S')
-    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}" >> "$history_file"
+    # HEAL: field kept — older lines have it, dropping it broke parsers (INSIGHTS #5)
+    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT}" >> "$history_file"
 }
 
 print_report() {
@@ -4462,26 +4522,29 @@ log_analysis() {
 
     log INFO "Log-Analyse: Checking recurring problems..."
 
-    # Warnings and Errors from letzten 5 Runs zaehlen
+    # Warnings and Errors from letzten 5 Runs zaehlen.
+    # Anchored timestamp: a greedy `^.*` also matched STEP lines that QUOTE old
+    # WARN lines (the module's own output!) — recursive self-noise every run.
+    local warn_re='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} - (WARN|ERROR) - '
     local recent_warns=""
     if [ -f "$LOGFILE" ]; then
-        recent_warns=$(grep -E "^.* - (WARN|ERROR) - " "$LOGFILE" 2>/dev/null | \
-            sed 's/^.* - \(WARN\|ERROR\) - //' | sort | uniq -c | sort -rn | head -10)
+        recent_warns=$(grep -E "$warn_re" "$LOGFILE" 2>/dev/null | \
+            sed 's/^.\{19\} - [A-Z]* - //' | sort | uniq -c | sort -rn | head -10)
     fi
 
-    # Auch .old Log einbeziehen
-    if [ -f "${LOGFILE}.old" ]; then
-        local old_warns=$(grep -E "^.* - (WARN|ERROR) - " "${LOGFILE}.old" 2>/dev/null | \
-            sed 's/^.* - \(WARN\|ERROR\) - //' | sort | uniq -c | sort -rn | head -10)
+    # .old Log only when recent — March data is not a "recurring" problem in July
+    if [ -f "${LOGFILE}.old" ] && [ -n "$(find "${LOGFILE}.old" -mtime -30 2>/dev/null)" ]; then
+        local old_warns=$(grep -E "$warn_re" "${LOGFILE}.old" 2>/dev/null | \
+            sed 's/^.\{19\} - [A-Z]* - //' | sort | uniq -c | sort -rn | head -10)
         if [ -n "$old_warns" ]; then
             recent_warns=$(echo -e "${recent_warns}\n${old_warns}" | sort -rn | head -10)
         fi
     fi
 
     if [ -n "$recent_warns" ]; then
-        # Filter stale entries (uninstalled apps, old timeouts)
+        # Filter stale entries (uninstalled apps, old timeouts) + own report lines
         local recurring=$(echo "$recent_warns" | awk '$1 >= 3 {$1=""; print}' | sed 's/^ //' | \
-            grep -vE "ORPHANED:.*not more installed|TIMEOUT on git remote|Recurring problems")
+            grep -vE "ORPHANED:.*not more installed|TIMEOUT on git remote|TIMEOUT bei git remote|Recurring problems|Wiederkehrende Probleme")
         if [ -n "$recurring" ]; then
             log INFO "   Recurring problems:"
             echo "$recurring" | while IFS= read -r line; do
@@ -4491,6 +4554,10 @@ log_analysis() {
             log STEP "   No recurring problems (stale entries filtered)"
         fi
     fi
+
+    # Own log hygiene (INSIGHTS #8): one-off tool logs >30d have no value
+    find "$MEISTER_DIR" -maxdepth 1 -name "tb-sync-*.log" -mtime +30 -delete 2>/dev/null
+    return 0
 }
 
 #############################
@@ -6210,17 +6277,19 @@ if ! $DRY_RUN && $NEEDS_SUDO; then
         keep_sudo
         log INFO "   Sudo OK (cached)"
     elif [ -t 0 ] || ( : < /dev/tty ) 2>/dev/null; then
-        log INFO "Requesting Sudo..."
+        log INFO "Requesting Sudo (once — everything else runs non-interactive)..."
         if sudo -v < /dev/tty; then
             keep_sudo
             log INFO "   Sudo OK"
         else
-            log WARN "Sudo denied or timeout - some operations may fail"
+            log WARN "Sudo denied or timeout - sudo tasks will be skipped (NO further prompts)"
             log INFO "   Sudo not available"
+            NEEDS_SUDO=false
         fi
     else
         log WARN "No TTY + no Sudo-Cache - sudo-Operationen skipped"
         log INFO "   Sudo not available (non-interactive)"
+        NEEDS_SUDO=false
     fi
 fi
 
@@ -6289,13 +6358,13 @@ if check_net; then
         module_timer_start
         log INFO "Starting periodic scripts..."
         log STEP "   periodic daily..."
-        run_or_dry sudo periodic daily
+        run_or_dry sudo -n periodic daily
         log STEP "   periodic weekly..."
-        run_or_dry sudo periodic weekly
+        run_or_dry sudo -n periodic weekly
         log STEP "   periodic monthly..."
-        run_or_dry sudo periodic monthly
+        run_or_dry sudo -n periodic monthly
         log INFO "   DNS cache flush..."
-        run_or_dry sudo dscacheutil -flushcache
+        run_or_dry sudo -n dscacheutil -flushcache
         report_add FIX "Ran periodic scripts & DNS flush"
         module_timer_stop "System maintenance"
     fi
