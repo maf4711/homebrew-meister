@@ -4,8 +4,21 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.22
+# Version: 5.23
 # Date: 2026-07-12
+#
+# NEW in v5.23 (feature release):
+#  - meister touchid [--off]: enable Touch ID for sudo via /etc/pam.d/sudo_local
+#    (survives macOS updates; falls back to password without a sensor)
+#  - meister backup [--now]: Time Machine status; interactive destination setup
+#    when none is configured (lists attached APFS/HFS volumes)
+#  - meister report [N]: run-history table from history.log with per-run counts,
+#    slowest modules, avg/longest duration and error total
+#  - Time Machine module: "not configured" is now a WARN (Mac = single copy)
+#    and lists attached candidate volumes with a `meister backup` hint
+#  - XProtect: stale signatures (>14d) now trigger `xprotect update`
+#    (fallback: softwareupdate --background-critical) instead of only warning
+#  - history.log: per-run "top:" field with the 3 slowest modules (INSIGHTS #7)
 #
 # NEW in v5.22 (log-driven bugfix release):
 #  - FIX exit codes: 6 modules ended in `[ cond ] && cmd` — false condition made
@@ -251,6 +264,7 @@ CLEAN_CACHES=false
 LIST_LARGE_FILES=false
 NEEDS_SUDO=true  # Fix #145: Always-on self-healing - always request sudo
 HEAL_COUNT=0     # heal events this run (for history.log HEAL: field)
+MODULE_TIMINGS=() # "secs|name" per module — top-3 land in history.log (INSIGHTS #7)
 SHOW_HEALTH=false
 DRY_RUN=false
 INSTALL_LAUNCHAGENT=false
@@ -328,6 +342,7 @@ module_timer_stop() {
     local elapsed=$((end_ts - MODULE_START_TS))
     local mins=$((elapsed / 60))
     local secs=$((elapsed % 60))
+    MODULE_TIMINGS+=("${elapsed}|${name}")
     if [ $mins -gt 0 ]; then
         log STEP "   ${name} completed in ${mins}m ${secs}s"
     else
@@ -1582,7 +1597,22 @@ module_xprotect() {
         if [ "$xp_age_days" -gt 14 ]; then
             log WARN "   XProtect-Signaturen: ${xp_age_days} days old (>14)"
             issues=$((issues + 1))
-            log INFO "   XProtect-Signaturen ${xp_age_days} days old"
+            # Trigger the update instead of just warning about it every run.
+            # `xprotect update` (macOS 15+) is authoritative; older systems get
+            # the background critical-update check.
+            if ! $DRY_RUN && $NEEDS_SUDO; then
+                if command_exists xprotect && timeout 90 sudo -n xprotect update >/dev/null 2>&1; then
+                    log FIX "   XProtect update triggered (xprotect update)"
+                    report_add FIX "XProtect signature update triggered"
+                elif timeout 90 sudo -n softwareupdate --background-critical >/dev/null 2>&1; then
+                    log FIX "   Critical-update check triggered (softwareupdate --background-critical)"
+                    report_add FIX "XProtect update check triggered"
+                else
+                    log INFO "   XProtect-Signaturen ${xp_age_days} days old (auto-update failed)"
+                fi
+            else
+                log INFO "   XProtect-Signaturen ${xp_age_days} days old"
+            fi
         else
             log STEP "   XProtect-Signaturen: ${xp_age_days} days old (OK)"
         fi
@@ -3792,11 +3822,44 @@ module_healer() {
     fi
 }
 
+# Local, writable, non-boot volumes that could serve as a TM destination.
+# Output: "<mountpoint>|<free>" per line.
+tm_candidate_volumes() {
+    local vol fstype
+    for vol in /Volumes/*; do
+        [ -d "$vol" ] || continue
+        case "$(basename "$vol")" in
+            Recovery|Preboot|Update|.timemachine) continue ;;
+        esac
+        [ "$(readlink "$vol" 2>/dev/null)" = "/" ] && continue   # boot volume symlink
+        [ -w "$vol" ] || continue
+        # local APFS/HFS only — network mounts need URL-based setdestination
+        fstype=$(mount | sed -n "s|^.* on ${vol} (\([a-z0-9]*\),.*|\1|p" | head -1)
+        case "$fstype" in apfs|hfs) ;; *) continue ;; esac
+        df -H "$vol" 2>/dev/null | awk -v v="$vol" 'NR==2 {print v"|"$4}'
+    done
+}
+
 module_tm_health() {
     log INFO "Checking Time Machine..."
     if ! command_exists tmutil; then log STEP "   tmutil not available"; return 0; fi
-    if ! tmutil destinationinfo &>/dev/null; then
-        log STEP "   Time Machine not configured"
+    # NB: `tmutil destinationinfo` exits 0 even with NO destination ("No destinations
+    # configured." on stdout) — the old exit-code check never detected this state.
+    if tmutil destinationinfo 2>&1 | grep -qi "No destinations"; then
+        # No destination = this Mac is a single copy. Surface candidates instead
+        # of a quiet STEP line (Documents alone is 170 GB with no second copy).
+        log WARN "   Time Machine NOT configured — no backup target, Mac is a single copy"
+        report_add WARN "Time Machine: not configured (no backup!)"
+        local candidates; candidates=$(tm_candidate_volumes)
+        if [ -n "$candidates" ]; then
+            log INFO "   Attached volumes usable as TM destination:"
+            echo "$candidates" | while IFS='|' read -r cvol cfree; do
+                log STEP "     $cvol (${cfree} free)"
+            done
+            log STEP "   Set up with: meister backup"
+        else
+            log STEP "   No suitable external volume attached (plug one in, then: meister backup)"
+        fi
         return 0
     fi
     local latest; latest=$(tmutil latestbackup 2>/dev/null | tail -1)
@@ -4403,8 +4466,16 @@ save_history() {
     local total_mins=$((total_secs / 60))
     local total_secs_rem=$((total_secs % 60))
     local ts=$(date +'%Y-%m-%d %H:%M:%S')
+    # Top-3 slowest modules (INSIGHTS #7): the 27m-outlier run of 2026-07-04 was
+    # unattributable without per-module timing in the history.
+    local top_modules=""
+    if [ ${#MODULE_TIMINGS[@]} -gt 0 ]; then
+        top_modules=$(printf '%s\n' "${MODULE_TIMINGS[@]}" | sort -t'|' -k1,1 -rn | head -3 | \
+            awk -F'|' '$1 > 0 {m=int($1/60); s=$1%60; d=(m>0) ? m"m"s"s" : s"s";
+                       printf "%s%s %s", (out++ ? ", " : ""), $2, d}')
+    fi
     # HEAL: field kept — older lines have it, dropping it broke parsers (INSIGHTS #5)
-    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT}" >> "$history_file"
+    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT}${top_modules:+ | top: $top_modules}" >> "$history_file"
 }
 
 print_report() {
@@ -5952,6 +6023,170 @@ if [ "${1:-}" = "simfix" ]; then
 fi
 
 # ── Free RAM (meister free) ──
+# ── Touch ID for sudo (meister touchid) ──
+# Writes pam_tid.so into /etc/pam.d/sudo_local (Sonoma+: survives macOS updates,
+# unlike editing /etc/pam.d/sudo directly). One sudo password — then fingerprint.
+if [ "${1:-}" = "touchid" ]; then
+    echo -e "\033[1;34m  MEISTER TOUCHID — Touch ID for sudo\033[0m"
+    echo ""
+    _PAM_LOCAL="/etc/pam.d/sudo_local"
+    _PAM_TEMPLATE="/etc/pam.d/sudo_local.template"
+
+    if [ "${2:-}" = "--off" ]; then
+        if [ -f "$_PAM_LOCAL" ] && grep -q pam_tid "$_PAM_LOCAL" 2>/dev/null; then
+            sudo sed -i '' '/pam_tid/d' "$_PAM_LOCAL" && echo "  Touch ID for sudo DISABLED"
+        else
+            echo "  Touch ID for sudo was not enabled"
+        fi
+        exit 0
+    fi
+
+    if grep -qE '^auth.*pam_tid' "$_PAM_LOCAL" 2>/dev/null; then
+        echo "  Already enabled ($_PAM_LOCAL)"
+        echo "  Test: sudo -k && sudo true   → Touch ID prompt instead of password"
+        exit 0
+    fi
+
+    if ! bioutil -rs 2>/dev/null | grep -qiE 'Touch ID|functionality: 1'; then
+        echo "  NOTE: no Touch ID sensor detected on this Mac."
+        echo "  On a desktop Mac this needs a Magic Keyboard with Touch ID."
+        echo "  Enabling is safe anyway — sudo falls back to password without a sensor."
+        echo ""
+    fi
+
+    echo "  Writing $_PAM_LOCAL (needs sudo once)..."
+    if [ -f "$_PAM_TEMPLATE" ]; then
+        sed 's/^#auth/auth/' "$_PAM_TEMPLATE" | sudo tee "$_PAM_LOCAL" >/dev/null
+    else
+        printf 'auth       sufficient     pam_tid.so\n' | sudo tee "$_PAM_LOCAL" >/dev/null
+    fi
+
+    if grep -qE '^auth.*pam_tid' "$_PAM_LOCAL" 2>/dev/null; then
+        echo "  Touch ID for sudo ENABLED ($_PAM_LOCAL — survives macOS updates)"
+        echo "  Test: sudo -k && sudo true"
+        echo "  Undo: meister touchid --off"
+    else
+        echo "  [ERROR] Write failed — check $_PAM_LOCAL manually"
+        exit 1
+    fi
+    exit 0
+fi
+
+# ── Time Machine setup (meister backup) ──
+if [ "${1:-}" = "backup" ]; then
+    echo -e "\033[1;34m  MEISTER BACKUP — Time Machine status & setup\033[0m"
+    echo ""
+    if ! command_exists tmutil; then echo "  tmutil not available"; exit 1; fi
+
+    # destinationinfo exits 0 even with no destination — check the output
+    if ! tmutil destinationinfo 2>&1 | grep -qi "No destinations"; then
+        echo "  Destination configured:"
+        tmutil destinationinfo 2>/dev/null | sed -n 's/^Name[[:space:]]*: */    Name: /p; s/^Mount Point[[:space:]]*: */    Mount: /p; s/^URL[[:space:]]*: */    URL:  /p'
+        _latest=$(tmutil latestbackup 2>/dev/null | tail -1)
+        if [ -n "$_latest" ]; then
+            echo "    Latest backup: $(basename "$_latest")"
+        else
+            echo "    Latest backup: NONE yet"
+        fi
+        if [ "${2:-}" = "--now" ]; then
+            echo ""
+            echo "  Starting backup..."
+            tmutil startbackup --auto 2>/dev/null && echo "  Backup started (runs in background)"
+        else
+            echo ""
+            echo "  Start one now with: meister backup --now"
+        fi
+        exit 0
+    fi
+
+    echo "  No Time Machine destination configured — this Mac is a SINGLE COPY."
+    echo ""
+    _candidates=$(tm_candidate_volumes)
+    if [ -z "$_candidates" ]; then
+        echo "  No suitable local volume attached (APFS/HFS, writable, non-boot)."
+        echo "  Plug in an external disk and re-run: meister backup"
+        exit 0
+    fi
+
+    echo "  Attached volumes usable as TM destination:"
+    _i=0
+    while IFS='|' read -r _cvol _cfree; do
+        _i=$((_i + 1))
+        printf '    [%d] %s (%s free)\n' "$_i" "$_cvol" "$_cfree"
+        eval "_CAND_${_i}=\$_cvol"
+    done <<EOF
+$_candidates
+EOF
+    echo ""
+    if [ ! -t 0 ]; then
+        echo "  (non-interactive — pick a volume and run: sudo tmutil setdestination -a '<volume>')"
+        exit 0
+    fi
+    printf '  Choose volume [1-%d, Enter=abort]: ' "$_i"
+    read -r _choice
+    case "$_choice" in
+        ''|*[!0-9]*) echo "  Aborted"; exit 0 ;;
+    esac
+    [ "$_choice" -ge 1 ] && [ "$_choice" -le "$_i" ] || { echo "  Invalid choice"; exit 1; }
+    eval "_target=\$_CAND_${_choice}"
+    echo ""
+    echo "  Setting '$_target' as Time Machine destination (needs sudo)..."
+    if sudo tmutil setdestination -a "$_target"; then
+        sudo tmutil enable 2>/dev/null
+        echo "  Destination set + automatic backups enabled."
+        printf '  Start first backup now? [y/N]: '
+        read -r _go
+        [ "$_go" = "y" ] || [ "$_go" = "Y" ] && tmutil startbackup --auto && echo "  First backup started (background)"
+    else
+        echo "  [ERROR] setdestination failed — is the volume APFS/HFS+ and writable?"
+        exit 1
+    fi
+    exit 0
+fi
+
+# ── Run-History Report (meister report) ──
+if [ "${1:-}" = "report" ]; then
+    _N="${2:-10}"
+    case "$_N" in *[!0-9]*) echo "Usage: meister report [N]"; exit 1 ;; esac
+    _hist="$MEISTER_DIR/history.log"
+    [ -f "$_hist" ] || { echo "  No history yet ($_hist)"; exit 0; }
+    echo -e "\033[1;34m  MEISTER REPORT — last ${_N} runs\033[0m"
+    echo ""
+    printf '  %-19s %9s %4s %4s %5s %4s %5s  %s\n' "Date" "Duration" "OK" "FIX" "WARN" "ERR" "HEAL" "Slowest modules"
+    printf '  '; printf '─%.0s' $(seq 1 76); echo ""
+    tail -n "$_N" "$_hist" | awk -F' \\| ' '{
+        ok=fix=warn=err=heal="-"
+        n=split($3, a, " ")
+        for (i=1; i<=n; i++) {
+            split(a[i], kv, ":")
+            if (kv[1]=="OK") ok=kv[2]; else if (kv[1]=="FIX") fix=kv[2]
+            else if (kv[1]=="WARN") warn=kv[2]; else if (kv[1]=="ERR") err=kv[2]
+            else if (kv[1]=="HEAL") heal=kv[2]
+        }
+        top=$4; sub(/^top: /, "", top)
+        printf "  %-19s %9s %4s %4s %5s %4s %5s  %s\n", $1, $2, ok, fix, warn, err, heal, top
+    }'
+    echo ""
+    tail -n "$_N" "$_hist" | awk -F' \\| ' '
+    function dur2s(d,   m, s) {
+        if (match(d, /^[0-9]+m/)) { m = substr(d, 1, RLENGTH-1) + 0 }
+        if (match(d, /[0-9]+s$/)) { s = substr(d, RSTART, RLENGTH-1) + 0 }
+        return m*60 + s
+    }
+    {
+        runs++; secs = dur2s($2); total += secs
+        if (secs > maxs) { maxs = secs; maxd = $1 }
+        n = split($3, a, " ")
+        for (i=1; i<=n; i++) { split(a[i], kv, ":"); if (kv[1]=="ERR") errs += kv[2] }
+    }
+    END {
+        if (!runs) exit
+        printf "  Runs: %d   Avg duration: %dm%02ds   Longest: %dm%02ds (%s)   Total errors: %d\n", \
+            runs, int(total/runs/60), int(total/runs)%60, int(maxs/60), maxs%60, maxd, errs
+    }'
+    exit 0
+fi
+
 if [ "${1:-}" = "free" ]; then
     echo -e "\033[1;34m  MEISTER FREE — Free up RAM & reset UI\033[0m"
     echo ""
@@ -6109,6 +6344,9 @@ TOOLS:
   meister certs [host] SSL certificate checker
   meister thermal [N]  Live temperature & fan monitor (default: 2s)
   meister speed        Download/upload speed test
+  meister report [N]   Run-history report from history.log (default: last 10)
+  meister touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
+  meister backup [--now]   Time Machine status; set up destination if none
 
 APP MANAGEMENT:
   meister remove <App> [--dry-run] [--purge] [-y]
