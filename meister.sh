@@ -3,9 +3,21 @@
 # ==============================================================================
 # meister.sh
 #
-# Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.26
-# Date: 2026-07-12
+# MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
+# Version: 6.0
+# Date: 2026-07-15
+#
+# NEW in v6.0 — "MeisterSiri": Ollama fully replaced by Apple Intelligence
+#  - AI backend is now the on-device FoundationModels model (Apple Intelligence):
+#    no server, no model download, no ~18 GB RAM, ~0 cold-start. Works offline.
+#  - meister explain / meister ai / AI-Heal all run on-device via a tiny Swift
+#    helper (lazy-compiled + cached in ~/.meister/meister-fm).
+#  - AI-Heal now runs behind an ALLOWLIST executor: the model output is executed
+#    only if it is a single simple command with an allowlisted verb and no shell
+#    metacharacters / sudo / rm / chmod. Prompt-based "never sudo" is not trusted.
+#  - DELETED: the entire Ollama subsystem (server lifecycle, model pull/cleanup,
+#    module_ollama, PERF_CLEAN_OLLAMA) — ~150 references removed.
+#  - Requires macOS 26+, Apple Silicon, Apple Intelligence enabled + Xcode CLT.
 #
 # NEW in v5.26 — tcc-clean honesty:
 #  - meister tcc-clean --do now reports the REAL sqlite3 error (was hidden
@@ -24,7 +36,7 @@
 #    each run and shows what changed since last time (new autostart = flagged)
 #  - meister undo [--do|--list] — reverts the last run's REVERSIBLE actions
 #    from an undo journal (e.g. deleted orphan prefs restored from backup)
-#  - meister explain <text> — Ollama explains a warning/log line in plain German
+#  - meister explain <text> — Apple Intelligence explains a warning/log line in plain German
 #    (no arg = explains the last WARN/ERROR from the log)
 #  - meister fleet — aggregates score/status of several Macs over SSH
 #    (FLEET_HOSTS in ~/.meister/config; read-only, key-based SSH)
@@ -35,9 +47,9 @@
 #  - end-of-run module ledger: ✓ ok / ↻ fixed / ⚠ warned / ✗ failed + duration
 #  AI-Healer (emphasized):
 #  - Learned-Fixes: AI fixes confirmed by a module retest are remembered
-#    (~/.meister/learned_fixes) and tried before asking Ollama again
+#    (~/.meister/learned_fixes) and tried before asking Apple Intelligence again
 #  - iterative healing: 2nd AI round is told what round 1 tried
-#  - meister ai: on-demand AI system diagnosis (read-only, local Ollama)
+#  - meister ai: on-demand AI system diagnosis (read-only, on-device Apple Intelligence)
 #  - report shows a dedicated ⚕ SELF-HEALING section
 #  New module:
 #  - Dev Updates (topgrade): npm -g, pipx, pip-report, rustup, cargo-update,
@@ -133,9 +145,9 @@
 #    manifest.txt driven — auto-detects configs via `meister scan`
 #
 # NEW in v1.0:
-#  - AI-Heal: Ollama as fallback when known-fix fails
-#    (Module failed → Known fix? → no → Ask Ollama → Execute fix → Retry)
-#    Safety check blocks dangerous commands (rm -rf /, mkfs, dd, etc.)
+#  - AI-Heal: Apple Intelligence as fallback when known-fix fails
+#    (Module failed → Known fix? → no → Ask Apple Intelligence → Allowlist gate → Execute → Retry)
+#    Allowlist executor: only allowlisted verbs, no metacharacters, no sudo/rm/chmod
 #  - REMOVED: Git backup to iCloud (iCloud + .git = sync conflicts, GitHub is the backup)
 #
 # v0.09 (Elon Algorithm Cleanup):
@@ -205,10 +217,10 @@ LOGFILE="$MEISTER_DIR/meister.log"
 LOCKFILE="$MEISTER_DIR/meister.lock"
 DISK_USAGE_THRESHOLD=80
 LARGE_FILE_SIZE_MB=1000
-OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3-coder:30b}"
-OLLAMA_FALLBACK_MODEL="llama3:latest"
-OLLAMA_ENABLED=true
+# Apple Intelligence (FoundationModels) — on-device LLM, replaces Ollama (MeisterSiri)
+FM_ENABLED=true
+FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
+FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
 NET_CHECK_HOSTS="google.com apple.com cloudflare.com"
 
 # Fix #78: Deep Clean Config-Gating (via ~/.meister/config steuerbar)
@@ -220,8 +232,6 @@ CLEAN_FONT_CACHE=true         # Font cache + QuickLook cache
 # Fix #93: macOS Performance-Optimization (via ~/.meister/config steuerbar)
 PERF_SPOTLIGHT_EXCLUDE=true    # Exclude dev directories from Spotlight
 PERF_DISABLE_AGENTS=true       # Disable unnecessary user LaunchAgents
-PERF_CLEAN_OLLAMA=true         # Remove unused Ollama models
-OLLAMA_KEEP_MODELS="qwen3-coder:30b llama3.2:latest"  # Models to keep
 
 # Spotlight Fix (automatic on every run)
 SPOTLIGHT_FIX_ENABLED=true         # Spotlight diagnosis and repair
@@ -264,12 +274,8 @@ PERF_DISABLE_AGENT_PATTERNS="com.google.GoogleUpdater com.google.keystone com.ma
 # Benannte Konstanten (Fix #40)
 LOG_MAX_SIZE=1048576          # 1MB - Log rotation threshold
 LOG_GENERATIONS=3             # Anzahl rotierter Logs
-OLLAMA_STARTUP_WAIT=15        # seconds waiting for Ollama server
 LOG_CAPTURE_LINES=50          # Zeilen for Erroranalyse from Log
 DISK_CRITICAL_THRESHOLD=95    # Percent - emergency cleanup threshold
-
-# Fix #141: Track whether Meister started Ollama itself
-OLLAMA_STARTED_BY_US=false
 
 # Fix #144: Auto-Detect Schwellwerte (via ~/.meister/config steuerbar)
 # Security Suite Konfiguration
@@ -291,9 +297,9 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS PERF_CLEAN_OLLAMA SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA "
+    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA "
     _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
-    _STR_KEYS=" OLLAMA_MODEL OLLAMA_FALLBACK_MODEL OLLAMA_URL NET_CHECK_HOSTS OLLAMA_KEEP_MODELS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
+    _STR_KEYS=" NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
@@ -323,8 +329,6 @@ declare -a REPORT_WARNINGS
 declare -a REPORT_ERRORS
 SCRIPT_START_TIME=$(date +%s)
 
-# Fix #84/#89: Cached values (single call, saves repeated forks)
-_OLLAMA_LIST_CACHE=""
 
 MODULE_STEP=0
 MODULE_TOTAL=0
@@ -523,32 +527,10 @@ release_lock() {
     rm -f "$LOCKFILE" 2>/dev/null
 }
 
-# Fix #141: Ollama stop if started by Meister
-shutdown_ollama() {
-    if $OLLAMA_STARTED_BY_US; then
-        log INFO "Stopping Ollama (started by Meister)..."
-        pkill -f "ollama serve" 2>/dev/null
-        # Kurz warten and checking ob stopped
-        local w=0
-        while [ $w -lt 5 ] && pgrep -f "ollama serve" >/dev/null 2>&1; do
-            sleep 1
-            w=$((w + 1))
-        done
-        if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
-            log FIX "   Ollama server stopped (RAM freed)"
-        else
-            log WARN "   Failed to stop Ollama server"
-        fi
-        OLLAMA_STARTED_BY_US=false
-    fi
-}
-
 # Fix #35: Vereinheitlichter Trap for INT/TERM/EXIT
 cleanup() {
     if $INTERRUPTED; then return; fi
     INTERRUPTED=true
-    # Fix #141: Ollama stop before we clean up
-    shutdown_ollama 2>/dev/null
     # Bei Signal (not normalem Exit) Report fromgeben
     if [ -n "$CLEANUP_SIGNAL" ]; then
         echo ""
@@ -673,107 +655,87 @@ trap 'CLEANUP_SIGNAL=TERM; stop_bw_monitor; cleanup' TERM
 trap 'stop_bw_monitor; cleanup' EXIT
 
 #############################
-# 3. OLLAMA SELF-HEALING
+# 3. APPLE INTELLIGENCE (FoundationModels) — replaces Ollama
 #############################
+# On-device LLM via a tiny Swift helper. No server, no model download, no extra
+# RAM (the model is resident in the OS). The helper is lazy-compiled once and
+# cached in ~/.meister; recompiled only when its embedded source changes.
 
-ollama_available() {
-    [ "$OLLAMA_ENABLED" = "true" ] && curl -sf --max-time 5 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1
+# Embedded helper source, kept in a function so the heredoc stays verbatim.
+_fm_helper_source() {
+    cat <<'SWIFT_EOF'
+import FoundationModels
+import Foundation
+let args = Array(CommandLine.arguments.dropFirst())
+if args.first == "--check" {
+    if case .available = SystemLanguageModel.default.availability { exit(0) }
+    exit(1)
+}
+guard case .available = SystemLanguageModel.default.availability else {
+    FileHandle.standardError.write("unavailable\n".data(using: .utf8)!); exit(1)
+}
+let prompt = args.isEmpty
+    ? (String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? "")
+    : args.joined(separator: " ")
+let sem = DispatchSemaphore(value: 0)
+var code: Int32 = 0
+Task {
+    do { let r = try await LanguageModelSession().respond(to: prompt); print(r.content) }
+    catch { FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!); code = 1 }
+    sem.signal()
+}
+sem.wait()
+exit(code)
+SWIFT_EOF
 }
 
-# Fix #41: Central Ollama startingr (replaces duplicate code in module_ollama + main)
-ensure_ollama_running() {
-    local context="${1:-}"  # optional context for log messages
-    if ollama_available; then
-        return 0
-    fi
-    if ! command_exists ollama; then
-        return 1
-    fi
-    log WARN "${context}Ollama offline - starting server..."
-    ollama serve &>/dev/null &
-    local ollama_pid=$!
-    local wait_count=0
-    while [ $wait_count -lt "$OLLAMA_STARTUP_WAIT" ]; do
-        sleep 1
-        wait_count=$((wait_count + 1))
-        if curl -sf --max-time 2 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
-            break
-        fi
-        [ $((wait_count % 5)) -eq 0 ] && log STEP "${context}   Waiting for Ollama server... (${wait_count}s)"
-    done
-    if ollama_available; then
-        log FIX "${context}Ollama server started (after ${wait_count}s)"
-        OLLAMA_ENABLED=true
-        OLLAMA_STARTED_BY_US=true  # Fix #141: Remember that we started Ollama
-        return 0
-    else
-        log WARN "${context}Ollama server not responding after ${OLLAMA_STARTUP_WAIT}s"
-        if kill -0 "$ollama_pid" 2>/dev/null; then
-            log STEP "${context}   Process running (PID: $ollama_pid) but API not reachable"
-        else
-            log WARN "${context}   Ollama process terminated immediately"
-            local ollama_log="$HOME/.ollama/logs/server.log"
-            if [ -f "$ollama_log" ]; then
-                log STEP "${context}   Last log lines:"
-                tail -5 "$ollama_log" 2>/dev/null | while IFS= read -r line; do
-                    log STEP "${context}     $line"
-                done
-            fi
-        fi
-        OLLAMA_ENABLED=false
-        return 1
-    fi
-}
-
-# Fix #45: Model-Verfuegbarkeit checking, Auto-Pull or Fallback
-ensure_ollama_model() {
-    if ! ollama_available; then return 1; fi
-    local model="$OLLAMA_MODEL"
-    # Model name without tag for grep (e.g. "qwen3-coder" from "qwen3-coder:30b")
-    if ollama_list_cached | awk 'NR>1 {print $1}' | grep -q "^${model}$"; then
-        log STEP "   Model $model available"
-        return 0
-    fi
-    # Model not present - versuche Auto-Pull
-    log WARN "   Model $model not locally available, starting pull..."
-    if ollama pull "$model" 2>/dev/null; then
-        ollama_list_invalidate
-        log FIX "   Model $model successfully downloaded"
-        report_add FIX "Ollama: Model $model auto-pulled"
-        return 0
-    fi
-    # Pull failed - Fallback-Model checking
-    if [ -n "$OLLAMA_FALLBACK_MODEL" ] && [ "$OLLAMA_FALLBACK_MODEL" != "$model" ]; then
-        if ollama_list_cached | awk 'NR>1 {print $1}' | grep -q "^${OLLAMA_FALLBACK_MODEL}$"; then
-            log WARN "   Fallback to $OLLAMA_FALLBACK_MODEL (instead of $model)"
-            OLLAMA_MODEL="$OLLAMA_FALLBACK_MODEL"
-            log STEP "   Ollama: Fallback to $OLLAMA_FALLBACK_MODEL"
-            return 0
+# Compile the helper if missing or its source changed. Sets FM_ENABLED=false on
+# any failure (no swiftc, compile error) so callers degrade gracefully.
+ensure_fm_helper() {
+    [ "$FM_ENABLED" = "true" ] || return 1
+    command_exists xcrun || { FM_ENABLED=false; return 1; }
+    mkdir -p "$MEISTER_DIR"
+    local want; want=$(_fm_helper_source)
+    if [ ! -x "$FM_HELPER" ] || [ "$(cat "$FM_HELPER_SRC" 2>/dev/null)" != "$want" ]; then
+        printf '%s\n' "$want" > "$FM_HELPER_SRC"
+        if ! xcrun swiftc -O "$FM_HELPER_SRC" -o "$FM_HELPER" 2>/dev/null; then
+            log WARN "Apple Intelligence helper compile failed (needs Xcode CLT + macOS 26+)"
+            FM_ENABLED=false
+            return 1
         fi
     fi
-    # Last Versuch: erstes availablees Model nehmen
-    local first_model=$(ollama_list_cached | awk 'NR==2 {print $1}')
-    if [ -n "$first_model" ]; then
-        log WARN "   Fallback to erstes availablees Model: $first_model"
-        OLLAMA_MODEL="$first_model"
-        log STEP "   Ollama: Fallback to $first_model"
-        return 0
-    fi
-    log ERROR "   No Ollama model available"
-    OLLAMA_ENABLED=false
-    return 1
+    return 0
 }
 
-# Fix #89: ollama list gecacht (wird only 1x abgefragt)
-ollama_list_cached() {
-    if [ -z "$_OLLAMA_LIST_CACHE" ]; then
-        _OLLAMA_LIST_CACHE=$(ollama list 2>/dev/null)
-    fi
-    echo "$_OLLAMA_LIST_CACHE"
+# True if the on-device model is usable right now.
+fm_available() {
+    ensure_fm_helper || return 1
+    "$FM_HELPER" --check 2>/dev/null
 }
-# Cache invalidieren (z.B. after pull)
-ollama_list_invalidate() {
-    _OLLAMA_LIST_CACHE=""
+
+# Query the model. $1 = prompt. Prints the response (plain text, no JSON parse).
+fm_query() {
+    ensure_fm_helper || return 1
+    printf '%s' "$1" | "$FM_HELPER" 2>/dev/null
+}
+
+# AI-Heal allowlist executor. The model's output is EXECUTED, so safety must NOT
+# depend on the prompt — "never sudo" is unreliable (the on-device model emitted
+# `sudo chmod -R +w /System/Volumes/Data` in testing). A command runs ONLY if it
+# is a single, simple invocation: no shell metacharacters (; & | < > $ ` \), no
+# sudo/rm/chmod/chown/dd/mkfs, and its verb is on the allowlist. Anything else is
+# rejected → no-op (AI-Heal then just reports the failure, as it did pre-AI).
+FM_HEAL_ALLOW=" killall pkill qlmanage mdutil mdimport dscacheutil atsutil defaults launchctl lsregister tccutil purge fc-cache dot_clean "
+heal_command_allowed() {
+    local cmd="$1"
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"; cmd="${cmd%"${cmd##*[![:space:]]}"}"
+    [ -z "$cmd" ] && return 1
+    case "$cmd" in
+        *sudo*|*';'*|*'&'*|*'|'*|*'>'*|*'<'*|*'$'*|*'`'*|*'\'*) return 1 ;;
+        'rm '*|*' rm '*|*chmod*|*chown*|'dd '*|*' dd '*|*mkfs*|*'-rf'*) return 1 ;;
+    esac
+    local verb="${cmd%%[[:space:]]*}"; verb="${verb##*/}"
+    case "$FM_HEAL_ALLOW" in *" $verb "*) return 0 ;; *) return 1 ;; esac
 }
 
 # Heal telemetry: append to ~/.meister/heal.log
@@ -787,7 +749,7 @@ log_heal_event() {
 }
 
 # v5.24: Learned-Fixes — AI fixes that worked once are remembered per module
-# and tried BEFORE asking Ollama again (self-healing that gets smarter).
+# and tried BEFORE asking Apple Intelligence again (self-healing that gets smarter).
 # Format: module<TAB>command, one line each, newest wins.
 try_learned_fix() {
     local module_name="$1"
@@ -796,19 +758,27 @@ try_learned_fix() {
     local cmd
     cmd=$(awk -F'\t' -v m="$module_name" '$1 == m {c=$2} END {if (c) print c}' "$learned")
     [ -z "$cmd" ] && return 1
+    # Cached commands are executed too — gate them through the same allowlist so a
+    # stale pre-Apple-Intelligence entry can never run an unsafe command.
+    if ! heal_command_allowed "$cmd"; then
+        grep -v "^${module_name}$(printf '\t')" "$learned" > "$learned.tmp" 2>/dev/null
+        mv "$learned.tmp" "$learned"
+        return 1
+    fi
     log HEAL "Learned-Fix: trying remembered fix for $module_name: $cmd"
     if $DRY_RUN; then log STEP "   [DRY-RUN] Would execute: $cmd"; return 0; fi
-    if timeout 30 bash -o pipefail -c "$cmd" >/dev/null 2>&1; then
+    read -ra _lf_argv <<< "$cmd"
+    if timeout 30 "${_lf_argv[@]}" >/dev/null 2>&1; then
         log_heal_event "learned-fix" "$module_name" "applied" "$cmd"
         return 0
     fi
-    # stopped working → forget it, fall through to Ollama.
+    # stopped working → forget it, fall through to AI-Heal.
     # NB: no && on grep — BSD grep -v exits 1 when it selects zero lines
     # (i.e. when this module's entry is the ONLY line), which silently
     # skipped the mv and kept the stale fix forever.
     grep -v "^${module_name}$(printf '\t')" "$learned" > "$learned.tmp" 2>/dev/null
     mv "$learned.tmp" "$learned"
-    log HEAL "Learned-Fix failed — forgotten, asking Ollama fresh"
+    log HEAL "Learned-Fix failed — forgotten, asking Apple Intelligence fresh"
     return 1
 }
 
@@ -824,7 +794,7 @@ remember_fix() {
     mv "$learned.tmp" "$learned"
 }
 
-# AI-Heal: Ollama fallback when known_fix() fails.
+# AI-Heal: Apple Intelligence fallback when known_fix() fails.
 # $3 (optional): a previously tried command that did NOT fix it — the model
 # is told to take a different approach (iterative healing, v5.24).
 AI_LAST_CMD=""
@@ -833,9 +803,9 @@ ai_heal() {
     local error_output="$2"
     local prev_attempt="${3:-}"
 
-    if ! ollama_available; then return 1; fi
+    if ! fm_available; then return 1; fi
 
-    log HEAL "AI-Heal: Asking Ollama for fix for $module_name..."
+    log HEAL "AI-Heal: Asking Apple Intelligence for fix for $module_name..."
     local retry_hint=""
     [ -n "$prev_attempt" ] && retry_hint="
 A previous suggestion was already executed and did NOT fix it: $prev_attempt
@@ -845,34 +815,9 @@ Error: $error_output${retry_hint}
 Reply ONLY with a single shell command that fixes the problem. No explanation, no markdown, just the command.
 Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placeholders like /path/to or <file> — use only real absolute paths that appear in the error above. If no such fix is possible, reply with: NO_FIX"
 
-    # Build request body (jq when available — handles all JSON escapes correctly)
-    local request_body
-    if command_exists jq; then
-        request_body=$(jq -nc --arg model "$OLLAMA_MODEL" --arg prompt "$prompt" \
-            '{model:$model, prompt:$prompt, stream:false}')
-    else
-        request_body=$(printf '{"model":"%s","prompt":"%s","stream":false}' \
-            "$OLLAMA_MODEL" \
-            "$(printf '%s' "$prompt" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')")
-    fi
-
-    local raw_response
-    raw_response=$(curl -sf --max-time 30 "${OLLAMA_URL}/api/generate" \
-        -d "$request_body" 2>/dev/null)
-
-    # Parse .response — must decode \uXXXX, \n, \t, \", \\ correctly.
-    # Bug history: a sed-only parser left && literal, so AI-Heal
-    # ran `xcode-select --reset && ...` which xcode-select rejected.
+    # On-device model returns plain text (no JSON envelope to parse).
     local ai_response
-    if command_exists jq; then
-        ai_response=$(printf '%s' "$raw_response" | jq -r '.response // ""' 2>/dev/null | head -3)
-    else
-        # Fallback: perl is always present on macOS and handles full JSON escapes
-        ai_response=$(printf '%s' "$raw_response" \
-            | perl -nle 'print $1 if /"response":"((?:[^"\\]|\\.)*)"/' \
-            | perl -CSD -pe 's/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge; s/\\n/\n/g; s/\\t/\t/g; s/\\r/\r/g; s/\\"/"/g; s/\\\\/\\/g' \
-            | head -3)
-    fi
+    ai_response=$(fm_query "$prompt" | head -3)
 
     # Strip markdown fences/backticks (models wrap commands despite the prompt)
     ai_response=$(printf '%s\n' "$ai_response" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
@@ -883,19 +828,11 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
         return 1
     fi
 
-    # Reject placeholder commands — Ollama has answered with the literal
+    # Reject placeholder commands — the model has answered with the literal
     # `/path/to/check` before, which then really ran (see INSIGHTS 2026-07-04 #1).
     if echo "$ai_response" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'; then
         log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
         log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
-        return 1
-    fi
-
-    # Reject responses that still contain raw JSON unicode escapes — means
-    # the parser above failed, executing them produces garbage like &.
-    if echo "$ai_response" | grep -qE '\\u[0-9a-fA-F]{4}'; then
-        log WARN "AI-Heal: Malformed response (unicode escapes leaked) — skipping"
-        log_heal_event "ai-heal" "$module_name" "malformed" "$ai_response"
         return 1
     fi
 
@@ -920,6 +857,15 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
         return 1
     fi
 
+    # Decisive gate: the command is EXECUTED, so it must pass the allowlist —
+    # a single simple invocation, allowlisted verb, no shell metacharacters, no
+    # sudo/rm/chmod. This does not trust the prompt; see heal_command_allowed.
+    if ! heal_command_allowed "$ai_response"; then
+        log WARN "AI-Heal: Command not allowlisted — rejected: $ai_response"
+        log_heal_event "ai-heal" "$module_name" "rejected-allowlist" "$ai_response"
+        return 1
+    fi
+
     log HEAL "AI-Heal suggestion: $ai_response"
 
     if $DRY_RUN; then
@@ -927,11 +873,13 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
         return 0
     fi
 
-    # Execute with timeout. pipefail is essential: `find /bad/path | xargs rm -f`
-    # otherwise reports exit 0 (xargs succeeds on empty input) and masks the failure.
-    local ai_fix_output
-    ai_fix_output=$(timeout 30 bash -o pipefail -c "$ai_response" 2>&1)
-    local ai_rc=$?
+    # Execute WITHOUT a shell (word-split into an argv). heal_command_allowed has
+    # already guaranteed there are no metacharacters, so this cannot chain,
+    # redirect, or substitute — the verb runs with its literal arguments only.
+    local ai_fix_output ai_rc
+    read -ra _ai_argv <<< "$ai_response"
+    ai_fix_output=$(timeout 30 "${_ai_argv[@]}" 2>&1)
+    ai_rc=$?
 
     if [ $ai_rc -eq 0 ]; then
         log FIX "AI-Heal: Command successful"
@@ -949,7 +897,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     fi
 }
 
-# Known-Fix Patterns: fast fixes without Ollama
+# Known-Fix Patterns: fast fixes without the AI model
 known_fix() {
     local module_name="$1"
     local error_output="$2"
@@ -1036,7 +984,7 @@ run_module_safe() {
         [ $rc -eq 0 ] && report_add FIX "$module_name via Known-Fix repaired"
     fi
 
-    # v5.24: Learned-Fix — a remembered AI fix that worked before, no Ollama call
+    # v5.24: Learned-Fix — a remembered AI fix that worked before, no model call
     if [ $rc -ne 0 ] && try_learned_fix "$module_name"; then
         log HEAL "Learned-Fix applied, retrying..."
         sleep 1
@@ -1048,7 +996,7 @@ run_module_safe() {
     # AI-Heal Fallback: up to 2 rounds — round 2 tells the model what round 1
     # tried, so it takes a different approach instead of repeating itself.
     local ai_round=1 last_ai_cmd=""
-    while [ $rc -ne 0 ] && $OLLAMA_ENABLED && [ $ai_round -le 2 ]; do
+    while [ $rc -ne 0 ] && $FM_ENABLED && [ $ai_round -le 2 ]; do
         # LATEST lines of the module window (tail, not head) — round 2 must see
         # the retry's fresh error, not the same first-50 lines as round 1
         module_output=$(tail -n +$((log_lines_before + 1)) "$LOGFILE" 2>/dev/null | tail -"$LOG_CAPTURE_LINES")
@@ -1084,7 +1032,7 @@ run_module_safe() {
 check_net() {
     log INFO "Checking Network..."
     # Fix #114: Parallle Ping-Checks instead of sequentiell (bis 6s gespart at Error)
-    # Fix #138: Nur Ping-PIDs abwarten, not ollama serve & (haengt sonst endlos)
+    # Fix #138: Nur Ping-PIDs abwarten (haengt sonst endlos bei Hintergrund-Jobs)
     local _net_ok_file _ping_pids=""
     _net_ok_file=$(mktemp)
     rm -f "$_net_ok_file"
@@ -1512,65 +1460,6 @@ module_mas() {
             report_add ERROR "MAS Upgrade failed"
         fi
     fi
-}
-
-# ── OLLAMA (Fix #5: Subshell-Counter-Bug) ──
-
-module_ollama() {
-    log INFO "Checking Ollama..."
-
-    if ! command_exists ollama; then
-        if command_exists brew && brew list --cask ollama &>/dev/null; then
-            ensure_tool "ollama" "ollama" "--cask"
-        else
-            log INFO "   Ollama not installed. Skipping."
-            return 0
-        fi
-    fi
-
-    if ! command_exists ollama; then return 0; fi
-
-    # Fix #41: Use central startingr
-    if ollama_available; then
-        log INFO "   Ollama server running"
-    elif ensure_ollama_running "   "; then
-        report_add FIX "Ollama server auto-started"
-    else
-        log STEP "   Ollama-Server offline"
-    fi
-
-    local models=$(ollama_list_cached | awk 'NR>1 {print $1}')
-    if [ -z "$models" ]; then
-        log INFO "   No Ollama-models installed"
-        return 0
-    fi
-
-    local model_count=$(( $(echo "$models" | wc -l) ))
-    log INFO "   ${model_count} models found"
-
-    # Fix #5: No Pipe, no Subshell-Problem
-    local updated=0
-    local failed=0
-    for model in $models; do
-        log INFO "   Pulling: $model"
-        local pull_output
-        pull_output=$(run_or_dry ollama pull "$model" 2>&1)
-        local pull_rc=$?
-        if [ $pull_rc -eq 0 ]; then
-            updated=$((updated + 1))
-            log STEP "     OK"
-        else
-            failed=$((failed + 1))
-            log WARN "   Pull failed: $model"
-            [ -n "$pull_output" ] && log STEP "     $(echo "$pull_output" | tail -1)"
-        fi
-    done
-
-    [ $updated -gt 0 ] && ollama_list_invalidate
-    log INFO "   ${updated}/${model_count} models updated"
-    [ $failed -gt 0 ] && log WARN "   ${failed} Pulls failed"
-    report_add FIX "Updated $updated/$model_count Ollama models"
-
 }
 
 # ── UNIVERSAL UPDATES (v5.24, topgrade-style) ──
@@ -3491,54 +3380,6 @@ module_performance() {
         log STEP "   [7/8] LaunchAgents: skipped (Config)"
     fi
 
-    # ── [8/8] Ollama Model Cleanup ──
-    if $PERF_CLEAN_OLLAMA && command_exists ollama; then
-        log STEP "   [8/8] Ollama Model Cleanup..."
-        local ollama_was_running=false
-        ollama_available && ollama_was_running=true
-
-        # Ensure Ollama is running for rm
-        if ! $ollama_was_running; then
-            ollama serve &>/dev/null &
-            sleep 3
-        fi
-
-        if ollama_available; then
-            local installed_models=$(ollama list 2>/dev/null | awk 'NR>1 {print $1}')
-            local removed_models=0
-            for model in $installed_models; do
-                local keep=false
-                for keeper in $OLLAMA_KEEP_MODELS; do
-                    if [ "$model" = "$keeper" ]; then
-                        keep=true
-                        break
-                    fi
-                done
-                if ! $keep; then
-                    run_or_dry ollama rm "$model"
-                    log FIX "     Ollama model removed: $model"
-                    removed_models=$((removed_models + 1))
-                else
-                    log STEP "     Keeping: $model"
-                fi
-            done
-            # If Ollama was only temporarily started, stop it again
-            if ! $ollama_was_running; then
-                pkill ollama 2>/dev/null
-                log STEP "     Ollama server stopped again (RAM freed)"
-            fi
-            [ "$removed_models" -gt 0 ] && {
-                report_add FIX "Ollama: ${removed_models} models removed"
-                perf_fixes=$((perf_fixes + 1))
-                ollama_list_invalidate
-            }
-        else
-            log WARN "   Ollama-Server unreachable - Cleanup skipped"
-        fi
-    else
-        log STEP "   [8/8] Ollama Cleanup: skipped (Config/not installed)"
-    fi
-
     # ── Summary ──
     log INFO "   Performance: ${perf_fixes} optimizations, ${perf_warns} recommendations"
     [ "$perf_fixes" -gt 0 ] && report_add FIX "Performance: ${perf_fixes} optimizations applied"
@@ -5018,12 +4859,10 @@ health_dashboard() {
     echo -e "\n${MAGENTA}═══════════════════════════════════════${NC}"
     echo -e "${MAGENTA}  Self-Healing Status (v1.0)${NC}"
     echo -e "${MAGENTA}═══════════════════════════════════════${NC}"
-    if ollama_available; then
-        echo -e "  Ollama:  ${GREEN}online${NC} ($OLLAMA_MODEL)"
-        local model_count=$(( $(ollama_list_cached | awk 'NR>1' | wc -l) ))
-        echo -e "  Models: ${model_count}"
+    if fm_available; then
+        echo -e "  AI:      ${GREEN}online${NC} (Apple Intelligence, on-device)"
     else
-        echo -e "  Ollama:  ${RED}offline${NC}"
+        echo -e "  AI:      ${RED}offline${NC} (Apple Intelligence unavailable)"
     fi
     echo -e "  Disk:    $(df -h / | awk 'NR==2 {print $5}') used ($(df -h / | awk 'NR==2 {print $4}') free)"
     local pc=$(( $(ls -1 "$MEISTER_DIR/patches/" 2>/dev/null | wc -l) ))
@@ -6845,7 +6684,7 @@ EOF
     exit 0
 fi
 
-# ── Explain (meister explain <text>) — Ollama erklaert eine Warnung ──
+# ── Explain (meister explain <text>) — Apple Intelligence erklaert eine Warnung ──
 if [ "${1:-}" = "explain" ]; then
     shift
     _EX_TEXT="$*"
@@ -6861,28 +6700,16 @@ if [ "${1:-}" = "explain" ]; then
     echo ""
     echo "  Meldung: $_EX_TEXT"
     echo ""
-    if ! ollama_available && ! ensure_ollama_running ""; then
-        echo "  Ollama nicht erreichbar — starte mit: ollama serve"
+    if ! fm_available; then
+        echo "  Apple Intelligence nicht verfügbar — in Systemeinstellungen aktivieren (macOS 26+, Apple Silicon)."
         exit 1
     fi
     _EX_PROMPT="Erklaere diese macOS-Wartungsmeldung einem technisch interessierten Laien auf Deutsch:
 \"$_EX_TEXT\"
 In 3 kurzen Absaetzen: (1) Was bedeutet das? (2) Ist es gefaehrlich/dringend? (3) Konkrete Handlung, mit Befehl falls sinnvoll. Keine Einleitung."
-    if command_exists jq; then
-        _EX_BODY=$(jq -nc --arg m "$OLLAMA_MODEL" --arg p "$_EX_PROMPT" '{model:$m, prompt:$p, stream:false}')
-    else
-        _EX_BODY=$(printf '{"model":"%s","prompt":"%s","stream":false}' "$OLLAMA_MODEL" \
-            "$(printf '%s' "$_EX_PROMPT" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')")
-    fi
-    echo "  Frage ${OLLAMA_MODEL}..."
+    echo "  Frage Apple Intelligence..."
     echo ""
-    _EX_RESP=$(curl -sf --max-time 120 "${OLLAMA_URL}/api/generate" -d "$_EX_BODY" 2>/dev/null)
-    if command_exists jq; then
-        printf '%s' "$_EX_RESP" | jq -r '.response // "keine Antwort"' | sed 's/^/  /'
-    else
-        printf '%s' "$_EX_RESP" | perl -nle 'print $1 if /"response":"((?:[^"\\]|\\.)*)"/' \
-            | perl -CSD -pe 's/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge; s/\\n/\n/g; s/\\"/"/g; s/\\\\/\\/g' | sed 's/^/  /'
-    fi
+    fm_query "$_EX_PROMPT" | sed 's/^/  /'
     echo ""
     exit 0
 fi
@@ -6921,14 +6748,14 @@ if [ "${1:-}" = "fleet" ]; then
     exit 0
 fi
 
-# ── AI System-Doktor (meister ai) — Ollama-Diagnose auf Abruf ──
-# Feeds the last run's warnings/errors + live system facts to the local
-# Ollama model and prints a prioritized diagnosis. Read-only, nothing runs.
+# ── AI System-Doktor (meister ai) — Apple-Intelligence-Diagnose auf Abruf ──
+# Feeds the last run's warnings/errors + live system facts to the on-device
+# model and prints a prioritized diagnosis. Read-only, nothing runs.
 if [ "${1:-}" = "ai" ]; then
-    echo -e "\033[1;34m  MEISTER AI — System-Diagnose (${OLLAMA_MODEL})\033[0m"
+    echo -e "\033[1;34m  MEISTER AI — System-Diagnose (Apple Intelligence)\033[0m"
     echo ""
-    if ! ollama_available && ! ensure_ollama_running ""; then
-        echo "  Ollama nicht erreichbar — starte mit: ollama serve"
+    if ! fm_available; then
+        echo "  Apple Intelligence nicht verfügbar — in Systemeinstellungen aktivieren (macOS 26+, Apple Silicon)."
         exit 1
     fi
     echo "  Sammle Systemzustand..."
@@ -6949,21 +6776,9 @@ Letzte Self-Healing-Events:
 ${_AI_HEALS:-keine}
 
 Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Kurz und praezise, keine Einleitung."
-    if command_exists jq; then
-        _AI_BODY=$(jq -nc --arg m "$OLLAMA_MODEL" --arg p "$_AI_PROMPT" '{model:$m, prompt:$p, stream:false}')
-    else
-        _AI_BODY=$(printf '{"model":"%s","prompt":"%s","stream":false}' "$OLLAMA_MODEL" \
-            "$(printf '%s' "$_AI_PROMPT" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')")
-    fi
-    echo "  Frage ${OLLAMA_MODEL}..."
+    echo "  Frage Apple Intelligence..."
     echo ""
-    _AI_RESP=$(curl -sf --max-time 120 "${OLLAMA_URL}/api/generate" -d "$_AI_BODY" 2>/dev/null)
-    if command_exists jq; then
-        printf '%s' "$_AI_RESP" | jq -r '.response // "keine Antwort"' | sed 's/^/  /'
-    else
-        printf '%s' "$_AI_RESP" | perl -nle 'print $1 if /"response":"((?:[^"\\]|\\.)*)"/' \
-            | perl -CSD -pe 's/\\u([0-9a-fA-F]{4})/chr(hex($1))/ge; s/\\n/\n/g; s/\\"/"/g; s/\\\\/\\/g' | sed 's/^/  /'
-    fi
+    fm_query "$_AI_PROMPT" | sed 's/^/  /'
     echo ""
     exit 0
 fi
@@ -7832,13 +7647,13 @@ TOOLS:
   meister score        Maintenance score 0-100 + trend history
   meister diff         What changed since the last run (apps/autostart/brew)
   meister undo [--do]  Revert the last run's reversible actions (--list)
-  meister explain <x>  Ollama explains a warning in plain language
+  meister explain <x>  Apple Intelligence explains a warning in plain language
   meister fleet        Score/status of all Macs (FLEET_HOSTS in config)
   meister touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
   meister backup [--now]   Time Machine status; set up destination if none
   meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
   meister files <x>    Who has port/file/process open (Sloth-style lsof)
-  meister ai           AI system diagnosis via local Ollama (read-only)
+  meister ai           AI system diagnosis via Apple Intelligence (on-device, read-only)
 
 SECURITY:
   meister pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
@@ -8010,7 +7825,7 @@ log STEP "   Module: XCODE=$CLEAN_XCODE TRASH=$EMPTY_TRASH SUDO=$RUN_SUDO_TASKS 
 if $SHOW_HEALTH; then health_dashboard; release_lock; exit 0; fi
 if $INSTALL_LAUNCHAGENT; then install_launchagent; release_lock; exit 0; fi
 
-# Fix #145: Get sudo FIRST - before Ollama and all modules
+# Fix #145: Get sudo FIRST - before AI and all modules
 # Prevents password prompt mid-run (e.g. during brew cask upgrade)
 if ! $DRY_RUN && $NEEDS_SUDO; then
     # Fix #161 (2026-05): seed sudo up-front via the CONTROLLING TERMINAL, not just stdin.
@@ -8038,19 +7853,16 @@ if ! $DRY_RUN && $NEEDS_SUDO; then
     fi
 fi
 
-# Fix #41: Central Ollama startingr + Fix #45: Model check
-if ollama_available || ensure_ollama_running ""; then
-    log INFO "Ollama: online (${OLLAMA_MODEL})"
-    local_models=$(ollama_list_cached | awk 'NR>1 {print $1}' | tr '\n' ', ')
-    log STEP "   Models: ${local_models:-none}"
-    ensure_ollama_model
+# Apple Intelligence readiness (lazy-compiles the on-device helper on first run)
+if fm_available; then
+    log INFO "AI: Apple Intelligence online (on-device, offline)"
 else
-    log WARN "Ollama: not available - no AI-Heal"
-    OLLAMA_ENABLED=false
+    log WARN "AI: Apple Intelligence not available - no AI-Heal"
+    FM_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance + 6 killer + 1 simfix + 1 docs order)
-MODULE_TOTAL=39
+# Modul-Anzahl berechnen (Ollama-Modul entfernt: Apple Intelligence braucht kein Modell-Management)
+MODULE_TOTAL=38
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -8065,7 +7877,6 @@ if check_net; then
     run_module_safe "Healer"         module_healer
     run_module_safe "Homebrew"       module_homebrew
     run_module_safe "App Store"      module_mas
-    run_module_safe "Ollama Models"  module_ollama
     run_module_safe "Dev Updates"    module_universal_updates
     run_module_safe "macOS System"   module_system
     run_module_safe "Cleanup"        module_cleanup
@@ -8126,9 +7937,6 @@ log_analysis
 
 # v5.25: snapshot system state for `meister diff` (skip in dry-run — no changes)
 $DRY_RUN || write_system_snapshot >/dev/null 2>&1
-
-# Fix #141: Ollama stoppen bebefore Report (damit RAM-Info im Report stimmt)
-shutdown_ollama
 
 print_report
 save_history
