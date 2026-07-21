@@ -224,8 +224,8 @@ LARGE_FILE_SIZE_MB=1000
 # ===== TWIN:AI-BACKEND (divergent — do NOT sync between twins) =====
 FM_ENABLED=true
 FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
-# ===== /TWIN:AI-BACKEND =====
 FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
+# ===== /TWIN:AI-BACKEND =====
 NET_CHECK_HOSTS="google.com apple.com cloudflare.com"
 
 # Fix #78: Deep Clean Config-Gating (via ~/.meister/config steuerbar)
