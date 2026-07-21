@@ -1,6 +1,8 @@
 #!/bin/bash
 # ===== TWIN:BRANDING (divergent — do NOT sync between twins) =====
 MEISTER_LABEL="meister v6.0 (Ollama)"
+MEISTER_AI_NAME="Ollama"
+MEISTER_AI_HINT=" — starte 'ollama serve' auf localhost:11434"
 # ===== /TWIN:BRANDING =====
 # shellcheck disable=SC2155,SC2329
 # ==============================================================================
@@ -220,11 +222,11 @@ LOGFILE="$MEISTER_DIR/meister.log"
 LOCKFILE="$MEISTER_DIR/meister.lock"
 DISK_USAGE_THRESHOLD=80
 LARGE_FILE_SIZE_MB=1000
-# Apple Intelligence (FoundationModels) — on-device LLM, replaces Ollama (MeisterSiri)
+# On-device AI backend — see the TWIN:AI-BACKEND region below.
 # ===== TWIN:AI-BACKEND (divergent — do NOT sync between twins) =====
-FM_ENABLED=true
-FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
-FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
+FM_ENABLED=true                              # generic "AI-Heal enabled" flag (shared call-sites)
+MEISTER_OLLAMA_URL="${MEISTER_OLLAMA_URL:-http://localhost:11434}"
+MEISTER_OLLAMA_MODEL="${MEISTER_OLLAMA_MODEL:-llama3.2}"
 # ===== /TWIN:AI-BACKEND =====
 NET_CHECK_HOSTS="google.com apple.com cloudflare.com"
 
@@ -660,69 +662,20 @@ trap 'CLEANUP_SIGNAL=TERM; stop_bw_monitor; cleanup' TERM
 trap 'stop_bw_monitor; cleanup' EXIT
 
 # ===== TWIN:AI-BACKEND (divergent — do NOT sync between twins) =====
-#############################
-# 3. APPLE INTELLIGENCE (FoundationModels) — replaces Ollama
-#############################
-# On-device LLM via a tiny Swift helper. No server, no model download, no extra
-# RAM (the model is resident in the OS). The helper is lazy-compiled once and
-# cached in ~/.meister; recompiled only when its embedded source changes.
-
-# Embedded helper source, kept in a function so the heredoc stays verbatim.
-_fm_helper_source() {
-    cat <<'SWIFT_EOF'
-import FoundationModels
-import Foundation
-let args = Array(CommandLine.arguments.dropFirst())
-if args.first == "--check" {
-    if case .available = SystemLanguageModel.default.availability { exit(0) }
-    exit(1)
-}
-guard case .available = SystemLanguageModel.default.availability else {
-    FileHandle.standardError.write("unavailable\n".data(using: .utf8)!); exit(1)
-}
-let prompt = args.isEmpty
-    ? (String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? "")
-    : args.joined(separator: " ")
-let sem = DispatchSemaphore(value: 0)
-var code: Int32 = 0
-Task {
-    do { let r = try await LanguageModelSession().respond(to: prompt); print(r.content) }
-    catch { FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!); code = 1 }
-    sem.signal()
-}
-sem.wait()
-exit(code)
-SWIFT_EOF
-}
-
-# Compile the helper if missing or its source changed. Sets FM_ENABLED=false on
-# any failure (no swiftc, compile error) so callers degrade gracefully.
-ensure_fm_helper() {
-    [ "$FM_ENABLED" = "true" ] || return 1
-    command_exists xcrun || { FM_ENABLED=false; return 1; }
-    mkdir -p "$MEISTER_DIR"
-    local want; want=$(_fm_helper_source)
-    if [ ! -x "$FM_HELPER" ] || [ "$(cat "$FM_HELPER_SRC" 2>/dev/null)" != "$want" ]; then
-        printf '%s\n' "$want" > "$FM_HELPER_SRC"
-        if ! xcrun swiftc -O "$FM_HELPER_SRC" -o "$FM_HELPER" 2>/dev/null; then
-            log WARN "Apple Intelligence helper compile failed (needs Xcode CLT + macOS 26+)"
-            FM_ENABLED=false
-            return 1
-        fi
-    fi
-    return 0
-}
-
-# True if the on-device model is usable right now.
+# 3. OLLAMA (local HTTP) — on-device LLM via a running `ollama serve`.
+# meister does NOT manage the server lifecycle; it only queries it.
 fm_available() {
-    ensure_fm_helper || return 1
-    "$FM_HELPER" --check 2>/dev/null
+    curl -sf --max-time 2 "$MEISTER_OLLAMA_URL/api/tags" >/dev/null 2>&1
 }
 
-# Query the model. $1 = prompt. Prints the response (plain text, no JSON parse).
+# Prompt on $1 (or stdin if $1 empty); model response on stdout, empty on error.
 fm_query() {
-    ensure_fm_helper || return 1
-    printf '%s' "$1" | "$FM_HELPER" 2>/dev/null
+    local prompt="$1"
+    [ -z "$prompt" ] && prompt="$(cat)"
+    curl -sf --max-time 120 "$MEISTER_OLLAMA_URL/api/generate" \
+        -d "$(jq -Rn --arg m "$MEISTER_OLLAMA_MODEL" --arg p "$prompt" \
+              '{model:$m, prompt:$p, stream:false}')" \
+      | jq -r '.response // empty'
 }
 # ===== /TWIN:AI-BACKEND =====
 
@@ -785,7 +738,7 @@ try_learned_fix() {
     # skipped the mv and kept the stale fix forever.
     grep -v "^${module_name}$(printf '\t')" "$learned" > "$learned.tmp" 2>/dev/null
     mv "$learned.tmp" "$learned"
-    log HEAL "Learned-Fix failed — forgotten, asking Apple Intelligence fresh"
+    log HEAL "Learned-Fix failed — forgotten, asking $MEISTER_AI_NAME fresh"
     return 1
 }
 
@@ -812,7 +765,7 @@ ai_heal() {
 
     if ! fm_available; then return 1; fi
 
-    log HEAL "AI-Heal: Asking Apple Intelligence for fix for $module_name..."
+    log HEAL "AI-Heal: Asking $MEISTER_AI_NAME for fix for $module_name..."
     local retry_hint=""
     [ -n "$prev_attempt" ] && retry_hint="
 A previous suggestion was already executed and did NOT fix it: $prev_attempt
@@ -4867,9 +4820,9 @@ health_dashboard() {
     echo -e "${MAGENTA}  Self-Healing Status (v1.0)${NC}"
     echo -e "${MAGENTA}═══════════════════════════════════════${NC}"
     if fm_available; then
-        echo -e "  AI:      ${GREEN}online${NC} (Apple Intelligence, on-device)"
+        echo -e "  AI:      ${GREEN}online${NC} ($MEISTER_AI_NAME, on-device)"
     else
-        echo -e "  AI:      ${RED}offline${NC} (Apple Intelligence unavailable)"
+        echo -e "  AI:      ${RED}offline${NC} ($MEISTER_AI_NAME unavailable)"
     fi
     echo -e "  Disk:    $(df -h / | awk 'NR==2 {print $5}') used ($(df -h / | awk 'NR==2 {print $4}') free)"
     local pc=$(( $(ls -1 "$MEISTER_DIR/patches/" 2>/dev/null | wc -l) ))
@@ -6708,13 +6661,13 @@ if [ "${1:-}" = "explain" ]; then
     echo "  Meldung: $_EX_TEXT"
     echo ""
     if ! fm_available; then
-        echo "  Apple Intelligence nicht verfügbar — in Systemeinstellungen aktivieren (macOS 26+, Apple Silicon)."
+        echo "  $MEISTER_AI_NAME nicht verfügbar$MEISTER_AI_HINT."
         exit 1
     fi
     _EX_PROMPT="Erklaere diese macOS-Wartungsmeldung einem technisch interessierten Laien auf Deutsch:
 \"$_EX_TEXT\"
 In 3 kurzen Absaetzen: (1) Was bedeutet das? (2) Ist es gefaehrlich/dringend? (3) Konkrete Handlung, mit Befehl falls sinnvoll. Keine Einleitung."
-    echo "  Frage Apple Intelligence..."
+    echo "  Frage $MEISTER_AI_NAME..."
     echo ""
     fm_query "$_EX_PROMPT" | sed 's/^/  /'
     echo ""
@@ -6759,10 +6712,10 @@ fi
 # Feeds the last run's warnings/errors + live system facts to the on-device
 # model and prints a prioritized diagnosis. Read-only, nothing runs.
 if [ "${1:-}" = "ai" ]; then
-    echo -e "\033[1;34m  MEISTER AI — System-Diagnose (Apple Intelligence)\033[0m"
+    echo -e "\033[1;34m  MEISTER AI — System-Diagnose ($MEISTER_AI_NAME)\033[0m"
     echo ""
     if ! fm_available; then
-        echo "  Apple Intelligence nicht verfügbar — in Systemeinstellungen aktivieren (macOS 26+, Apple Silicon)."
+        echo "  $MEISTER_AI_NAME nicht verfügbar$MEISTER_AI_HINT."
         exit 1
     fi
     echo "  Sammle Systemzustand..."
@@ -6783,7 +6736,7 @@ Letzte Self-Healing-Events:
 ${_AI_HEALS:-keine}
 
 Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Kurz und praezise, keine Einleitung."
-    echo "  Frage Apple Intelligence..."
+    echo "  Frage $MEISTER_AI_NAME..."
     echo ""
     fm_query "$_AI_PROMPT" | sed 's/^/  /'
     echo ""
@@ -7654,13 +7607,13 @@ TOOLS:
   meister score        Maintenance score 0-100 + trend history
   meister diff         What changed since the last run (apps/autostart/brew)
   meister undo [--do]  Revert the last run's reversible actions (--list)
-  meister explain <x>  Apple Intelligence explains a warning in plain language
+  meister explain <x>  Explains a warning in plain language (on-device AI)
   meister fleet        Score/status of all Macs (FLEET_HOSTS in config)
   meister touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
   meister backup [--now]   Time Machine status; set up destination if none
   meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
   meister files <x>    Who has port/file/process open (Sloth-style lsof)
-  meister ai           AI system diagnosis via Apple Intelligence (on-device, read-only)
+  meister ai           AI system diagnosis (on-device AI, read-only)
 
 SECURITY:
   meister pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
@@ -7862,9 +7815,9 @@ fi
 
 # Apple Intelligence readiness (lazy-compiles the on-device helper on first run)
 if fm_available; then
-    log INFO "AI: Apple Intelligence online (on-device, offline)"
+    log INFO "AI: $MEISTER_AI_NAME online (on-device, offline)"
 else
-    log WARN "AI: Apple Intelligence not available - no AI-Heal"
+    log WARN "AI: $MEISTER_AI_NAME not available - no AI-Heal"
     FM_ENABLED=false
 fi
 
