@@ -7,9 +7,11 @@ class Meister < Formula
   version "6.0"
 
   depends_on :macos
+  depends_on "jq" # meister (Ollama twin) encodes prompts as JSON
 
   def install
     bin.install "meister.sh" => "meister"
+    bin.install "meisterSiri.sh" => "meisterSiri"
     (libexec/"tools").install Dir["tools/*"]
     # Symlink tools into bin with meister- prefix
     (libexec/"tools").children.each do |tool|
@@ -20,6 +22,10 @@ class Meister < Formula
   def caveats
     <<~EOS
       meister v#{version} installed!
+
+      Two twin CLIs, same commands, different on-device AI backend:
+        meister          AI backend = Ollama (needs `ollama serve` on :11434)
+        meisterSiri      AI backend = Apple FoundationModels (needs Apple Intelligence)
 
       Maintenance:
         meister          Auto-detect maintenance
@@ -38,5 +44,6 @@ class Meister < Formula
 
   test do
     assert_match "meister", shell_output("#{bin}/meister -h 2>&1", 0)
+    assert_match "meister", shell_output("#{bin}/meisterSiri -h 2>&1", 0)
   end
 end
