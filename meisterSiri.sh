@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===== TWIN:BRANDING (divergent — do NOT sync between twins) =====
-MEISTER_LABEL="meister v6.0 (Ollama)"
+MEISTER_LABEL="meisterSiri v6.0 (Apple Intelligence)"
 # ===== /TWIN:BRANDING =====
 # shellcheck disable=SC2155,SC2329
 # ==============================================================================
