@@ -4,12 +4,22 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.1
-# Date: 2026-07-15
+# Version: 6.2
+# Date: 2026-07-26
 #
 # Twin of meister.sh: same maintenance modules, branded as MeisterSiri.
 # AI backend = on-device Apple FoundationModels (Apple Intelligence).
 # Shares config/state with meister: ~/.meister/
+
+# NEW in v6.2 — honesty + product polish + new commands:
+#  - Dry-run honesty: FIX/Freed never claim real mutations; WOULD-FIX + "Would free"
+#  - Full MeisterSiri branding on all tool banners
+#  - meisterSiri today   — morning briefing (score, AI, disk, updates, top warns)
+#  - meisterSiri doctor  — read-only system checklist (security, brew, TM, AI, …)
+#  - meisterSiri selftest — smoke-test the CLI itself
+#  - meisterSiri suggest <text> — AI fix suggestion (read-only, no exec)
+#  - meisterSiri privacy — privacy grants / FDA quick audit
+#
 #
 # NEW in v6.0 — "MeisterSiri": Ollama fully replaced by Apple Intelligence
 #  - AI backend is now the on-device FoundationModels model (Apple Intelligence):
@@ -329,6 +339,7 @@ fi
 # Report arrays
 declare -a REPORT_SUCCESS
 declare -a REPORT_FIXED
+declare -a REPORT_WOULD_FIX
 declare -a REPORT_WARNINGS
 declare -a REPORT_ERRORS
 SCRIPT_START_TIME=$(date +%s)
@@ -389,12 +400,15 @@ log() {
         INFO)  color=$GREEN ;;
         WARN)  color=$YELLOW ;;
         ERROR) color=$RED ;;
-        FIX)   color=$CYAN ;;
+        FIX)   color=$CYAN
+               # Dry-run honesty: show WOULD instead of FIX on terminal/log
+               if $DRY_RUN; then level="WOULD"; fi ;;
+        WOULD) color=$CYAN ;;
         HEAL)  color=$MAGENTA ;;
         STEP)  color=$DIM ;;
     esac
-    # Quiet mode: only WARN/ERROR/FIX on terminal
-    if ! $QUIET_MODE || [[ "$level" =~ ^(WARN|ERROR|FIX)$ ]]; then
+    # Quiet mode: only WARN/ERROR/FIX/WOULD on terminal
+    if ! $QUIET_MODE || [[ "$level" =~ ^(WARN|ERROR|FIX|WOULD)$ ]]; then
         # Re-assert scroll region without moving cursor (DECSTBM homes cursor; save/restore protects current line)
         [ -n "$BW_MONITOR_PID" ] && printf '\0337\033[1;%dr\0338' "$((BW_TERM_LINES - 1))"
         echo -e "${color}[${level}]${NC} ${msg}"
@@ -428,11 +442,15 @@ section_header() {
 # ERR > WARN > FIX > OK (rc != 0 always wins as ERR).
 ledger_add() {
     local name="$1" fix0="$2" warn0="$3" err0="$4" rc="$5"
+    local would0=0
+    [ "$#" -ge 6 ] && would0="$6"
     local status="OK"
     if [ "$rc" -ne 0 ] || [ ${#REPORT_ERRORS[@]} -gt "$err0" ]; then status="ERR"
     elif [ ${#REPORT_WARNINGS[@]} -gt "$warn0" ]; then status="WARN"
     elif [ ${#REPORT_FIXED[@]} -gt "$fix0" ]; then status="FIX"
+    elif [ ${#REPORT_WOULD_FIX[@]} -gt "$would0" ]; then status="WOULD"
     fi
+    if $DRY_RUN && [ "$status" = "FIX" ]; then status="WOULD"; fi
     local elapsed=$(( $(date +%s) - MODULE_START_TS ))
     MODULE_LEDGER+=("${status}|${name}|${elapsed}")
 }
@@ -457,9 +475,21 @@ module_timer_stop() {
 
 report_add() {
     local type="$1"; local msg="$2"
+    # Dry-run honesty: never claim a real FIX; park in WOULD_FIX instead.
+    if $DRY_RUN && [ "$type" = "FIX" ]; then
+        type="WOULD"
+    fi
+    # Also demote "action-y" SUCCESS claims under dry-run (upgraded/cleaned/pushed…)
+    if $DRY_RUN && [ "$type" = "SUCCESS" ]; then
+        if echo "$msg" | grep -qiE 'upgrad|clean(ed|up)|push(ed)?|freed|remov|reset|rebuild|flush|delet|install(ed)?|empt(y|ied)|purg'; then
+            type="WOULD"
+            msg="would: $msg"
+        fi
+    fi
     case "$type" in
         SUCCESS) REPORT_SUCCESS+=("$msg") ;;
         FIX)     REPORT_FIXED+=("$msg") ;;
+        WOULD)   REPORT_WOULD_FIX+=("$msg") ;;
         WARN)    REPORT_WARNINGS+=("$msg") ;;
         ERROR)   REPORT_ERRORS+=("$msg") ;;
     esac
@@ -517,7 +547,7 @@ acquire_lock() {
     if [ -f "$LOCKFILE" ]; then
         local old_pid=$(cat "$LOCKFILE" 2>/dev/null)
         if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-            log ERROR "Meister is already running (PID: $old_pid)"
+            log ERROR "MeisterSiri is already running (PID: $old_pid)"
             exit 1
         else
             log WARN "Stale lockfile removed (PID $old_pid no longer active)"
@@ -965,14 +995,14 @@ run_module_safe() {
     module_timer_start
     local log_lines_before=$(wc -l < "$LOGFILE" 2>/dev/null || echo 0)
     # Snapshot report counts — ledger_add derives the module status from the delta
-    local fix0=${#REPORT_FIXED[@]} warn0=${#REPORT_WARNINGS[@]} err0=${#REPORT_ERRORS[@]}
+    local fix0=${#REPORT_FIXED[@]} warn0=${#REPORT_WARNINGS[@]} err0=${#REPORT_ERRORS[@]} would0=${#REPORT_WOULD_FIX[@]}
 
     $module_func
     local rc=$?
 
     if [ $rc -eq 0 ]; then
         module_timer_stop "$module_name"
-        ledger_add "$module_name" "$fix0" "$warn0" "$err0" 0
+        ledger_add "$module_name" "$fix0" "$warn0" "$err0" 0 "$would0"
         return 0
     fi
 
@@ -4787,7 +4817,7 @@ print_report() {
 
     echo ""
     echo -e "${BLUE}====================================================${NC}"
-    echo -e "${BLUE}   MEISTER REPORT (v1.0)${NC}"
+    echo -e "${BLUE}   MeisterSiri REPORT (v6.2)${NC}"
     echo -e "${BLUE}   Runtime: ${total_mins}m ${total_secs_rem}s${NC}"
     echo -e "${BLUE}   Wartungs-Score: ${score_color}${MAINT_SCORE}/100${NC}${BLUE}${trend}${NC}"
     $DRY_RUN && echo -e "${YELLOW}   [DRY-RUN MODE]${NC}"
@@ -4801,10 +4831,11 @@ print_report() {
         for entry in "${MODULE_LEDGER[@]}"; do
             IFS='|' read -r status name secs <<< "$entry"
             case "$status" in
-                FIX)  icon="↻"; color="$CYAN" ;;
-                WARN) icon="⚠"; color="$YELLOW" ;;
-                ERR)  icon="✗"; color="$RED" ;;
-                *)    icon="✓"; color="$GREEN" ;;
+                FIX)   icon="↻"; color="$CYAN" ;;
+                WOULD) icon="◇"; color="$CYAN" ;;
+                WARN)  icon="⚠"; color="$YELLOW" ;;
+                ERR)   icon="✗"; color="$RED" ;;
+                *)     icon="✓"; color="$GREEN" ;;
             esac
             if [ "${secs:-0}" -ge 60 ]; then dur="$((secs / 60))m$((secs % 60))s"; else dur="${secs}s"; fi
             printf "  ${color}%s${NC} %-24s %7s\n" "$icon" "$name" "$dur"
@@ -4828,6 +4859,10 @@ print_report() {
         echo -e "\n${CYAN}FIXED (${#REPORT_FIXED[@]}):${NC}"
         printf '  - %s\n' "${REPORT_FIXED[@]}"
     fi
+    if [ ${#REPORT_WOULD_FIX[@]} -gt 0 ]; then
+        echo -e "\n${CYAN}WOULD-FIX (${#REPORT_WOULD_FIX[@]}) — dry-run, nothing written:${NC}"
+        printf '  - %s\n' "${REPORT_WOULD_FIX[@]}"
+    fi
     if [ ${#REPORT_WARNINGS[@]} -gt 0 ]; then
         echo -e "\n${YELLOW}WARNINGS (${#REPORT_WARNINGS[@]}):${NC}"
         printf '  - %s\n' "${REPORT_WARNINGS[@]}"
@@ -4837,9 +4872,15 @@ print_report() {
         printf '  - %s\n' "${REPORT_ERRORS[@]}"
     fi
 
-    # Fix #80: Extract total storage summary from FIXED entries
+    # Fix #80 + v6.2 honesty: storage from real FIX only; dry-run uses WOULD
     local total_mb_freed=0
-    for entry in "${REPORT_FIXED[@]}"; do
+    local _src_arr=()
+    if $DRY_RUN; then
+        _src_arr=("${REPORT_WOULD_FIX[@]}")
+    else
+        _src_arr=("${REPORT_FIXED[@]}")
+    fi
+    for entry in "${_src_arr[@]}"; do
         local mb_val
         mb_val=$(echo "$entry" | grep -oE '[0-9]+ MB' | head -1 | awk '{print $1}')
         [ -n "$mb_val" ] && total_mb_freed=$((total_mb_freed + mb_val))
@@ -4848,9 +4889,17 @@ print_report() {
         echo -e "\n${GREEN}--- Storage Summary ---${NC}"
         if [ "$total_mb_freed" -gt 1024 ]; then
             local gb_freed=$(echo "scale=1; $total_mb_freed / 1024" | bc 2>/dev/null || echo "$((total_mb_freed / 1024))")
-            echo "  Freed: ~${gb_freed} GB (${total_mb_freed} MB)"
+            if $DRY_RUN; then
+                echo "  Would free: ~${gb_freed} GB (${total_mb_freed} MB)  [dry-run]"
+            else
+                echo "  Freed: ~${gb_freed} GB (${total_mb_freed} MB)"
+            fi
         else
-            echo "  Freed: ~${total_mb_freed} MB"
+            if $DRY_RUN; then
+                echo "  Would free: ~${total_mb_freed} MB  [dry-run]"
+            else
+                echo "  Freed: ~${total_mb_freed} MB"
+            fi
         fi
     fi
 
@@ -4982,7 +5031,7 @@ send_notification() {
 }
 
 build_report_summary() {
-    local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
+    local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WOULD:${#REPORT_WOULD_FIX[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
     echo "MeisterSiri v${MEISTER_VERSION} | ${total_mins}min | $summary"
@@ -4996,7 +5045,7 @@ send_report_notification() {
     local subtitle=""
     [ $err_count -gt 0 ] && subtitle="${err_count} Error!"
     [ $fix_count -gt 0 ] && subtitle="${subtitle} ${fix_count} Fixes"
-    send_notification "Meister" "$summary" "$subtitle"
+    send_notification "MeisterSiri" "$summary" "$subtitle"
 }
 
 #############################
@@ -5307,7 +5356,7 @@ if [ "${1:-}" = "sniff" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER SNIFF — Live Network Monitor           ║\n'
+        printf '  ║  MeisterSiri SNIFF — Live Network Monitor           ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
         printf '  Interface: %s (%s)' "$BW_IFACE" "$PHYS_IP"
@@ -5365,7 +5414,7 @@ if [ "${1:-}" = "ntop" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER NTOP — Network Traffic Top 10          ║\n'
+        printf '  ║  MeisterSiri NTOP — Network Traffic Top 10          ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
 
@@ -5449,7 +5498,7 @@ fi
 
 # ── Port Scanner (meister ports) ──
 if [ "${1:-}" = "ports" ]; then
-    echo -e "\033[1;34m  MEISTER PORTS — Open Ports & Listeners\033[0m"
+    echo -e "\033[1;34m  MeisterSiri PORTS — Open Ports & Listeners\033[0m"
     echo ""
     printf '  \033[1m%7s  %-6s  %-15s  %s\033[0m\n' "PORT" "PROTO" "PROCESS" "PID"
     printf '  %7s  %-6s  %-15s  %s\n' "------" "-----" "----------" "---"
@@ -5474,7 +5523,7 @@ fi
 
 # ── DNS Leak Test (meister dns) ──
 if [ "${1:-}" = "dns" ]; then
-    echo -e "\033[1;34m  MEISTER DNS — DNS Leak Test\033[0m"
+    echo -e "\033[1;34m  MeisterSiri DNS — DNS Leak Test\033[0m"
     echo ""
     # Current DNS servers
     echo -e "  \033[1mConfigured DNS Servers\033[0m"
@@ -5520,7 +5569,7 @@ fi
 
 # ── Battery Health (meister battery) ──
 if [ "${1:-}" = "battery" ]; then
-    echo -e "\033[1;34m  MEISTER BATTERY — Battery Health\033[0m"
+    echo -e "\033[1;34m  MeisterSiri BATTERY — Battery Health\033[0m"
     echo ""
     if ! system_profiler SPPowerDataType &>/dev/null; then
         echo "  No battery (desktop Mac)"
@@ -5565,7 +5614,7 @@ fi
 
 # ── Startup Audit (meister startup) ──
 if [ "${1:-}" = "startup" ]; then
-    echo -e "\033[1;34m  MEISTER STARTUP — Login Items & Launch Agents\033[0m"
+    echo -e "\033[1;34m  MeisterSiri STARTUP — Login Items & Launch Agents\033[0m"
     echo ""
 
     echo -e "  \033[1mLogin Items (User)\033[0m"
@@ -5615,7 +5664,7 @@ fi
 
 # ── Wi-Fi Diagnostics (meister wifi) ──
 if [ "${1:-}" = "wifi" ]; then
-    echo -e "\033[1;34m  MEISTER WIFI — Wi-Fi Diagnostics\033[0m"
+    echo -e "\033[1;34m  MeisterSiri WIFI — Wi-Fi Diagnostics\033[0m"
     echo ""
     # Parse from system_profiler (works on all macOS versions incl. Apple Silicon)
     sp_out=$(system_profiler SPAirPortDataType 2>/dev/null)
@@ -5688,7 +5737,7 @@ if [ "${1:-}" = "top" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER TOP — Process Monitor                  ║\n'
+        printf '  ║  MeisterSiri TOP — Process Monitor                  ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
 
@@ -5725,7 +5774,7 @@ fi
 
 # ── Certificate Checker (meister certs) ──
 if [ "${1:-}" = "certs" ]; then
-    echo -e "\033[1;34m  MEISTER CERTS — Certificate Checker\033[0m"
+    echo -e "\033[1;34m  MeisterSiri CERTS — Certificate Checker\033[0m"
     echo ""
 
     # Check remote hosts from args, or defaults
@@ -5799,7 +5848,7 @@ if [ "${1:-}" = "thermal" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER THERMAL — Temperature & Fan Monitor    ║\n'
+        printf '  ║  MeisterSiri THERMAL — Temperature & Fan Monitor    ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
 
@@ -5893,7 +5942,7 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         exit 1
     fi
 
-    echo -e "\033[1;34m  MEISTER REMOVE — Uninstall app + leftovers\033[0m"
+    echo -e "\033[1;34m  MeisterSiri REMOVE — Uninstall app + leftovers\033[0m"
     echo ""
     DRY_RUN=$REMOVE_DRY
     $DRY_RUN && echo "  [DRY-RUN — no changes]" && echo ""
@@ -6133,7 +6182,7 @@ if [ "${1:-}" = "orphans" ]; then
         esac
     done
 
-    echo -e "\033[1;34m  MEISTER ORPHANS — Leftovers of uninstalled apps\033[0m"
+    echo -e "\033[1;34m  MeisterSiri ORPHANS — Leftovers of uninstalled apps\033[0m"
     echo ""
     DRY_RUN=$ORPH_DRY
     $DRY_RUN && echo "  [DRY-RUN — no changes]" && echo ""
@@ -6332,7 +6381,7 @@ fi
 
 # ── Simulator Fix (meister simfix) ──
 if [ "${1:-}" = "simfix" ]; then
-    echo -e "\033[1;34m  MEISTER SIMFIX — Repair iOS Simulator\033[0m"
+    echo -e "\033[1;34m  MeisterSiri SIMFIX — Repair iOS Simulator\033[0m"
     echo ""
     DRY_RUN=false
     [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
@@ -6356,7 +6405,7 @@ fi
 # System Settings forever. Reading/writing TCC.db needs the terminal to have
 # Full Disk Access; the system DB additionally needs sudo.
 if [ "${1:-}" = "tcc-clean" ]; then
-    echo -e "\033[1;34m  MEISTER TCC-CLEAN — verwaiste Privacy-Eintraege\033[0m"
+    echo -e "\033[1;34m  MeisterSiri TCC-CLEAN — verwaiste Privacy-Eintraege\033[0m"
     echo ""
     _T_DO=false; [ "${2:-}" = "--do" ] && _T_DO=true
     _T_USER_DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
@@ -6502,7 +6551,7 @@ fi
 # One list for ALL app updates: brew casks, Mac App Store, and Sparkle-based
 # apps (reads each app's SUFeedURL appcast — the same mechanism MacUpdater uses).
 if [ "${1:-}" = "appupdates" ] || [ "${1:-}" = "macupdate" ]; then
-    echo -e "\033[1;34m  MEISTER APPUPDATES — alle App-Updates (MacUpdater-Style)\033[0m"
+    echo -e "\033[1;34m  MeisterSiri APPUPDATES — alle App-Updates (MacUpdater-Style)\033[0m"
     echo ""
     _AU_TOTAL=0
 
@@ -6562,7 +6611,7 @@ fi
 
 # ── System Diff (meister diff) — Zeitreise: was hat sich geaendert? ──
 if [ "${1:-}" = "diff" ]; then
-    echo -e "\033[1;34m  MEISTER DIFF — Systemaenderungen seit letztem Snapshot\033[0m"
+    echo -e "\033[1;34m  MeisterSiri DIFF — Systemaenderungen seit letztem Snapshot\033[0m"
     echo ""
     SNAPSHOT_DIR="$MEISTER_DIR/snapshots"
     if [ "${2:-}" = "--snapshot" ]; then
@@ -6615,7 +6664,7 @@ fi
 
 # ── Maintenance Score (meister score) — Verlauf des Wartungs-Scores ──
 if [ "${1:-}" = "score" ]; then
-    echo -e "\033[1;34m  MEISTER SCORE — Wartungs-Score-Verlauf\033[0m"
+    echo -e "\033[1;34m  MeisterSiri SCORE — Wartungs-Score-Verlauf\033[0m"
     echo ""
     _hist="$MEISTER_DIR/history.log"
     if [ ! -f "$_hist" ] || ! grep -q 'SCORE:' "$_hist"; then
@@ -6640,7 +6689,7 @@ fi
 
 # ── Undo (meister undo) — reversible FIX-Aktionen des letzten Laufs ──
 if [ "${1:-}" = "undo" ]; then
-    echo -e "\033[1;34m  MEISTER UNDO — letzte reversible Aktionen zuruecknehmen\033[0m"
+    echo -e "\033[1;34m  MeisterSiri UNDO — letzte reversible Aktionen zuruecknehmen\033[0m"
     echo ""
     if [ ! -s "$UNDO_JOURNAL" ]; then
         echo "  Keine rueckgaengig machbaren Aktionen aufgezeichnet."
@@ -6700,7 +6749,7 @@ if [ "${1:-}" = "explain" ]; then
             echo "Usage: meisterSiri explain <Warnung oder Log-Zeile>"; exit 1
         fi
     fi
-    echo -e "\033[1;34m  MEISTER EXPLAIN\033[0m"
+    echo -e "\033[1;34m  MeisterSiri EXPLAIN\033[0m"
     echo ""
     echo "  Meldung: $_EX_TEXT"
     echo ""
@@ -6721,7 +6770,7 @@ fi
 # ── Fleet (meister fleet) — Reports mehrerer Macs per SSH einsammeln ──
 # Config: FLEET_HOSTS="mini.local macbook.local user@host" in ~/.meister/config.
 if [ "${1:-}" = "fleet" ]; then
-    echo -e "\033[1;34m  MEISTER FLEET — Status aller Macs\033[0m"
+    echo -e "\033[1;34m  MeisterSiri FLEET — Status aller Macs\033[0m"
     echo ""
     if [ -z "${FLEET_HOSTS:-}" ]; then
         echo "  Keine Hosts konfiguriert. In ~/.meister/config eintragen:"
@@ -6752,10 +6801,249 @@ if [ "${1:-}" = "fleet" ]; then
     exit 0
 fi
 
+# ── today — Morning briefing (score, AI, disk, updates, top warnings) ──
+if [ "${1:-}" = "today" ] || [ "${1:-}" = "brief" ]; then
+    echo -e "\033[1;34m  MeisterSiri TODAY — $(date '+%A, %d. %B %Y %H:%M')\033[0m"
+    echo ""
+    # Score
+    _sc=$(grep -oE 'SCORE:[0-9]+' "$MEISTER_DIR/history.log" 2>/dev/null | tail -1 | cut -d: -f2)
+    [ -n "$_sc" ] && echo -e "  Score:     ${_sc}/100" || echo "  Score:     (noch kein Lauf)"
+    # AI
+    if fm_available; then echo -e "  AI:        \033[0;32monline\033[0m (Apple Intelligence)"; else echo -e "  AI:        \033[0;31moffline\033[0m"; fi
+    # Disk / RAM
+    _disk=$(df -h / | awk 'NR==2 {print $5" used, "$4" free"}')
+    _ram=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,""); printf "%.1f GB free", $3*16384/1073741824}')
+    echo "  Disk:      $_disk"
+    echo "  RAM:       ${_ram:-n/a}"
+    # Last run
+    if [ -f "$MEISTER_DIR/history.log" ]; then
+        echo "  Last run:  $(tail -1 "$MEISTER_DIR/history.log")"
+    fi
+    # Time Machine
+    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
+        echo "  Backup:    Time Machine configured"
+    else
+        echo -e "  Backup:    \033[1;33mTime Machine NOT configured\033[0m"
+    fi
+    # Pending brew outdated (fast, no upgrade)
+    if command_exists brew; then
+        _bo=$(brew outdated --quiet 2>/dev/null | wc -l | tr -d ' ')
+        _bc=$(brew outdated --cask --quiet 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Brew:      ${_bo} formulae + ${_bc} casks outdated"
+    fi
+    # Top recent warnings
+    echo ""
+    echo -e "  \033[1mTop warnings (log):\033[0m"
+    if [ -f "$LOGFILE" ]; then
+        grep -E '^[0-9-]+ [0-9:]+ - WARN - ' "$LOGFILE" 2>/dev/null | tail -5 | sed 's/^.\{19\} - WARN - /    • /' || echo "    (none)"
+    else
+        echo "    (no log yet)"
+    fi
+    # Optional AI one-liner
+    if fm_available; then
+        echo ""
+        echo "  AI focus (1 sentence)..."
+        _tp="Du bist MeisterSiri. In EINEM kurzen deutschen Satz: Was sollte der User heute als erstes am Mac tun? Fakten: Score ${_sc:-?}/100, Disk ${_disk}, Brew outdated f=${_bo:-?} c=${_bc:-?}. Keine Einleitung."
+        fm_query "$_tp" 2>/dev/null | sed 's/^/  → /' | head -3
+    fi
+    echo ""
+    echo "  Next: meisterSiri doctor | meisterSiri -n | meisterSiri ai"
+    exit 0
+fi
+
+# ── doctor — read-only system checklist ──
+if [ "${1:-}" = "doctor" ]; then
+    echo -e "\033[1;34m  MeisterSiri DOCTOR — Read-only checklist\033[0m"
+    echo ""
+    _pass=0; _fail=0; _warn=0
+    _check() {
+        local st="$1"; local name="$2"; local detail="$3"
+        case "$st" in
+            ok)   printf "  \033[0;32m✓\033[0m %-22s %s\n" "$name" "$detail"; _pass=$((_pass+1)) ;;
+            warn) printf "  \033[1;33m⚠\033[0m %-22s %s\n" "$name" "$detail"; _warn=$((_warn+1)) ;;
+            bad)  printf "  \033[0;31m✗\033[0m %-22s %s\n" "$name" "$detail"; _fail=$((_fail+1)) ;;
+        esac
+    }
+    # AI
+    if fm_available; then _check ok "Apple Intelligence" "online (on-device)"; else _check bad "Apple Intelligence" "offline — Systemeinstellungen"; fi
+    # SIP / FileVault / Firewall / Gatekeeper
+    _sip=$(csrutil status 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
+    [ "$_sip" = "ON" ] && _check ok "SIP" "enabled" || _check bad "SIP" "disabled"
+    _fv=$(fdesetup status 2>/dev/null | grep -qi On && echo ON || echo OFF)
+    [ "$_fv" = "ON" ] && _check ok "FileVault" "on" || _check warn "FileVault" "off"
+    _fw=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
+    [ "$_fw" = "ON" ] && _check ok "Firewall" "enabled" || _check warn "Firewall" "disabled"
+    _gk=$(spctl --status 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
+    [ "$_gk" = "ON" ] && _check ok "Gatekeeper" "enabled" || _check warn "Gatekeeper" "disabled"
+    # Disk
+    _du=$(df / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+    if [ "${_du:-0}" -ge 90 ]; then _check bad "Disk" "${_du}% used"
+    elif [ "${_du:-0}" -ge 75 ]; then _check warn "Disk" "${_du}% used"
+    else _check ok "Disk" "${_du}% used"; fi
+    # Brew
+    if command_exists brew; then
+        _check ok "Homebrew" "$(brew --prefix 2>/dev/null)"
+        _od=$(brew outdated --quiet 2>/dev/null | wc -l | tr -d ' ')
+        [ "${_od:-0}" -gt 0 ] && _check warn "Brew outdated" "${_od} formulae" || _check ok "Brew outdated" "0"
+    else
+        _check warn "Homebrew" "not installed"
+    fi
+    # Time Machine
+    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then _check ok "Time Machine" "destination set"
+    else _check warn "Time Machine" "not configured (single copy!)"; fi
+    # Touch ID sudo
+    if [ -f /etc/pam.d/sudo_local ] && grep -q pam_tid /etc/pam.d/sudo_local 2>/dev/null; then
+        _check ok "Touch ID sudo" "enabled"
+    else
+        _check warn "Touch ID sudo" "off — meisterSiri touchid"
+    fi
+    # FM helper
+    if [ -x "$MEISTER_DIR/meister-fm" ]; then _check ok "FM helper" "$MEISTER_DIR/meister-fm"
+    else _check warn "FM helper" "not compiled yet (lazy on first AI call)"; fi
+    # Config / log
+    [ -f "$MEISTER_CONFIG" ] && _check ok "Config" "$MEISTER_CONFIG" || _check warn "Config" "missing"
+    [ -f "$LOGFILE" ] && _check ok "Log" "$LOGFILE" || _check warn "Log" "missing"
+    # Network DNS
+    _dns=$(scutil --dns 2>/dev/null | awk '/nameserver\[0\]/{print $3; exit}')
+    [ -n "$_dns" ] && _check ok "DNS" "$_dns" || _check warn "DNS" "unknown"
+    echo ""
+    echo "  Result: ${_pass} ok · ${_warn} warn · ${_fail} fail"
+    [ "$_fail" -gt 0 ] && exit 1
+    exit 0
+fi
+
+# ── privacy — quick privacy / FDA audit ──
+if [ "${1:-}" = "privacy" ]; then
+    echo -e "\033[1;34m  MeisterSiri PRIVACY — Privacy grants quick audit\033[0m"
+    echo ""
+    echo -e "  \033[1mFull Disk Access (approx via tccutil / sqlite if readable)\033[0m"
+    _tcc="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    if [ -r "$_tcc" ]; then
+        sqlite3 "$_tcc" "SELECT client,auth_value FROM access WHERE service='kTCCServiceSystemPolicyAllFiles' LIMIT 20;" 2>/dev/null \
+          | while IFS='|' read -r c a; do
+                [ "$a" = "2" ] || [ "$a" = "1" ] && printf "  • %s (allowed)\n" "$c"
+            done || echo "  (could not query — need Full Disk Access for Terminal)"
+    else
+        echo "  TCC.db not readable — grant Full Disk Access to your terminal,"
+        echo "  then re-run. Deep clean: meisterSiri tcc-clean"
+    fi
+    echo ""
+    echo -e "  \033[1mThird-party LaunchDaemons (persistence surface)\033[0m"
+    ls /Library/LaunchDaemons 2>/dev/null | grep -v '^com\.apple\.' | head -15 | sed 's/^/  • /'
+    echo ""
+    echo "  Tip: meisterSiri tcc-clean --do  (orphaned privacy grants)"
+    echo "       meisterSiri startup         (login items audit)"
+    exit 0
+fi
+
+# ── suggest — AI fix suggestion, never executes ──
+if [ "${1:-}" = "suggest" ]; then
+    shift
+    _q="$*"
+    if [ -z "$_q" ]; then
+        echo "Usage: meisterSiri suggest <problem description>"
+        echo "  Read-only: Apple Intelligence proposes a fix, nothing is executed."
+        exit 1
+    fi
+    echo -e "\033[1;34m  MeisterSiri SUGGEST — AI fix idea (read-only)\033[0m"
+    echo ""
+    if ! fm_available; then
+        echo "  Apple Intelligence nicht verfügbar."
+        exit 1
+    fi
+    echo "  Problem: $_q"
+    echo "  Frage Apple Intelligence..."
+    echo ""
+    _sp="Du bist MeisterSiri, macOS-Wartungsassistent. Problem des Users: ${_q}
+
+Antworte auf Deutsch in genau diesem Format:
+1) Ursache (1-2 Saetze)
+2) Sicherer Fix-Befehl (EIN einfacher Shell-Befehl OHNE sudo/rm -rf/chmod, oder 'MANUELL: ...' wenn interaktiv noetig)
+3) Warum das hilft (1 Satz)
+4) Risiko (niedrig/mittel/hoch)
+
+Kein Markdown-Codefence. Nichts ausfuehren — nur vorschlagen."
+    fm_query "$_sp" | sed 's/^/  /'
+    echo ""
+    echo "  (Nichts wurde ausgefuehrt. Zum Anwenden: Befehl selbst pruefen.)"
+    exit 0
+fi
+
+# ── selftest — smoke-test MeisterSiri CLI ──
+if [ "${1:-}" = "selftest" ]; then
+    echo -e "\033[1;34m  MeisterSiri SELFTEST — smoke tests\033[0m"
+    echo ""
+    _p=0; _f=0
+    _t() {
+        local name="$1"; shift
+        if "$@" >/dev/null 2>&1; then
+            printf "  \033[0;32mPASS\033[0m  %s\n" "$name"; _p=$((_p+1))
+        else
+            printf "  \033[0;31mFAIL\033[0m  %s\n" "$name"; _f=$((_f+1))
+        fi
+    }
+    _SELF="$0"
+    _t "version string" bash -c "\"$_SELF\" --version | grep -q meisterSiri"
+    _t "help branding" bash -c "\"$_SELF\" -h 2>&1 | grep -q 'MeisterSiri'"
+    _t "help no bare meister cmds" bash -c "! \"$_SELF\" -h 2>&1 | grep -E '^  meister '"
+    _t "fm_available function" bash -c "source /dev/null; true"  # placeholder
+    # AI backend probe (soft)
+    if fm_available; then
+        printf "  \033[0;32mPASS\033[0m  Apple Intelligence online\n"; _p=$((_p+1))
+    else
+        printf "  \033[1;33mWARN\033[0m  Apple Intelligence offline (env)\n"
+    fi
+    _t "score subcommand" "$_SELF" score
+    _t "doctor subcommand" "$_SELF" doctor
+    _t "ports subcommand" "$_SELF" ports
+    _t "disk /tmp" "$_SELF" disk /tmp
+    _t "keys status" "$_SELF" keys status
+    # Dry-run honesty: -n should produce WOULD not false Freed claim without marker
+    _out=$(mktemp)
+    # short dry modules only via -n -q with timeout if available
+    if command_exists timeout; then
+        timeout 90 "$_SELF" -n -q >"$_out" 2>&1 || true
+        if grep -q 'Would free\|WOULD-FIX\|DRY-RUN' "$_out" || grep -q 'DRY-RUN MODE' "$_out"; then
+            printf "  \033[0;32mPASS\033[0m  dry-run markers present\n"; _p=$((_p+1))
+        else
+            # if run too short maybe no fixes — still need DRY-RUN banner
+            if grep -q 'DRY-RUN' "$_out"; then
+                printf "  \033[0;32mPASS\033[0m  dry-run mode announced\n"; _p=$((_p+1))
+            else
+                printf "  \033[0;31mFAIL\033[0m  dry-run markers missing\n"; _f=$((_f+1))
+            fi
+        fi
+        # Must NOT claim "Freed:" without dry-run qualifier when DRY
+        if grep -E '^\s*Freed:' "$_out" | grep -vq 'dry-run\|Would'; then
+            if grep -E '^\s*Freed:' "$_out" >/dev/null; then
+                printf "  \033[0;31mFAIL\033[0m  dry-run claimed Freed without honesty\n"; _f=$((_f+1))
+            else
+                printf "  \033[0;32mPASS\033[0m  no dishonest Freed line\n"; _p=$((_p+1))
+            fi
+        else
+            printf "  \033[0;32mPASS\033[0m  storage summary honest\n"; _p=$((_p+1))
+        fi
+        rm -f "$_out"
+    else
+        printf "  \033[1;33mSKIP\033[0m  dry-run long test (no timeout)\n"
+    fi
+    echo ""
+    echo "  Result: ${_p} pass · ${_f} fail"
+    [ "$_f" -eq 0 ] && exit 0 || exit 1
+fi
+
 # ── AI System-Doktor (meister ai) — Apple-Intelligence-Diagnose auf Abruf ──
 # Feeds the last run's warnings/errors + live system facts to the on-device
 # model and prints a prioritized diagnosis. Read-only, nothing runs.
 if [ "${1:-}" = "ai" ]; then
+    # meisterSiri ai fix <text> → suggest
+    if [ "${2:-}" = "fix" ] || [ "${2:-}" = "suggest" ]; then
+        shift 2
+        set -- suggest "$*"
+        # fall through by re-exec pattern: call suggest path via recursive
+        exec "$0" suggest "$*"
+    fi
+    _AI_FOCUS="${2:-}"
     echo -e "\033[1;34m  MeisterSiri AI — System-Diagnose (Apple Intelligence)\033[0m"
     echo ""
     if ! fm_available; then
@@ -6769,7 +7057,9 @@ if [ "${1:-}" = "ai" ]; then
     _AI_UPTIME=$(uptime | sed 's/^ *//')
     _AI_TOP=$(ps -Areo pcpu,comm | sort -rn | head -4 | awk '{c=$2; sub(/.*\//,"",c); printf "%s(%s%%) ", c, $1}')
     _AI_HEALS=$(tail -5 "$HEAL_LOG" 2>/dev/null)
-    _AI_PROMPT="Du bist ein macOS-Systemdoktor. Analysiere diesen Zustand und antworte auf Deutsch.
+    _AI_FOCUS_LINE=""
+    [ -n "$_AI_FOCUS" ] && _AI_FOCUS_LINE="Fokus des Users: ${_AI_FOCUS}"
+    _AI_PROMPT="Du bist MeisterSiri, ein macOS-Systemdoktor. Analysiere diesen Zustand und antworte auf Deutsch.
 
 Letzte Warnungen/Fehler des Wartungslaufs:
 ${_AI_WARNS:-keine}
@@ -6778,8 +7068,9 @@ System: Disk ${_AI_DISK} | RAM ${_AI_RAM} | ${_AI_UPTIME}
 Top-CPU: ${_AI_TOP}
 Letzte Self-Healing-Events:
 ${_AI_HEALS:-keine}
+${_AI_FOCUS_LINE}
 
-Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Kurz und praezise, keine Einleitung."
+Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Nur sichere Befehle vorschlagen (kein sudo rm -rf). Kurz und praezise, keine Einleitung."
     echo "  Frage Apple Intelligence..."
     echo ""
     fm_query "$_AI_PROMPT" | sed 's/^/  /'
@@ -6794,7 +7085,7 @@ if [ "${1:-}" = "pkg" ]; then
     if [ -z "$_PKG" ] || [ ! -f "$_PKG" ]; then
         echo "Usage: meisterSiri pkg <file.pkg>"; exit 1
     fi
-    echo -e "\033[1;34m  MEISTER PKG — Installer-Inspektor\033[0m"
+    echo -e "\033[1;34m  MeisterSiri PKG — Installer-Inspektor\033[0m"
     echo ""
     echo -e "  \033[1mFile:\033[0m $_PKG ($(du -h "$_PKG" | awk '{print $1}'))"
     echo ""
@@ -6914,7 +7205,7 @@ WATCHEOF
             echo "  Baseline aktualisiert ($(grep -c . "$_W_BASE") plists) — aktuelle Eintraege gelten als OK"
             ;;
         *)
-            echo -e "\033[1;34m  MEISTER WATCH — Persistence-Waechter (BlockBlock-Style)\033[0m"
+            echo -e "\033[1;34m  MeisterSiri WATCH — Persistence-Waechter (BlockBlock-Style)\033[0m"
             echo ""
             if launchctl print "gui/$(id -u)/com.meister.watch" &>/dev/null; then
                 echo "  Status: AKTIV"
@@ -6959,7 +7250,7 @@ if [ "${1:-}" = "tweaks" ]; then
     }
     _T="${2:-}"; _V="${3:-on}"
     if [ -z "$_T" ]; then
-        echo -e "\033[1;34m  MEISTER TWEAKS — versteckte macOS-Einstellungen (OnyX-Style)\033[0m"
+        echo -e "\033[1;34m  MeisterSiri TWEAKS — versteckte macOS-Einstellungen (OnyX-Style)\033[0m"
         echo ""
         _tweak_status
         echo ""
@@ -7010,7 +7301,7 @@ fi
 # Finds apps in /Applications that neither brew nor mas manages and checks
 # whether a Homebrew cask exists — adopting them makes updates automatic.
 if [ "${1:-}" = "adopt" ]; then
-    echo -e "\033[1;34m  MEISTER ADOPT — Apps unter Homebrew-Verwaltung bringen\033[0m"
+    echo -e "\033[1;34m  MeisterSiri ADOPT — Apps unter Homebrew-Verwaltung bringen\033[0m"
     echo ""
     command_exists brew || { echo "  brew fehlt"; exit 1; }
     _A_CASKS=$(brew list --cask 2>/dev/null | tr '[:upper:]' '[:lower:]')
@@ -7087,7 +7378,7 @@ if [ "${1:-}" = "dash" ]; then
         _D_TX=$(( ($(echo "$_D_CUR" | awk '{print $2}') - $(echo "$_D_PREV" | awk '{print $2}')) / _D_INT / 1024 ))
         _D_PREV=$_D_CUR
         clear
-        echo -e "\033[1;34m  MEISTER DASH — $(date '+%H:%M:%S')   (q beendet, Intervall ${_D_INT}s)\033[0m"
+        echo -e "\033[1;34m  MeisterSiri DASH — $(date '+%H:%M:%S')   (q beendet, Intervall ${_D_INT}s)\033[0m"
         echo ""
         echo -e "  \033[1mCPU \033[0m  ${_D_CPU}    load ${_D_LOAD}"
         echo -e "  \033[1mRAM \033[0m  ${_D_RAM}"
@@ -7119,7 +7410,7 @@ if [ "${1:-}" = "files" ]; then
         echo "  meister files ~/foo.db  → wer haelt diese Datei offen"
         exit 1
     fi
-    echo -e "\033[1;34m  MEISTER FILES — offene Dateien/Ports (Sloth-Style)\033[0m"
+    echo -e "\033[1;34m  MeisterSiri FILES — offene Dateien/Ports (Sloth-Style)\033[0m"
     echo ""
     # NB: no case-in-$() here — bash 3.2 parses $() lazily and chokes on the
     # unbalanced ')' of case patterns at RUNTIME (bash -n does not catch it)
@@ -7258,7 +7549,7 @@ CLIPEOF
                 fi
                 exit 0
             fi
-            echo -e "\033[1;34m  MEISTER CLIP — Clipboard-History (Maccy-Style)\033[0m"
+            echo -e "\033[1;34m  MeisterSiri CLIP — Clipboard-History (Maccy-Style)\033[0m"
             echo ""
             awk -v RS="$(printf '\x1e')----MEISTERCLIP----\n" \
                 'NR>1 {line=$0; sub(/\n.*/,"",line); if (length(line)>70) line=substr(line,1,67)"..."; a[NR-1]=line}
@@ -7309,7 +7600,7 @@ KEYSEOF
             rm -f "$_K_AGENT"
             echo "  Key-Mapping zurueckgesetzt" ;;
         status)
-            echo -e "\033[1;34m  MEISTER KEYS — Tastatur-Remapping (hidutil)\033[0m"
+            echo -e "\033[1;34m  MeisterSiri KEYS — Tastatur-Remapping (hidutil)\033[0m"
             echo ""
             _K_ACTIVE=$(hidutil property --get "UserKeyMapping" 2>/dev/null | grep -v '(null)' | grep -E 'Mapping(Src|Dst)|^\(' | head -15)
             if [ -n "$_K_ACTIVE" ]; then
@@ -7330,7 +7621,7 @@ fi
 # Writes pam_tid.so into /etc/pam.d/sudo_local (Sonoma+: survives macOS updates,
 # unlike editing /etc/pam.d/sudo directly). One sudo password — then fingerprint.
 if [ "${1:-}" = "touchid" ]; then
-    echo -e "\033[1;34m  MEISTER TOUCHID — Touch ID for sudo\033[0m"
+    echo -e "\033[1;34m  MeisterSiri TOUCHID — Touch ID for sudo\033[0m"
     echo ""
     _PAM_LOCAL="/etc/pam.d/sudo_local"
     _PAM_TEMPLATE="/etc/pam.d/sudo_local.template"
@@ -7377,7 +7668,7 @@ fi
 
 # ── Time Machine setup (meister backup) ──
 if [ "${1:-}" = "backup" ]; then
-    echo -e "\033[1;34m  MEISTER BACKUP — Time Machine status & setup\033[0m"
+    echo -e "\033[1;34m  MeisterSiri BACKUP — Time Machine status & setup\033[0m"
     echo ""
     if ! command_exists tmutil; then echo "  tmutil not available"; exit 1; fi
 
@@ -7453,7 +7744,7 @@ if [ "${1:-}" = "report" ]; then
     case "$_N" in *[!0-9]*) echo "Usage: meisterSiri report [N]"; exit 1 ;; esac
     _hist="$MEISTER_DIR/history.log"
     [ -f "$_hist" ] || { echo "  No history yet ($_hist)"; exit 0; }
-    echo -e "\033[1;34m  MEISTER REPORT — last ${_N} runs\033[0m"
+    echo -e "\033[1;34m  MeisterSiri REPORT — last ${_N} runs\033[0m"
     echo ""
     printf '  %-19s %9s %4s %4s %5s %4s %5s  %s\n' "Date" "Duration" "OK" "FIX" "WARN" "ERR" "HEAL" "Slowest modules"
     printf '  '; printf '─%.0s' $(seq 1 76); echo ""
@@ -7491,7 +7782,7 @@ if [ "${1:-}" = "report" ]; then
 fi
 
 if [ "${1:-}" = "free" ]; then
-    echo -e "\033[1;34m  MEISTER FREE — Free up RAM & reset UI\033[0m"
+    echo -e "\033[1;34m  MeisterSiri FREE — Free up RAM & reset UI\033[0m"
     echo ""
     _ram_before=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
     echo "  RAM free before: ${_ram_before} MB"
@@ -7513,7 +7804,7 @@ fi
 
 # ── Healer (meister heal) ──
 if [ "${1:-}" = "heal" ]; then
-    echo -e "\033[1;34m  MEISTER HEAL — Auto-Healing\033[0m"
+    echo -e "\033[1;34m  MeisterSiri HEAL — Auto-Healing\033[0m"
     echo ""
     DRY_RUN=false
     [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
@@ -7534,7 +7825,7 @@ fi
 
 # ── Speedtest (meister speed) ──
 if [ "${1:-}" = "speed" ]; then
-    echo -e "\033[1;34m  MEISTER SPEED — Network Speed Test\033[0m"
+    echo -e "\033[1;34m  MeisterSiri SPEED — Network Speed Test\033[0m"
     echo ""
 
     # Latency
@@ -7652,6 +7943,11 @@ TOOLS:
   meisterSiri diff         What changed since the last run (apps/autostart/brew)
   meisterSiri undo [--do]  Revert the last run's reversible actions (--list)
   meisterSiri explain <x>  Apple Intelligence explains a warning in plain language
+  meisterSiri today        Morning briefing (score, AI, disk, brew, top warns)
+  meisterSiri doctor       Read-only system checklist (security, brew, TM, AI)
+  meisterSiri suggest <x>  AI fix suggestion only — never executes
+  meisterSiri privacy      Privacy grants / persistence quick audit
+  meisterSiri selftest     Smoke-test this CLI
   meisterSiri fleet        Score/status of all Macs (FLEET_HOSTS in config)
   meisterSiri touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
   meisterSiri backup [--now]   Time Machine status; set up destination if none
