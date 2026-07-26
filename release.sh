@@ -58,24 +58,24 @@ if gh release view "v${VERSION}" -R "$REPO" &>/dev/null; then
     gh release delete "v${VERSION}" -R "$REPO" --yes --cleanup-tag
     git tag -d "v${VERSION}" 2>/dev/null || true
 fi
-gh release create "v${VERSION}" -R "$REPO" \
-    --target "$TARGET_SHA" \
-    --title "meister v${VERSION}" \
-    --notes "$(cat <<NOTES
+NOTES_FILE=$(mktemp)
+cat > "$NOTES_FILE" <<EOF
 macOS Maintenance & Self-Healing Script v${VERSION}
 
 ## What's new
-- **meisterSiri**: branded twin CLI (Apple Intelligence on-device), same modules as \`meister\`
-- Shared config/state: \`~/.meister/\`
-- Installs both binaries: \`meister\` + \`meisterSiri\`
+- meisterSiri: branded twin CLI (Apple Intelligence on-device), same modules as meister
+- Shared config/state: ~/.meister/
+- Installs both binaries: meister + meisterSiri
 
 ## Install / upgrade
-\`\`\`
 brew tap maf4711/meister
 brew update && brew reinstall meister
-\`\`\`
-NOTES
-)"
+EOF
+gh release create "v${VERSION}" -R "$REPO" \
+    --target "$TARGET_SHA" \
+    --title "meister v${VERSION}" \
+    --notes-file "$NOTES_FILE"
+rm -f "$NOTES_FILE"
 echo "Release created at $TARGET_SHA: https://github.com/$REPO/releases/tag/v${VERSION}"
 
 # 3. Get SHA256 of tarball
