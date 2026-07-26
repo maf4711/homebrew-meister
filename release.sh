@@ -5,8 +5,13 @@
 # 2. Creates GitHub Release with tag
 # 3. Updates SHA256 in Formula
 # 4. Pushes everything
+# 5. ALWAYS reinstalls locally via brew (mandatory — do not skip)
 #
 # Usage: ./release.sh
+#
+# MERKREGEL: Nach jedem Release IMMER lokal installieren
+#   (brew update && brew reinstall meister). Sonst laufen Repo und
+#   /opt/homebrew/bin auseinander. release.sh erledigt das in Step 6.
 
 set -euo pipefail
 
@@ -28,11 +33,14 @@ echo ""
 # 1. Commit and push all changes
 echo "--- Step 1: Update repo ---"
 cd "$SCRIPT_DIR"
-git add meister.sh tools/ Formula/ LICENSE .gitignore
+git add meister.sh meisterSiri.sh tools/ Formula/ LICENSE .gitignore release.sh 2>/dev/null || true
+git add meister.sh meisterSiri.sh Formula/ release.sh
+# tools/ LICENSE may not always change
+git add tools/ LICENSE .gitignore 2>/dev/null || true
 if git diff --cached --quiet; then
     echo "No staged changes"
 else
-    git commit -m "meister v${VERSION}"
+    git commit -m "meister v${VERSION}: meisterSiri twin + release tooling"
 fi
 # Push regardless — there may be committed-but-unpushed commits.
 # Bug history: skipping this push when nothing was staged caused
@@ -53,7 +61,21 @@ fi
 gh release create "v${VERSION}" -R "$REPO" \
     --target "$TARGET_SHA" \
     --title "meister v${VERSION}" \
-    --notes "macOS Maintenance & Self-Healing Script v${VERSION}"
+    --notes "$(cat <<NOTES
+macOS Maintenance & Self-Healing Script v${VERSION}
+
+## What's new
+- **meisterSiri**: branded twin CLI (Apple Intelligence on-device), same modules as \`meister\`
+- Shared config/state: \`~/.meister/\`
+- Installs both binaries: \`meister\` + \`meisterSiri\`
+
+## Install / upgrade
+\`\`\`
+brew tap maf4711/meister
+brew update && brew reinstall meister
+\`\`\`
+NOTES
+)"
 echo "Release created at $TARGET_SHA: https://github.com/$REPO/releases/tag/v${VERSION}"
 
 # 3. Get SHA256 of tarball
@@ -61,7 +83,14 @@ echo ""
 echo "--- Step 3: Calculate SHA256 ---"
 TARBALL_URL="https://github.com/$REPO/archive/refs/tags/v${VERSION}.tar.gz"
 TMPTAR=$(mktemp)
-curl -sL "$TARBALL_URL" -o "$TMPTAR"
+# GitHub can lag briefly after release create
+for i in 1 2 3 4 5; do
+    if curl -fsSL "$TARBALL_URL" -o "$TMPTAR"; then
+        break
+    fi
+    echo "Tarball not ready yet (try $i)..."
+    sleep 2
+done
 SHA=$(shasum -a 256 "$TMPTAR" | awk '{print $1}')
 rm -f "$TMPTAR"
 echo "URL:     $TARBALL_URL"
@@ -87,9 +116,24 @@ else
     echo "Pushed"
 fi
 
-# 6. Invalidate local brew cache
+# 6. ALWAYS install locally after release (mandatory)
+echo ""
+echo "--- Step 6: Local install (MERKREGEL: immer nach Release) ---"
+# Drop any repo symlink so brew owns the binaries
+if [[ -L /opt/homebrew/bin/meisterSiri ]]; then
+    rm -f /opt/homebrew/bin/meisterSiri
+fi
 CACHE_FILE=$(brew --cache meister 2>/dev/null || true)
-[ -f "$CACHE_FILE" ] && rm -f "$CACHE_FILE"
+[ -n "${CACHE_FILE:-}" ] && [ -f "$CACHE_FILE" ] && rm -f "$CACHE_FILE"
+# Refresh tap from GitHub (formula lives in this repo / tap)
+brew update
+# Reinstall from the tap so both meister + meisterSiri land in Cellar
+brew reinstall maf4711/meister/meister || brew reinstall meister
+echo ""
+echo "Installed binaries:"
+which meister meisterSiri
+meister --version
+meisterSiri --version
 
 echo ""
 echo "=== Release v${VERSION} done! ==="
@@ -98,5 +142,4 @@ echo "Others install with:"
 echo "  brew tap maf4711/meister"
 echo "  brew install meister"
 echo ""
-echo "You upgrade locally with:"
-echo "  brew update && brew upgrade meister"
+echo "You already have the new version locally (Step 6)."

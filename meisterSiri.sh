@@ -1,16 +1,20 @@
 #!/bin/bash
 # shellcheck disable=SC2155,SC2329
 # ==============================================================================
-# meister.sh
+# meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
 # Version: 6.1
 # Date: 2026-07-15
 #
+# Twin of meister.sh: same maintenance modules, branded as MeisterSiri.
+# AI backend = on-device Apple FoundationModels (Apple Intelligence).
+# Shares config/state with meister: ~/.meister/
+#
 # NEW in v6.0 — "MeisterSiri": Ollama fully replaced by Apple Intelligence
 #  - AI backend is now the on-device FoundationModels model (Apple Intelligence):
 #    no server, no model download, no ~18 GB RAM, ~0 cold-start. Works offline.
-#  - meister explain / meister ai / AI-Heal all run on-device via a tiny Swift
+#  - meisterSiri explain / meisterSiri ai / AI-Heal all run on-device via a tiny Swift
 #    helper (lazy-compiled + cached in ~/.meister/meister-fm).
 #  - AI-Heal now runs behind an ALLOWLIST executor: the model output is executed
 #    only if it is a single simple command with an allowlisted verb and no shell
@@ -169,7 +173,7 @@
 #   15. ClamAV: better exclude patterns
 #   16. Run history in ~/.meister/history.log
 #
-# Usage: ./meister.sh [flags]
+# Usage: ./meisterSiri.sh [flags]
 #   (no flags)  AUTO-DETECT: analyzes Mac, enables whas is needed
 #   -a  Force ALL modules     -A  ClamAV (sudo)
 #   -X  Xcode clean               -M  Monolingual
@@ -4981,7 +4985,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v${MEISTER_VERSION} | ${total_mins}min | $summary"
+    echo "MeisterSiri v${MEISTER_VERSION} | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -5414,7 +5418,7 @@ fi
 # ── Disk Analyzer (meister disk) ──
 if [ "${1:-}" = "disk" ]; then
     TARGET="${2:-$HOME}"
-    echo -e "\033[1;34m  MEISTER DISK — Top Space Usage: $TARGET\033[0m"
+    echo -e "\033[1;34m  MeisterSiri DISK — Top Space Usage: $TARGET\033[0m"
     echo ""
     printf '  %10s  %s\n' "SIZE" "DIRECTORY"
     printf '  %10s  %s\n' "----" "---------"
@@ -5878,12 +5882,12 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
             --dry-run|-n) REMOVE_DRY=true ;;
             --purge)      REMOVE_PURGE=true ;;
             -y|--yes)     REMOVE_YES=true ;;
-            -*)           echo "[ERROR] Unknown flag: $_a"; echo "Usage: meister remove <AppName> [--dry-run] [--purge] [-y]"; exit 1 ;;
+            -*)           echo "[ERROR] Unknown flag: $_a"; echo "Usage: meisterSiri remove <AppName> [--dry-run] [--purge] [-y]"; exit 1 ;;
             *)            [ -z "$REMOVE_NAME" ] && REMOVE_NAME="$_a" || REMOVE_NAME="$REMOVE_NAME $_a" ;;
         esac
     done
     if [ -z "$REMOVE_NAME" ]; then
-        echo "Usage: meister remove <AppName> [--dry-run] [--purge] [-y]"
+        echo "Usage: meisterSiri remove <AppName> [--dry-run] [--purge] [-y]"
         echo "  Uninstall an app bundle + all its leftover files."
         echo "  Default: moves everything to Trash (reversible).  --purge: permanent rm."
         exit 1
@@ -6124,8 +6128,8 @@ if [ "${1:-}" = "orphans" ]; then
             --dry-run|-n) ORPH_DRY=true ;;
             --purge)      ORPH_PURGE=true ;;
             -y|--yes)     ORPH_YES=true ;;
-            -*) echo "[ERROR] Unknown flag: $_a"; echo "Usage: meister orphans [--dry-run] [--purge] [-y]"; exit 1 ;;
-            *)  echo "[ERROR] Unexpected argument: $_a"; echo "Usage: meister orphans [--dry-run] [--purge] [-y]"; exit 1 ;;
+            -*) echo "[ERROR] Unknown flag: $_a"; echo "Usage: meisterSiri orphans [--dry-run] [--purge] [-y]"; exit 1 ;;
+            *)  echo "[ERROR] Unexpected argument: $_a"; echo "Usage: meisterSiri orphans [--dry-run] [--purge] [-y]"; exit 1 ;;
         esac
     done
 
@@ -6693,7 +6697,7 @@ if [ "${1:-}" = "explain" ]; then
         # lines that QUOTE old warnings, yielding a mangled stale fragment
         _EX_TEXT=$(grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} - (WARN|ERROR) - ' "$LOGFILE" 2>/dev/null | tail -1 | sed 's/^.\{19\} - [A-Z]* - //')
         if [ -z "$_EX_TEXT" ]; then
-            echo "Usage: meister explain <Warnung oder Log-Zeile>"; exit 1
+            echo "Usage: meisterSiri explain <Warnung oder Log-Zeile>"; exit 1
         fi
     fi
     echo -e "\033[1;34m  MEISTER EXPLAIN\033[0m"
@@ -6752,7 +6756,7 @@ fi
 # Feeds the last run's warnings/errors + live system facts to the on-device
 # model and prints a prioritized diagnosis. Read-only, nothing runs.
 if [ "${1:-}" = "ai" ]; then
-    echo -e "\033[1;34m  MEISTER AI — System-Diagnose (Apple Intelligence)\033[0m"
+    echo -e "\033[1;34m  MeisterSiri AI — System-Diagnose (Apple Intelligence)\033[0m"
     echo ""
     if ! fm_available; then
         echo "  Apple Intelligence nicht verfügbar — in Systemeinstellungen aktivieren (macOS 26+, Apple Silicon)."
@@ -6788,7 +6792,7 @@ fi
 if [ "${1:-}" = "pkg" ]; then
     _PKG="${2:-}"
     if [ -z "$_PKG" ] || [ ! -f "$_PKG" ]; then
-        echo "Usage: meister pkg <file.pkg>"; exit 1
+        echo "Usage: meisterSiri pkg <file.pkg>"; exit 1
     fi
     echo -e "\033[1;34m  MEISTER PKG — Installer-Inspektor\033[0m"
     echo ""
@@ -7109,7 +7113,7 @@ fi
 if [ "${1:-}" = "files" ]; then
     _F="${2:-}"
     if [ -z "$_F" ]; then
-        echo "Usage: meister files <port|prozessname|pfad>"
+        echo "Usage: meisterSiri files <port|prozessname|pfad>"
         echo "  meister files 8080      → wer lauscht/verbindet auf Port 8080"
         echo "  meister files node      → was hat Prozess 'node' offen"
         echo "  meister files ~/foo.db  → wer haelt diese Datei offen"
@@ -7141,7 +7145,7 @@ fi
 if [ "${1:-}" = "win" ]; then
     _W_POS="${2:-}"
     if [ -z "$_W_POS" ]; then
-        echo "Usage: meister win <left|right|max|center|tl|tr|bl|br>"
+        echo "Usage: meisterSiri win <left|right|max|center|tl|tr|bl|br>"
         echo "  Positioniert das vorderste Fenster (braucht Bedienungshilfen-Rechte fuers Terminal)."
         echo "  Hinweis: Geometrie bezieht sich auf den Gesamt-Desktop — bei mehreren"
         echo "  Displays landet das Fenster ggf. auf dem falschen. Single-Display: exakt."
@@ -7317,7 +7321,7 @@ KEYSEOF
             [ -f "$_K_AGENT" ] && echo "  Persistent: ja (com.meister.keys LaunchAgent)"
             echo ""
             echo "  Befehle: meister keys caps2esc | caps2ctrl | reset" ;;
-        *) echo "Usage: meister keys [caps2esc|caps2ctrl|reset|status]"; exit 1 ;;
+        *) echo "Usage: meisterSiri keys [caps2esc|caps2ctrl|reset|status]"; exit 1 ;;
     esac
     exit 0
 fi
@@ -7446,7 +7450,7 @@ fi
 # ── Run-History Report (meister report) ──
 if [ "${1:-}" = "report" ]; then
     _N="${2:-10}"
-    case "$_N" in *[!0-9]*) echo "Usage: meister report [N]"; exit 1 ;; esac
+    case "$_N" in *[!0-9]*) echo "Usage: meisterSiri report [N]"; exit 1 ;; esac
     _hist="$MEISTER_DIR/history.log"
     [ -f "$_hist" ] || { echo "  No history yet ($_hist)"; exit 0; }
     echo -e "\033[1;34m  MEISTER REPORT — last ${_N} runs\033[0m"
@@ -7585,7 +7589,7 @@ fi
 for arg in "$@"; do
     case "$arg" in
         --help)    set -- "-h"; break ;;
-        --version) echo "meister v${MEISTER_VERSION}"; exit 0 ;;
+        --version) echo "meisterSiri v${MEISTER_VERSION} (Apple Intelligence)"; exit 0 ;;
         --dry-run) set -- "-n"; break ;;
         --menu)    set -- "menu"; break ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
@@ -7612,81 +7616,81 @@ while getopts ":aAXTSCLhcHnIPGNq" opt; do
     q) QUIET_MODE=true ;;
     I) INSTALL_LAUNCHAGENT=true ;;
     h) cat << 'HELPEOF'
-Meister - macOS Maintenance, Self-Healing & Dotfiles Sync
+MeisterSiri - macOS Maintenance, Self-Healing & Dotfiles Sync (Apple Intelligence)
 
 MAINTENANCE:
-  meister              Auto-detect (default)
-  meister menu         Interactive menu (TUI)
-  meister -a           Force all modules
-  meister -n           Dry-run
-  meister -q           Quiet (warnings/fixes only)
-  meister -H           Health dashboard
-  meister -I           Install LaunchAgent
+  meisterSiri              Auto-detect (default)
+  meisterSiri menu         Interactive menu (TUI)
+  meisterSiri -a           Force all modules
+  meisterSiri -n           Dry-run
+  meisterSiri -q           Quiet (warnings/fixes only)
+  meisterSiri -H           Health dashboard
+  meisterSiri -I           Install LaunchAgent
 
   OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
               -L Large files  -P Performance  -G Git
               -N Sniffnet (network monitor)
 
 TOOLS:
-  meister sniff [N]    Live network monitor (default: 3s refresh)
-  meister ntop [N]     Live network traffic top 10 (default: 3s)
-  meister disk [dir]   Disk space analyzer (default: ~)
-  meister ports        Open ports & listeners
-  meister dns          DNS leak test
-  meister battery      Battery health report
-  meister heal [--dry-run]  Proactive auto-healer (broken symlinks, orphans, DNS, casks)
-  meister free [--restart-ui]  Free RAM (sudo purge) + optionally restart Finder/Dock
-  meister simfix       Fix stuck iOS Simulator (kill stale procs, reset CoreSimulator)
-  meister startup      Login items & launch agents audit
-  meister wifi         Wi-Fi diagnostics & channel scan
-  meister top [N]      Live process monitor (default: 3s refresh)
-  meister certs [host] SSL certificate checker
-  meister thermal [N]  Live temperature & fan monitor (default: 2s)
-  meister speed        Download/upload speed test
-  meister report [N]   Run-history report from history.log (default: last 10)
-  meister score        Maintenance score 0-100 + trend history
-  meister diff         What changed since the last run (apps/autostart/brew)
-  meister undo [--do]  Revert the last run's reversible actions (--list)
-  meister explain <x>  Apple Intelligence explains a warning in plain language
-  meister fleet        Score/status of all Macs (FLEET_HOSTS in config)
-  meister touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
-  meister backup [--now]   Time Machine status; set up destination if none
-  meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
-  meister files <x>    Who has port/file/process open (Sloth-style lsof)
-  meister ai           AI system diagnosis via Apple Intelligence (on-device, read-only)
+  meisterSiri sniff [N]    Live network monitor (default: 3s refresh)
+  meisterSiri ntop [N]     Live network traffic top 10 (default: 3s)
+  meisterSiri disk [dir]   Disk space analyzer (default: ~)
+  meisterSiri ports        Open ports & listeners
+  meisterSiri dns          DNS leak test
+  meisterSiri battery      Battery health report
+  meisterSiri heal [--dry-run]  Proactive auto-healer (broken symlinks, orphans, DNS, casks)
+  meisterSiri free [--restart-ui]  Free RAM (sudo purge) + optionally restart Finder/Dock
+  meisterSiri simfix       Fix stuck iOS Simulator (kill stale procs, reset CoreSimulator)
+  meisterSiri startup      Login items & launch agents audit
+  meisterSiri wifi         Wi-Fi diagnostics & channel scan
+  meisterSiri top [N]      Live process monitor (default: 3s refresh)
+  meisterSiri certs [host] SSL certificate checker
+  meisterSiri thermal [N]  Live temperature & fan monitor (default: 2s)
+  meisterSiri speed        Download/upload speed test
+  meisterSiri report [N]   Run-history report from history.log (default: last 10)
+  meisterSiri score        Maintenance score 0-100 + trend history
+  meisterSiri diff         What changed since the last run (apps/autostart/brew)
+  meisterSiri undo [--do]  Revert the last run's reversible actions (--list)
+  meisterSiri explain <x>  Apple Intelligence explains a warning in plain language
+  meisterSiri fleet        Score/status of all Macs (FLEET_HOSTS in config)
+  meisterSiri touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
+  meisterSiri backup [--now]   Time Machine status; set up destination if none
+  meisterSiri dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
+  meisterSiri files <x>    Who has port/file/process open (Sloth-style lsof)
+  meisterSiri ai           AI system diagnosis via Apple Intelligence (on-device, read-only)
 
 SECURITY:
-  meister pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
-  meister watch        Persistence watcher: notify on new LaunchAgents/Daemons
+  meisterSiri pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
+  meisterSiri watch        Persistence watcher: notify on new LaunchAgents/Daemons
                        (--install / --uninstall / --check)
-  meister tcc-clean [--do]  Remove privacy grants of DELETED apps (FDA list etc.)
+  meisterSiri tcc-clean [--do]  Remove privacy grants of DELETED apps (FDA list etc.)
 
 SYSTEM:
-  meister tweaks       Hidden macOS settings (OnyX-style): showhidden,
+  meisterSiri tweaks       Hidden macOS settings (OnyX-style): showhidden,
                        extensions, pathbar, keyrepeat, savepanel, dockfast
-  meister adopt [--do] Bring unmanaged /Applications apps under brew (updates!)
-  meister appupdates   ALL app updates in one list: brew + App Store + Sparkle
-  meister win <pos>    Move frontmost window: left|right|max|center|tl|tr|bl|br
-  meister clip         Clipboard history (Maccy-style): --install, <nr>, --purge
-  meister keys <mode>  Key remapping: caps2esc | caps2ctrl | reset | status
+  meisterSiri adopt [--do] Bring unmanaged /Applications apps under brew (updates!)
+  meisterSiri appupdates   ALL app updates in one list: brew + App Store + Sparkle
+  meisterSiri win <pos>    Move frontmost window: left|right|max|center|tl|tr|bl|br
+  meisterSiri clip         Clipboard history (Maccy-style): --install, <nr>, --purge
+  meisterSiri keys <mode>  Key remapping: caps2esc | caps2ctrl | reset | status
 
 APP MANAGEMENT:
-  meister remove <App> [--dry-run] [--purge] [-y]
+  meisterSiri remove <App> [--dry-run] [--purge] [-y]
                        Uninstall app + all leftovers (caches, prefs, containers,
                        saved state, logs). Default: to Trash (reversible). --purge: rm.
-  meister orphans [--dry-run] [--purge] [-y]
+  meisterSiri orphans [--dry-run] [--purge] [-y]
                        Scan ~/Library + /Library for leftovers of apps that are no
                        longer installed; pick which to remove. Default: Trash.
 
 DOTFILES SYNC:
-  meister push         Collect configs, commit, push
-  meister pull         Pull latest, create symlinks
-  meister setup [url]  Clone dotfiles repo (auto-detects from gh)
-  meister init [name]  Create private GitHub repo + push
-  meister scan         Auto-detect configs, generate manifest
-  meister clone        Clone ~/Developer repos
-  meister bootstrap    Full setup: pull + brew + npm + clone + defaults
-  meister status       Check symlinks
+  meisterSiri push         Collect configs, commit, push
+  meisterSiri pull         Pull latest, create symlinks
+  meisterSiri setup [url]  Clone dotfiles repo (auto-detects from gh)
+  meisterSiri init [name]  Create private GitHub repo + push
+  meisterSiri scan         Auto-detect configs, generate manifest
+  meisterSiri clone        Clone ~/Developer repos
+  meisterSiri bootstrap    Full setup: pull + brew + npm + clone + defaults
+  meisterSiri status       Check symlinks
 
 Config: ~/.meister/config
 HELPEOF
@@ -7803,7 +7807,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-printf '  ║        MEISTER v%-24s║\n' "$MEISTER_VERSION"
+printf '  ║     MeisterSiri v%-21s║\n' "$MEISTER_VERSION"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -7811,7 +7815,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v${MEISTER_VERSION} started ($(date))"
+log INFO "MeisterSiri v${MEISTER_VERSION} started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
