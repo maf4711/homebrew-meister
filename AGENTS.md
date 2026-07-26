@@ -26,3 +26,16 @@ statt brew — brew muss Owner der Binaries sein.
 | `meisterSiri` | `meisterSiri.sh` | Same modules, MeisterSiri branding, Apple Intelligence |
 
 Both share `~/.meister/` config and state.
+
+## v6.2 MeisterSiri commands
+
+| Command | Purpose |
+|---------|---------|
+| `meisterSiri today` | Morning briefing |
+| `meisterSiri doctor` | Read-only checklist |
+| `meisterSiri suggest <x>` | AI fix idea, never executes |
+| `meisterSiri privacy` | Privacy / persistence audit |
+| `meisterSiri selftest` | Smoke-test CLI |
+| `meisterSiri -n` | Dry-run: shows WOULD-FIX + "Would free", never FIXED/Freed |
+
+Dry-run honesty is implemented in `report_add` / report footer — do not reintroduce `report_add FIX` that bypasses it.
