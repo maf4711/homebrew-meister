@@ -4,7 +4,13 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.7
+# Version: 6.8
+# NEW in v6.8 — always-on Mac upkeep (both twins):
+#  - AUTOFIX_ON_RUN: every maintenance run runs autofix catalog first
+#  - AI-Heal stays on in quick/auto/deep (backend: Apple on meisterSiri, Ollama on meister)
+#  - LaunchAgents: daily --quick + weekly --deep (meister keep-current)
+#  - twins: edit meisterSiri.sh → scripts/sync-twins.sh (injects Ollama into meister.sh)
+#
 # NEW in v6.7 — diagnose → real autofix (no fake AI shell):
 #  - meisterSiri ai / autofix: deterministic fixes for known WARNs
 #      old brew bottles, orphan LaunchDaemons, unpushed git, firewall,
@@ -260,6 +266,10 @@ DISK_USAGE_THRESHOLD=80
 LARGE_FILE_SIZE_MB=1000
 # Apple Intelligence (FoundationModels) — on-device LLM, replaces Ollama (MeisterSiri)
 FM_ENABLED=true
+# ===== TWIN:META-AI (sync-twins may rewrite for Ollama) =====
+AI_BACKEND_LABEL="Apple Intelligence"
+AI_BACKEND_KIND="apple"   # apple | ollama
+# ===== /TWIN:META-AI =====
 FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
 FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
 AI_TRACE=true                           # always show AI REQUEST+RESPONSE at runtime
@@ -326,7 +336,7 @@ SECURITY_TCC_AUDIT=false               # --deep
 
 # Docker + LaunchAgent Defaults
 CLEAN_DOCKER=false                     # --deep
-LAUNCHAGENT_SCHEDULE="weekly"          # daily/weekly/monthly
+LAUNCHAGENT_SCHEDULE="daily"           # daily/weekly/monthly (plus weekly deep agent)
 
 AUTO_DETECT=true                       # Auto-detection enabled
 AUTO_XCODE_THRESHOLD_MB=500            # Delete DerivedData above this size
@@ -339,7 +349,7 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
+    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
     _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
     _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
@@ -752,6 +762,7 @@ exit(code)
 SWIFT_EOF
 }
 
+# ===== TWIN:AI-BACKEND (Apple Intelligence — meisterSiri) =====
 # Compile the helper if missing or its source changed. Sets FM_ENABLED=false on
 # any failure (no swiftc, compile error) so callers degrade gracefully.
 ensure_fm_helper() {
@@ -844,20 +855,22 @@ fm_query() {
     local prompt="$1"
     local label="${2:-query}"
     if [ "${AI_TRACE:-true}" = "true" ]; then
-        ai_trace_box "REQUEST → Apple Intelligence ($label)" "$prompt"
-        ai_trace_line "Warte auf Antwort (on-device)…"
+        ai_trace_box "REQUEST → ${AI_BACKEND_LABEL} ($label)" "$prompt"
+        ai_trace_line "Warte auf Antwort (${AI_BACKEND_LABEL})…"
     fi
     local resp
     resp=$(printf '%s' "$prompt" | "$FM_HELPER" 2>/dev/null) || true
     if [ "${AI_TRACE:-true}" = "true" ]; then
         if [ -n "$resp" ]; then
-            ai_trace_box "RESPONSE ← Apple Intelligence ($label)" "$resp"
+            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL} ($label)" "$resp"
         else
-            ai_trace_box "RESPONSE ← Apple Intelligence ($label)" "(leer / Fehler — Model offline oder Timeout)"
+            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL} ($label)" "(leer / Fehler — Model offline oder Timeout)"
         fi
     fi
     printf '%s' "$resp"
 }
+
+# ===== /TWIN:AI-BACKEND =====
 
 # AI-Heal allowlist executor. The model's output is EXECUTED, so safety must NOT
 # depend on the prompt — "never sudo" is unreliable (the on-device model emitted
@@ -5239,9 +5252,9 @@ health_dashboard() {
     echo -e "${MAGENTA}  Self-Healing Status (v1.0)${NC}"
     echo -e "${MAGENTA}═══════════════════════════════════════${NC}"
     if fm_available; then
-        echo -e "  AI:      ${GREEN}online${NC} (Apple Intelligence, on-device)"
+        echo -e "  AI:      ${GREEN}online${NC} (${AI_BACKEND_LABEL:-AI}, ${AI_BACKEND_KIND:-apple})"
     else
-        echo -e "  AI:      ${RED}offline${NC} (Apple Intelligence unavailable)"
+        echo -e "  AI:      ${RED}offline${NC} (${AI_BACKEND_LABEL:-AI} unavailable)"
     fi
     echo -e "  Disk:    $(df -h / | awk 'NR==2 {print $5}') used ($(df -h / | awk 'NR==2 {print $4}') free)"
     local pc=$(( $(ls -1 "$MEISTER_DIR/patches/" 2>/dev/null | wc -l) ))
@@ -5379,40 +5392,50 @@ send_report_notification() {
 #############################
 
 install_launchagent() {
-    local script_path=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-    local plist_path="$HOME/Library/LaunchAgents/com.meister.maintenance.plist"
-    local label="com.meister.maintenance"
-
-    # Schedule bestimmen
-    local interval_secs=604800  # default: weekly
-    case "$LAUNCHAGENT_SCHEDULE" in
-        daily)   interval_secs=86400 ;;
-        weekly)  interval_secs=604800 ;;
+    # v6.8 keep-current: two agents — daily quick + weekly deep
+    local script_path
+    script_path=$(command -v meisterSiri 2>/dev/null || command -v meister 2>/dev/null || true)
+    if [ -z "$script_path" ] || [ ! -x "$script_path" ]; then
+        script_path=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+    fi
+    # Prefer brew binaries by name of this twin
+    local self_base
+    self_base=$(basename "$0")
+    case "$self_base" in
+        meisterSiri|meisterSiri.sh) script_path=$(command -v meisterSiri 2>/dev/null || echo "$script_path") ;;
+        meister|meister.sh)         script_path=$(command -v meister 2>/dev/null || echo "$script_path") ;;
     esac
 
-    log INFO "Installing LaunchAgent ($LAUNCHAGENT_SCHEDULE)..."
-    log STEP "   Script: $script_path"
-    log STEP "   Plist:  $plist_path"
+    mkdir -p "$HOME/Library/LaunchAgents" "$MEISTER_DIR"
 
-    # Bestehenden Agent stoppen
-    if launchctl list 2>/dev/null | grep -q "$label"; then
-        launchctl unload "$plist_path" 2>/dev/null
-        log STEP "   Existing Agent stopped"
-    fi
-
-    mkdir -p "$HOME/Library/LaunchAgents"
-
-    # Schedule-Key generieren
-    local schedule_key=""
-    if [ "$LAUNCHAGENT_SCHEDULE" = "monthly" ]; then
-        schedule_key="<key>StartCalendarInterval</key>
-    <dict><key>Day</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>"
-    else
-        schedule_key="<key>StartInterval</key>
-    <integer>${interval_secs}</integer>"
-    fi
-
-    cat > "$plist_path" << PLISTEOF
+    _install_one_agent() {
+        local label="$1" args_line="$2" hour="$3" minute="$4" weekday="$5"  # weekday empty = daily
+        local plist_path="$HOME/Library/LaunchAgents/${label}.plist"
+        if launchctl list 2>/dev/null | grep -q "$label"; then
+            launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || launchctl unload "$plist_path" 2>/dev/null || true
+        fi
+        local cal
+        if [ -n "$weekday" ]; then
+            cal="<key>StartCalendarInterval</key>
+    <dict>
+      <key>Weekday</key><integer>${weekday}</integer>
+      <key>Hour</key><integer>${hour}</integer>
+      <key>Minute</key><integer>${minute}</integer>
+    </dict>"
+        else
+            cal="<key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>${hour}</integer>
+      <key>Minute</key><integer>${minute}</integer>
+    </dict>"
+        fi
+        # args_line is space-separated extra args after script
+        local args_xml="<string>${script_path}</string>"
+        for a in $args_line; do
+            args_xml="${args_xml}
+        <string>${a}</string>"
+        done
+        cat > "$plist_path" << PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -5421,34 +5444,48 @@ install_launchagent() {
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>${script_path}</string>
+        ${args_xml}
     </array>
-    ${schedule_key}
+    ${cal}
     <key>StandardOutPath</key>
     <string>${MEISTER_DIR}/launchagent.log</string>
     <key>StandardErrorPath</key>
     <string>${MEISTER_DIR}/launchagent_err.log</string>
     <key>RunAtLoad</key>
     <false/>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>
 PLISTEOF
+        launchctl bootstrap "gui/$(id -u)" "$plist_path" 2>/dev/null             || launchctl load "$plist_path" 2>/dev/null || true
+        if launchctl list 2>/dev/null | grep -q "$label"; then
+            log FIX "LaunchAgent $label loaded"
+            return 0
+        fi
+        log WARN "LaunchAgent $label load failed"
+        return 1
+    }
 
-    launchctl load "$plist_path" 2>/dev/null
-    if launchctl list 2>/dev/null | grep -q "$label"; then
-        log FIX "LaunchAgent installed and loaded"
-        log INFO "   Schedule: $LAUNCHAGENT_SCHEDULE"
-        log INFO "   Uninstall: launchctl unload $plist_path && rm $plist_path"
-        echo ""
-        echo -e "${GREEN}LaunchAgent successful installed!${NC}"
-        echo -e "  Schedule:      $LAUNCHAGENT_SCHEDULE"
-        echo -e "  Plist:         $plist_path"
-        echo -e "  Log:           $MEISTER_DIR/launchagent.log"
-        echo -e "  Uninstall: launchctl unload $plist_path"
+    log INFO "Installing keep-current LaunchAgents (daily quick + weekly deep)..."
+    log STEP "   Script: $script_path"
+    local ok=0
+    # Daily 09:15 local — quick upkeep + autofix
+    _install_one_agent "com.meister.keepcurrent.daily" "--quick -q" 9 15 "" && ok=$((ok+1))
+    # Sunday 10:30 — deep weekly
+    _install_one_agent "com.meister.keepcurrent.weekly" "--deep -q" 10 30 0 && ok=$((ok+1))
+
+    echo ""
+    if [ "$ok" -ge 1 ]; then
+        echo -e "${GREEN}Keep-current agents installed (${ok}/2)${NC}"
+        echo "  Daily:  09:15  --quick -q   (autofix + lean modules)"
+        echo "  Weekly: Sun 10:30 --deep -q (full optimize)"
+        echo "  Logs:   $MEISTER_DIR/launchagent.log"
+        echo "  Remove: launchctl bootout gui/\$(id -u)/com.meister.keepcurrent.daily"
+        echo "          launchctl bootout gui/\$(id -u)/com.meister.keepcurrent.weekly"
+        report_add FIX "Keep-current LaunchAgents installed"
     else
-        log ERROR "LaunchAgent konnte not loaded werden"
-        echo -e "${RED}LaunchAgent Installation failed!${NC}"
+        log ERROR "No LaunchAgent could be loaded"
     fi
 }
 
@@ -7139,7 +7176,7 @@ if [ "${1:-}" = "today" ] || [ "${1:-}" = "brief" ]; then
     _sc=$(grep -oE 'SCORE:[0-9]+' "$MEISTER_DIR/history.log" 2>/dev/null | tail -1 | cut -d: -f2)
     [ -n "$_sc" ] && echo -e "  Score:     ${_sc}/100" || echo "  Score:     (noch kein Lauf)"
     # AI
-    if fm_available; then echo -e "  AI:        \033[0;32monline\033[0m (Apple Intelligence)"; else echo -e "  AI:        \033[0;31moffline\033[0m"; fi
+    if fm_available; then echo -e "  AI:        \033[0;32monline\033[0m (${AI_BACKEND_LABEL:-AI})"; else echo -e "  AI:        \033[0;31moffline\033[0m (${AI_BACKEND_LABEL:-AI})"; fi
     # Disk / RAM
     _disk=$(df -h / | awk 'NR==2 {print $5" used, "$4" free"}')
     _ram=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,""); printf "%.1f GB free", $3*16384/1073741824}')
@@ -7195,7 +7232,7 @@ if [ "${1:-}" = "doctor" ]; then
         esac
     }
     # AI
-    if fm_available; then _check ok "Apple Intelligence" "online (on-device)"; else _check bad "Apple Intelligence" "offline — Systemeinstellungen"; fi
+    if fm_available; then _check ok "AI (${AI_BACKEND_KIND:-apple})" "${AI_BACKEND_LABEL:-AI} online"; else _check bad "AI" "${AI_BACKEND_LABEL:-AI} offline"; fi
     # SIP / FileVault / Firewall / Gatekeeper
     _sip=$(csrutil status 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
     [ "$_sip" = "ON" ] && _check ok "SIP" "enabled" || _check bad "SIP" "disabled"
@@ -8731,9 +8768,9 @@ fi
 
 # Apple Intelligence readiness (lazy-compiles the on-device helper on first run)
 if fm_available; then
-    log INFO "AI: Apple Intelligence online (on-device, offline)"
+    log INFO "AI: ${AI_BACKEND_LABEL} online (${AI_BACKEND_KIND})"
 else
-    log WARN "AI: Apple Intelligence not available - no AI-Heal"
+    log WARN "AI: ${AI_BACKEND_LABEL} not available - no AI-Heal"
     FM_ENABLED=false
 fi
 
@@ -8754,7 +8791,7 @@ apply_run_profile() {
             RUN_PERF_TUNE=false
             RUN_GIT_REPOS=false
             RUN_SNIFFNET=false
-            FM_ENABLED=false   # no AI-Heal mid-run (use meisterSiri ai on demand)
+            # AI-Heal stays ON (Apple / Ollama) for continuous optimization
             ;;
         deep)
             log INFO "Profile: DEEP (weekly full — all heavy modules on)"
@@ -8854,6 +8891,15 @@ module_timer_stop "Preflight"
 ledger_add "Preflight" "$_pf_fix0" "$_pf_warn0" "$_pf_err0" 0
 
 if check_net; then
+    # v6.8: always-on upkeep — deterministic autofix every run
+    if [ "${AUTOFIX_ON_RUN:-true}" = "true" ]; then
+        section_header "Autofix"
+        module_timer_start
+        _af_fix0=${#REPORT_FIXED[@]}; _af_warn0=${#REPORT_WARNINGS[@]}; _af_err0=${#REPORT_ERRORS[@]}; _af_would0=${#REPORT_WOULD_FIX[@]}
+        autofix_known_issues
+        module_timer_stop "Autofix"
+        ledger_add "Autofix" "$_af_fix0" "$_af_warn0" "$_af_err0" 0 "$_af_would0"
+    fi
     run_module_if "Healer"         module_healer
     run_module_if "Homebrew"       module_homebrew
     run_module_if "App Store"      module_mas
