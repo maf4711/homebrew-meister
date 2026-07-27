@@ -6546,9 +6546,11 @@ if [ "${1:-}" = "orphans" ]; then
     _authed=false
     _ensure_sudo() {
         $_authed && return 0
-        [ -t 0 ] || return 1
-        log INFO "System-owned (root) items present — authorizing removal..."
-        sudo -v 2>/dev/null && { _authed=true; return 0; }
+        log INFO "System-owned (root) items present — authorizing once..."
+        if ensure_sudo "remove/orphans"; then
+            _authed=true
+            return 0
+        fi
         log WARN "Authorization failed — root-owned items will be skipped."
         return 1
     }
