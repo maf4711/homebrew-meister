@@ -773,6 +773,69 @@ exit(code)
 SWIFT_EOF
 }
 
+# ===== AI TRACE (shared; must live outside TWIN:AI-BACKEND) =====
+ai_trace_box() {
+    # NEVER write to stdout — callers use $(fm_query …).
+    # Prefer /dev/tty (interactive); fall back to stderr (pipes / agents).
+    local title="$1"
+    shift
+    local body="$*"
+    local ts; ts=$(date +'%H:%M:%S')
+    _ai_emit() {
+        # $1 = file descriptor path or "stderr"
+        local dest="$1"
+        if [ "$dest" = "stderr" ]; then
+            echo "" >&2
+            echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}" >&2
+            if [ -n "$body" ]; then
+                while IFS= read -r line || [ -n "$line" ]; do
+                    echo -e "${MAGENTA}│${NC} ${line}" >&2
+                done <<< "$body"
+            fi
+            echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}" >&2
+        else
+            {
+                echo ""
+                echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}"
+                if [ -n "$body" ]; then
+                    while IFS= read -r line || [ -n "$line" ]; do
+                        echo -e "${MAGENTA}│${NC} ${line}"
+                    done <<< "$body"
+                fi
+                echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}"
+            } >"$dest"
+        fi
+    }
+    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
+        _ai_emit /dev/tty 2>/dev/null || _ai_emit stderr
+    else
+        _ai_emit stderr
+    fi
+    # Logfile (no ANSI)
+    {
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === ${title} ==="
+        if [ -n "$body" ]; then
+            printf '%s\n' "$body" | sed 's/^/  /'
+        fi
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === /${title} ==="
+    } >> "$LOGFILE" 2>/dev/null || true
+}
+
+
+ai_trace_line() {
+    local msg="$*"
+    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
+        echo -e "${MAGENTA}[AI]${NC} ${msg}" > /dev/tty 2>/dev/null \
+            || echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
+    else
+        echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
+    fi
+    echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - $msg" >> "$LOGFILE" 2>/dev/null || true
+}
+
+
+# ===== /AI TRACE =====
+
 # ===== AI USAGE AUDIT (shared; works for Apple + Ollama) =====
 # mode: readonly | heal-candidate
 # purpose: short machine key (explain|ai-diagnose|ai-heal|today|suggest|query)
@@ -834,64 +897,6 @@ fm_available() {
 
 # Always-visible AI runtime tracing (even under QUIET_MODE / -q).
 # AI_TRACE=false in ~/.meister/config disables the fancy boxes (log lines remain).
-ai_trace_box() {
-    # NEVER write to stdout — callers use $(fm_query …).
-    # Prefer /dev/tty (interactive); fall back to stderr (pipes / agents).
-    local title="$1"
-    shift
-    local body="$*"
-    local ts; ts=$(date +'%H:%M:%S')
-    _ai_emit() {
-        # $1 = file descriptor path or "stderr"
-        local dest="$1"
-        if [ "$dest" = "stderr" ]; then
-            echo "" >&2
-            echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}" >&2
-            if [ -n "$body" ]; then
-                while IFS= read -r line || [ -n "$line" ]; do
-                    echo -e "${MAGENTA}│${NC} ${line}" >&2
-                done <<< "$body"
-            fi
-            echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}" >&2
-        else
-            {
-                echo ""
-                echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}"
-                if [ -n "$body" ]; then
-                    while IFS= read -r line || [ -n "$line" ]; do
-                        echo -e "${MAGENTA}│${NC} ${line}"
-                    done <<< "$body"
-                fi
-                echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}"
-            } >"$dest"
-        fi
-    }
-    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
-        _ai_emit /dev/tty 2>/dev/null || _ai_emit stderr
-    else
-        _ai_emit stderr
-    fi
-    # Logfile (no ANSI)
-    {
-        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === ${title} ==="
-        if [ -n "$body" ]; then
-            printf '%s\n' "$body" | sed 's/^/  /'
-        fi
-        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === /${title} ==="
-    } >> "$LOGFILE" 2>/dev/null || true
-}
-
-ai_trace_line() {
-    local msg="$*"
-    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
-        echo -e "${MAGENTA}[AI]${NC} ${msg}" > /dev/tty 2>/dev/null \
-            || echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
-    else
-        echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
-    fi
-    echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - $msg" >> "$LOGFILE" 2>/dev/null || true
-}
-
 # Query the model. $1 = prompt. Optional $2 = label for tracing (default: query).
 # Prints the response (plain text, no JSON parse) on stdout for callers.
 # Side effect: always shows REQUEST + RESPONSE on the terminal (unless AI_TRACE=false).
