@@ -79,3 +79,20 @@ meister ai / meister autofix   # gleich (nach Sync)
 
 Fixes: alte brew bottles, orphan LaunchDaemons, git push (clean), Firewall on,
 Time Machine Settings öffnen, _Inbox Archive (>N Tage).
+
+## v6.8 Keep-current architecture
+
+| Twin | AI backend | Use |
+|------|------------|-----|
+| `meisterSiri` | Apple Intelligence (on-device) | Default GUI + LaunchAgents |
+| `meister` | Ollama (`qwen3-coder:30b` @ :11434) | When Ollama is preferred / offline Apple |
+
+Shared: modules, autofix catalog, profiles, `~/.meister/`.
+
+Every run: **Autofix first**, then Healer, then modules (AI-Heal on failures).
+
+LaunchAgents (install: `meisterSiri -I`):
+- Daily 09:15 `meisterSiri --quick -q`
+- Sunday 10:30 `meisterSiri --deep -q`
+
+Ollama model override: `MEISTER_OLLAMA_MODEL=...` in `~/.meister/config`.
