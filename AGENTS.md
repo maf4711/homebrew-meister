@@ -51,3 +51,31 @@ Dry-run honesty is implemented in `report_add` / report footer — do not reintr
 
 Brew: `~/.meister/brew_last_update` — delete to force `brew update`.
 Config template: `config.fast.example` → merge into `~/.meister/config`.
+
+## MERKREGEL: meister + meisterSiri parallel halten
+
+**Feature-Quelle:** `meisterSiri.sh`  
+**Zwilling:** `meister.sh` (nur Branding anders)
+
+Nach **jeder** Feature-Änderung an der CLI:
+
+```bash
+./scripts/sync-twins.sh   # regeneriert meister.sh aus meisterSiri.sh
+./release.sh              # tag + formula + local brew install
+```
+
+`release.sh` ruft `sync-twins.sh` automatisch auf.
+
+Niemals Features nur in `meister.sh` bauen — die gehen beim nächsten Sync verloren.
+Beide teilen `~/.meister/` und dasselbe Autofix/Profile/Sudo-Verhalten.
+
+### Autofix (v6.7+)
+
+```bash
+meisterSiri ai            # Autofix + AI-Rest-Zusammenfassung
+meisterSiri autofix       # nur deterministische Fixes
+meister ai / meister autofix   # gleich (nach Sync)
+```
+
+Fixes: alte brew bottles, orphan LaunchDaemons, git push (clean), Firewall on,
+Time Machine Settings öffnen, _Inbox Archive (>N Tage).
