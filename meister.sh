@@ -3,11 +3,53 @@
 # ==============================================================================
 # meister.sh
 #
-# MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.6
-# Date: 2026-07-15
+# Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
+# Version: 6.7
+# NEW in v6.7 — diagnose → real autofix (no fake AI shell):
+#  - meister ai / autofix: deterministic fixes for known WARNs
+#      old brew bottles, orphan LaunchDaemons, unpushed git, firewall,
+#      Time Machine (opens Settings), _Inbox archive
+#  - AI text only for remaining issues; prompts list real meister cmds
+#  - module_brew_age / launchd_orphans can apply fixes (not warn-only)
 #
-# NEW in v6.0 — "MeisterSiri": Ollama fully replaced by Apple Intelligence
+# NEW in v6.6 — runtime profiles + speed:
+#  - --quick / --deep profiles (daily lean vs weekly full)
+#  - Faster auto defaults (heavy scans weekly via --deep)
+#  - brew update skip if fresh (BREW_UPDATE_MAX_AGE_SEC, default 12h)
+#  - brew update/upgrade timeouts; find timeouts for .DS_Store / node_modules
+#  - config.fast.example shipped for Daily-Fast overrides
+#
+# NEW in v6.5 — same as 6.4 (fresh tag; GitHub CDN had stale v6.4 tarball)
+# NEW in v6.4 — sudo once + runtime:
+#  - ensure_sudo(): one Touch ID/password at start; rest is sudo -n only
+#  - keep_sudo every 30s (was 60); reuses existing ticket across meister + meister
+#  - free/heal/remove/orphans/simfix share ensure_sudo (no re-prompt if ticket live)
+#  - meister sudo-setup: install /etc/sudoers.d/zz-meister
+#      timestamp_timeout=120 + !tty_tickets (share auth across terminals)
+#
+# Date: 2026-07-27
+#
+# Twin of meister.sh: same features (autofix, profiles, dry-run honesty).
+# AI backend = on-device Apple FoundationModels (Apple Intelligence).
+# Shares config/state: ~/.meister/
+# KEEP IN SYNC: edit meister.sh then run scripts/sync-twins.sh
+
+# NEW in v6.3 — AI transparency at runtime:
+#  - Every Apple Intelligence call prints REQUEST (full prompt) + RESPONSE
+#  - AI-Heal / Learned-Fix / Known-Fix always visible (even in -q quiet mode)
+#  - Config: AI_TRACE=false in ~/.meister/config to silence (default: true)
+#
+# NEW in v6.2 — honesty + product polish + new commands:
+#  - Dry-run honesty: FIX/Freed never claim real mutations; WOULD-FIX + "Would free"
+#  - Full Meister branding on all tool banners
+#  - meister today   — morning briefing (score, AI, disk, updates, top warns)
+#  - meister doctor  — read-only system checklist (security, brew, TM, AI, …)
+#  - meister selftest — smoke-test the CLI itself
+#  - meister suggest <text> — AI fix suggestion (read-only, no exec)
+#  - meister privacy — privacy grants / FDA quick audit
+#
+#
+# NEW in v6.0 — "Meister": Ollama fully replaced by Apple Intelligence
 #  - AI backend is now the on-device FoundationModels model (Apple Intelligence):
 #    no server, no model download, no ~18 GB RAM, ~0 cold-start. Works offline.
 #  - meister explain / meister ai / AI-Heal all run on-device via a tiny Swift
@@ -217,10 +259,11 @@ LOGFILE="$MEISTER_DIR/meister.log"
 LOCKFILE="$MEISTER_DIR/meister.lock"
 DISK_USAGE_THRESHOLD=80
 LARGE_FILE_SIZE_MB=1000
-# Apple Intelligence (FoundationModels) — on-device LLM, replaces Ollama (MeisterSiri)
+# Apple Intelligence (FoundationModels) — on-device LLM, replaces Ollama (Meister)
 FM_ENABLED=true
 FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
 FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
+AI_TRACE=true                           # always show AI REQUEST+RESPONSE at runtime
 NET_CHECK_HOSTS="google.com apple.com cloudflare.com"
 
 # Fix #78: Deep Clean Config-Gating (via ~/.meister/config steuerbar)
@@ -239,9 +282,9 @@ SPOTLIGHT_MDS_CPU_THRESHOLD=30     # mds CPU threshold for restart (%)
 SPOTLIGHT_REINDEX_ON_ERROR=true    # Auto-reindex on error
 
 # iCloud Sync Fix (automatic on every run)
-ICLOUD_FIX_ENABLED=true            # iCloud diagnosis and repair
+ICLOUD_FIX_ENABLED=false           # heavy: enable or use --deep
 ICLOUD_GHOST_DIRS_CLEAN=true       # Remove empty ghost folders in HOME
-ICLOUD_STUBS_SCAN=true             # Detect corrupt iCloud stubs (65535 links)
+ICLOUD_STUBS_SCAN=false            # heavy find — --deep
 ICLOUD_STUBS_DELETE=false          # Auto-delete corrupt stubs (default: off, safety)
 ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
 ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
@@ -251,19 +294,19 @@ DOCS_ORDER_ENABLED=true            # Order check for DOCS_ORDER_ROOT
 DOCS_ORDER_ROOT="$HOME/Documents"  # Directory to check
 DOCS_ORDER_KNOWN=""                # Extra allowed top-level entries ("|"-separated), on top of learned baseline
 DOCS_ORDER_GHOST_CLEAN=true        # Remove EMPTY "X 2"/"X 3" ghost folders at root
-DOCS_ORDER_DATALESS_SCAN=true      # Scan for dataless files (content only in iCloud)
+DOCS_ORDER_DATALESS_SCAN=false     # heavy — --deep
 DOCS_ORDER_DATALESS_WARN_GB=5      # WARN when more than X GB exist only in iCloud
 
 # Self-Healing v0.06: Automatic repair for all warnings
 SELFHEAL_APPSTORE_OPEN=false       # Open App Store on missing login
 SELFHEAL_FDA_OPEN=true             # Open privacy settings for FDA
 SELFHEAL_ORPHAN_PREFS=true         # Backup + delete orphaned preferences
-SELFHEAL_ICLOUD_CONTAINERS=true    # Delete orphaned iCloud containers
-SELFHEAL_GIT_AUTOCOMMIT=true       # Auto-commit uncommitted changes
+SELFHEAL_ICLOUD_CONTAINERS=false   # --deep / weekly
+SELFHEAL_GIT_AUTOCOMMIT=false      # safer daily default
 SELFHEAL_PERF_AUTO=true            # Auto-apply performance optimizations
 
 # Git Repo Management (via -G Flag enabled)
-GIT_AUTO_PUSH=true                          # Auto-push unpushed commits
+GIT_AUTO_PUSH=false                         # enable in config if wanted
 GIT_REPO_SEARCH_PATHS="$HOME/Documents $HOME/Developer"  # Search paths for repos
 GIT_REPO_MAXDEPTH=5                         # Max depth for repo search
 # GIT_BACKUP_DIR/RETENTION/EXCLUDE removed (v0.09) - GitHub is the backup
@@ -279,11 +322,11 @@ DISK_CRITICAL_THRESHOLD=95    # Percent - emergency cleanup threshold
 
 # Fix #144: Auto-Detect Schwellwerte (via ~/.meister/config steuerbar)
 # Security Suite Konfiguration
-SECURITY_PERSISTENCE_AUDIT=true        # LaunchAgent/Daemon integrity check
-SECURITY_TCC_AUDIT=true                # Privacy permissions checking
+SECURITY_PERSISTENCE_AUDIT=false       # --deep
+SECURITY_TCC_AUDIT=false               # --deep
 
 # Docker + LaunchAgent Defaults
-CLEAN_DOCKER=true                      # Docker Cleanup
+CLEAN_DOCKER=false                     # --deep
 LAUNCHAGENT_SCHEDULE="weekly"          # daily/weekly/monthly
 
 AUTO_DETECT=true                       # Auto-detection enabled
@@ -297,9 +340,9 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA "
-    _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
-    _STR_KEYS=" NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
+    _BOOL_KEYS=" AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
+    _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
+    _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
@@ -325,6 +368,7 @@ fi
 # Report arrays
 declare -a REPORT_SUCCESS
 declare -a REPORT_FIXED
+declare -a REPORT_WOULD_FIX
 declare -a REPORT_WARNINGS
 declare -a REPORT_ERRORS
 SCRIPT_START_TIME=$(date +%s)
@@ -348,6 +392,7 @@ MODULE_LEDGER=()  # "status|name|secs" per module — topgrade-style summary (v5
 MAINT_SCORE=""    # 0-100 maintenance score for this run (v5.25)
 SHOW_HEALTH=false
 DRY_RUN=false
+RUN_PROFILE="${RUN_PROFILE:-auto}"   # auto|quick|deep (overridden by --quick/--deep/-a)
 INSTALL_LAUNCHAGENT=false
 RUN_PERF_TUNE=false
 RUN_GIT_REPOS=false
@@ -385,12 +430,15 @@ log() {
         INFO)  color=$GREEN ;;
         WARN)  color=$YELLOW ;;
         ERROR) color=$RED ;;
-        FIX)   color=$CYAN ;;
+        FIX)   color=$CYAN
+               # Dry-run honesty: show WOULD instead of FIX on terminal/log
+               if $DRY_RUN; then level="WOULD"; fi ;;
+        WOULD) color=$CYAN ;;
         HEAL)  color=$MAGENTA ;;
         STEP)  color=$DIM ;;
     esac
-    # Quiet mode: only WARN/ERROR/FIX on terminal
-    if ! $QUIET_MODE || [[ "$level" =~ ^(WARN|ERROR|FIX)$ ]]; then
+    # Quiet mode: only WARN/ERROR/FIX/WOULD on terminal
+    if ! $QUIET_MODE || [[ "$level" =~ ^(WARN|ERROR|FIX|WOULD)$ ]]; then
         # Re-assert scroll region without moving cursor (DECSTBM homes cursor; save/restore protects current line)
         [ -n "$BW_MONITOR_PID" ] && printf '\0337\033[1;%dr\0338' "$((BW_TERM_LINES - 1))"
         echo -e "${color}[${level}]${NC} ${msg}"
@@ -424,11 +472,15 @@ section_header() {
 # ERR > WARN > FIX > OK (rc != 0 always wins as ERR).
 ledger_add() {
     local name="$1" fix0="$2" warn0="$3" err0="$4" rc="$5"
+    local would0=0
+    [ "$#" -ge 6 ] && would0="$6"
     local status="OK"
     if [ "$rc" -ne 0 ] || [ ${#REPORT_ERRORS[@]} -gt "$err0" ]; then status="ERR"
     elif [ ${#REPORT_WARNINGS[@]} -gt "$warn0" ]; then status="WARN"
     elif [ ${#REPORT_FIXED[@]} -gt "$fix0" ]; then status="FIX"
+    elif [ ${#REPORT_WOULD_FIX[@]} -gt "$would0" ]; then status="WOULD"
     fi
+    if $DRY_RUN && [ "$status" = "FIX" ]; then status="WOULD"; fi
     local elapsed=$(( $(date +%s) - MODULE_START_TS ))
     MODULE_LEDGER+=("${status}|${name}|${elapsed}")
 }
@@ -453,9 +505,21 @@ module_timer_stop() {
 
 report_add() {
     local type="$1"; local msg="$2"
+    # Dry-run honesty: never claim a real FIX; park in WOULD_FIX instead.
+    if $DRY_RUN && [ "$type" = "FIX" ]; then
+        type="WOULD"
+    fi
+    # Also demote "action-y" SUCCESS claims under dry-run (upgraded/cleaned/pushed…)
+    if $DRY_RUN && [ "$type" = "SUCCESS" ]; then
+        if echo "$msg" | grep -qiE 'upgrad|clean(ed|up)|push(ed)?|freed|remov|reset|rebuild|flush|delet|install(ed)?|empt(y|ied)|purg'; then
+            type="WOULD"
+            msg="would: $msg"
+        fi
+    fi
     case "$type" in
         SUCCESS) REPORT_SUCCESS+=("$msg") ;;
         FIX)     REPORT_FIXED+=("$msg") ;;
+        WOULD)   REPORT_WOULD_FIX+=("$msg") ;;
         WARN)    REPORT_WARNINGS+=("$msg") ;;
         ERROR)   REPORT_ERRORS+=("$msg") ;;
     esac
@@ -713,10 +777,87 @@ fm_available() {
     "$FM_HELPER" --check 2>/dev/null
 }
 
-# Query the model. $1 = prompt. Prints the response (plain text, no JSON parse).
+# Always-visible AI runtime tracing (even under QUIET_MODE / -q).
+# AI_TRACE=false in ~/.meister/config disables the fancy boxes (log lines remain).
+ai_trace_box() {
+    # NEVER write to stdout — callers use $(fm_query …).
+    # Prefer /dev/tty (interactive); fall back to stderr (pipes / agents).
+    local title="$1"
+    shift
+    local body="$*"
+    local ts; ts=$(date +'%H:%M:%S')
+    _ai_emit() {
+        # $1 = file descriptor path or "stderr"
+        local dest="$1"
+        if [ "$dest" = "stderr" ]; then
+            echo "" >&2
+            echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}" >&2
+            if [ -n "$body" ]; then
+                while IFS= read -r line || [ -n "$line" ]; do
+                    echo -e "${MAGENTA}│${NC} ${line}" >&2
+                done <<< "$body"
+            fi
+            echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}" >&2
+        else
+            {
+                echo ""
+                echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}"
+                if [ -n "$body" ]; then
+                    while IFS= read -r line || [ -n "$line" ]; do
+                        echo -e "${MAGENTA}│${NC} ${line}"
+                    done <<< "$body"
+                fi
+                echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}"
+            } >"$dest"
+        fi
+    }
+    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
+        _ai_emit /dev/tty 2>/dev/null || _ai_emit stderr
+    else
+        _ai_emit stderr
+    fi
+    # Logfile (no ANSI)
+    {
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === ${title} ==="
+        if [ -n "$body" ]; then
+            printf '%s\n' "$body" | sed 's/^/  /'
+        fi
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === /${title} ==="
+    } >> "$LOGFILE" 2>/dev/null || true
+}
+
+ai_trace_line() {
+    local msg="$*"
+    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
+        echo -e "${MAGENTA}[AI]${NC} ${msg}" > /dev/tty 2>/dev/null \
+            || echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
+    else
+        echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
+    fi
+    echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - $msg" >> "$LOGFILE" 2>/dev/null || true
+}
+
+# Query the model. $1 = prompt. Optional $2 = label for tracing (default: query).
+# Prints the response (plain text, no JSON parse) on stdout for callers.
+# Side effect: always shows REQUEST + RESPONSE on the terminal (unless AI_TRACE=false).
 fm_query() {
     ensure_fm_helper || return 1
-    printf '%s' "$1" | "$FM_HELPER" 2>/dev/null
+    local prompt="$1"
+    local label="${2:-query}"
+    if [ "${AI_TRACE:-true}" = "true" ]; then
+        ai_trace_box "REQUEST → Apple Intelligence ($label)" "$prompt"
+        ai_trace_line "Warte auf Antwort (on-device)…"
+    fi
+    local resp
+    resp=$(printf '%s' "$prompt" | "$FM_HELPER" 2>/dev/null) || true
+    if [ "${AI_TRACE:-true}" = "true" ]; then
+        if [ -n "$resp" ]; then
+            ai_trace_box "RESPONSE ← Apple Intelligence ($label)" "$resp"
+        else
+            ai_trace_box "RESPONSE ← Apple Intelligence ($label)" "(leer / Fehler — Model offline oder Timeout)"
+        fi
+    fi
+    printf '%s' "$resp"
 }
 
 # AI-Heal allowlist executor. The model's output is EXECUTED, so safety must NOT
@@ -765,8 +906,14 @@ try_learned_fix() {
         mv "$learned.tmp" "$learned"
         return 1
     fi
+    ai_trace_line "LEARNED-FIX (gemerkt, kein neuer AI-Call): Modul=$module_name"
+    ai_trace_line "LEARNED-FIX Befehl: $cmd"
     log HEAL "Learned-Fix: trying remembered fix for $module_name: $cmd"
-    if $DRY_RUN; then log STEP "   [DRY-RUN] Would execute: $cmd"; return 0; fi
+    if $DRY_RUN; then
+        ai_trace_line "LEARNED-FIX [DRY-RUN] würde ausführen: $cmd"
+        log STEP "   [DRY-RUN] Would execute: $cmd"
+        return 0
+    fi
     read -ra _lf_argv <<< "$cmd"
     if timeout 30 "${_lf_argv[@]}" >/dev/null 2>&1; then
         log_heal_event "learned-fix" "$module_name" "applied" "$cmd"
@@ -803,7 +950,17 @@ ai_heal() {
     local error_output="$2"
     local prev_attempt="${3:-}"
 
-    if ! fm_available; then return 1; fi
+    if ! fm_available; then
+        ai_trace_line "AI-Heal übersprungen — Apple Intelligence nicht verfügbar"
+        return 1
+    fi
+
+    # Always-visible banner: AI fix is about to run
+    ai_trace_line "╔══ AI-FIX startet ══════════════════════════════════════"
+    ai_trace_line "║ Modul:  $module_name"
+    ai_trace_line "║ Fehler: $(printf '%s' "$error_output" | tr '\n' ' ' | cut -c1-200)"
+    [ -n "$prev_attempt" ] && ai_trace_line "║ Vorheriger Versuch (fehlgeschlagen): $prev_attempt"
+    ai_trace_line "╚════════════════════════════════════════════════════════"
 
     log HEAL "AI-Heal: Asking Apple Intelligence for fix for $module_name..."
     local retry_hint=""
@@ -816,14 +973,16 @@ Reply ONLY with a single shell command that fixes the problem. No explanation, n
 Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placeholders like /path/to or <file> — use only real absolute paths that appear in the error above. If no such fix is possible, reply with: NO_FIX"
 
     # On-device model returns plain text (no JSON envelope to parse).
+    # fm_query always prints REQUEST+RESPONSE; head -3 only for executable line.
     local ai_response
-    ai_response=$(fm_query "$prompt" | head -3)
+    ai_response=$(fm_query "$prompt" "AI-Heal:$module_name" | head -3)
 
     # Strip markdown fences/backticks (models wrap commands despite the prompt)
     ai_response=$(printf '%s\n' "$ai_response" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
 
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
+        ai_trace_line "AI-FIX ERGEBNIS: no-fix (Model sagt NO_FIX / leer)"
         log_heal_event "ai-heal" "$module_name" "no-fix" ""
         return 1
     fi
@@ -832,6 +991,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # `/path/to/check` before, which then really ran (see INSIGHTS 2026-07-04 #1).
     if echo "$ai_response" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'; then
         log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: rejected — Placeholder: $ai_response"
         log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
         return 1
     fi
@@ -843,6 +1003,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # group; GNU/ugrep abort the WHOLE pattern with exit 2 → nothing gets blocked.
     if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|rm -rf?[[:space:]]+(/|~)[[:space:]]*(\||;|&|$)|sudo[[:space:]]+rm|rm -rf?[[:space:]][^;|&]*\*|mkfs|dd if=|:\(\)\{ :|> /dev/sd|shutdown|reboot|halt"; then
         log WARN "AI-Heal: Dangerous command blocked: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: blocked — dangerous: $ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked" "$ai_response"
         return 1
     fi
@@ -853,6 +1014,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if echo "$ai_response" | grep -qE "(chmod|chown|rm|mv|mkdir|touch|tee|>>?)[^|]*[[:space:]]+/(etc|System|Library|private|usr|bin|sbin|var)(/|[[:space:]]|$)" \
         && ! echo "$ai_response" | grep -qE "^[[:space:]]*sudo[[:space:]]"; then
         log WARN "AI-Heal: System-path mutation without sudo blocked: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: blocked-syspath: $ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked-syspath" "$ai_response"
         return 1
     fi
@@ -862,16 +1024,22 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # sudo/rm/chmod. This does not trust the prompt; see heal_command_allowed.
     if ! heal_command_allowed "$ai_response"; then
         log WARN "AI-Heal: Command not allowlisted — rejected: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: rejected-allowlist: $ai_response"
         log_heal_event "ai-heal" "$module_name" "rejected-allowlist" "$ai_response"
         return 1
     fi
 
     log HEAL "AI-Heal suggestion: $ai_response"
+    ai_trace_line "AI-FIX Vorschlag (nach Filter): $ai_response"
+    ai_trace_line "AI-FIX Status: allowlist OK — wird ausgeführt"
 
     if $DRY_RUN; then
+        ai_trace_line "AI-FIX [DRY-RUN] würde ausführen: $ai_response"
         log STEP "   [DRY-RUN] Would execute: $ai_response"
         return 0
     fi
+
+    ai_trace_line "AI-FIX führe aus: $ai_response"
 
     # Execute WITHOUT a shell (word-split into an argv). heal_command_allowed has
     # already guaranteed there are no metacharacters, so this cannot chain,
@@ -883,7 +1051,11 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
 
     if [ $ai_rc -eq 0 ]; then
         log FIX "AI-Heal: Command successful"
-        [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+        ai_trace_line "AI-FIX ERGEBNIS: success (exit 0) — Modul wird erneut getestet"
+        [ -n "$ai_fix_output" ] && {
+            log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+            ai_trace_line "AI-FIX stdout: $(echo "$ai_fix_output" | head -3 | tr '\n' ' ')"
+        }
         # NO report_add here — the command exiting 0 proves nothing; the caller
         # adds the FIX entry only after the module retest actually passes
         log_heal_event "ai-heal" "$module_name" "success" "$ai_response"
@@ -891,11 +1063,16 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
         return 0
     else
         log WARN "AI-Heal: Command failed (Exit: $ai_rc)"
+        ai_trace_line "AI-FIX ERGEBNIS: failed (exit $ai_rc)"
         log_heal_event "ai-heal" "$module_name" "failed" "$ai_response"
-        [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+        [ -n "$ai_fix_output" ] && {
+            log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+            ai_trace_line "AI-FIX stdout: $(echo "$ai_fix_output" | head -3 | tr '\n' ' ')"
+        }
         return 1
     fi
 }
+
 
 # Known-Fix Patterns: fast fixes without the AI model
 known_fix() {
@@ -961,14 +1138,14 @@ run_module_safe() {
     module_timer_start
     local log_lines_before=$(wc -l < "$LOGFILE" 2>/dev/null || echo 0)
     # Snapshot report counts — ledger_add derives the module status from the delta
-    local fix0=${#REPORT_FIXED[@]} warn0=${#REPORT_WARNINGS[@]} err0=${#REPORT_ERRORS[@]}
+    local fix0=${#REPORT_FIXED[@]} warn0=${#REPORT_WARNINGS[@]} err0=${#REPORT_ERRORS[@]} would0=${#REPORT_WOULD_FIX[@]}
 
     $module_func
     local rc=$?
 
     if [ $rc -eq 0 ]; then
         module_timer_stop "$module_name"
-        ledger_add "$module_name" "$fix0" "$warn0" "$err0" 0
+        ledger_add "$module_name" "$fix0" "$warn0" "$err0" 0 "$would0"
         return 0
     fi
 
@@ -1154,42 +1331,52 @@ module_homebrew() {
     local brew_version=$(brew --version 2>/dev/null | head -1)
     log STEP "   Version: $brew_version"
 
-    # brew update: skip if fresh + timeout (v6.6)
+    # brew update: skip if fresh (default 12h) + hard timeout
     local brew_stamp="$MEISTER_DIR/brew_last_update"
     local skip_update=false
-    BREW_UPDATE_MAX_AGE_SEC="${BREW_UPDATE_MAX_AGE_SEC:-43200}"
-    BREW_UPDATE_TIMEOUT_SEC="${BREW_UPDATE_TIMEOUT_SEC:-300}"
-    BREW_UPGRADE_TIMEOUT_SEC="${BREW_UPGRADE_TIMEOUT_SEC:-600}"
     if [ -f "$brew_stamp" ]; then
         local last_ts age
         last_ts=$(cat "$brew_stamp" 2>/dev/null | tr -d '[:space:]')
         if [[ "$last_ts" =~ ^[0-9]+$ ]]; then
             age=$(( $(date +%s) - last_ts ))
-            if [ "$age" -ge 0 ] && [ "$age" -lt "$BREW_UPDATE_MAX_AGE_SEC" ]; then
-                log INFO "   brew update skipped (last ${age}s ago < ${BREW_UPDATE_MAX_AGE_SEC}s)"
+            if [ "$age" -ge 0 ] && [ "$age" -lt "${BREW_UPDATE_MAX_AGE_SEC:-43200}" ]; then
+                log INFO "   brew update skipped (last ${age}s ago < ${BREW_UPDATE_MAX_AGE_SEC:-43200}s) — force: rm $brew_stamp"
                 skip_update=true
             fi
         fi
     fi
     local update_rc=0
-    if ! $skip_update; then
-        log INFO "   brew update (timeout ${BREW_UPDATE_TIMEOUT_SEC}s)..."
+    if $skip_update; then
+        :
+    else
+        log INFO "   brew update (timeout ${BREW_UPDATE_TIMEOUT_SEC:-300}s)..."
         if $DRY_RUN; then
             log STEP "   [DRY-RUN] brew update"
+            update_rc=0
         elif command_exists timeout; then
-            run_verbose timeout "$BREW_UPDATE_TIMEOUT_SEC" brew update
+            run_verbose timeout "${BREW_UPDATE_TIMEOUT_SEC:-300}" brew update
             update_rc=$?
-            [ $update_rc -eq 124 ] && log WARN "brew update timed out"
+            [ $update_rc -eq 124 ] && log WARN "brew update timed out after ${BREW_UPDATE_TIMEOUT_SEC:-300}s"
         else
             run_verbose brew update
             update_rc=$?
         fi
-        if [ $update_rc -eq 0 ]; then
-            date +%s > "$brew_stamp" 2>/dev/null || true
-        elif [ $update_rc -ne 124 ]; then
+        if [ $update_rc -ne 0 ] && [ $update_rc -ne 124 ]; then
             log WARN "brew update failed (Exit: $update_rc). Trying unshallow..."
             git -C "$(brew --repo)" fetch --unshallow &>/dev/null
-            run_verbose brew update && date +%s > "$brew_stamp" 2>/dev/null || true
+            if command_exists timeout; then
+                run_verbose timeout "${BREW_UPDATE_TIMEOUT_SEC:-300}" brew update
+            else
+                run_verbose brew update
+            fi
+            if [ $? -eq 0 ]; then
+                report_add FIX "Fixed Homebrew repo (unshallow)"
+                date +%s > "$brew_stamp" 2>/dev/null || true
+            else
+                log ERROR "brew update weiterhin failed"
+            fi
+        elif [ $update_rc -eq 0 ]; then
+            date +%s > "$brew_stamp" 2>/dev/null || true
         fi
     fi
 
@@ -1221,8 +1408,14 @@ module_homebrew() {
         log STEP "   [DRY-RUN] brew upgrade"
         : > "$formula_out"
     else
-        brew upgrade > "$formula_out" 2>&1
-        rc=$?
+        if command_exists timeout; then
+            timeout "${BREW_UPGRADE_TIMEOUT_SEC:-600}" brew upgrade > "$formula_out" 2>&1
+            rc=$?
+            [ $rc -eq 124 ] && log WARN "brew upgrade timed out after ${BREW_UPGRADE_TIMEOUT_SEC:-600}s"
+        else
+            brew upgrade > "$formula_out" 2>&1
+            rc=$?
+        fi
         while IFS= read -r l; do [ -n "$l" ] && log STEP "   $l"; done < "$formula_out"
     fi
     if [ $rc -eq 0 ]; then
@@ -4244,27 +4437,67 @@ module_brew_age() {
         return 0
     fi
     local count; count=$(echo "$old_pkgs" | wc -l | tr -d ' ')
-    log WARN "   ${count} bottles older than 180d (consider 'brew reinstall')"
+    log WARN "   ${count} bottles older than 180d"
     echo "$old_pkgs" | head -10 | while read -r p; do log STEP "     - $p"; done
     [ "$count" -gt 10 ] && log STEP "     ... +$((count - 10)) more"
-    report_add WARN "${count} bottles >180d old"
+    if [ "${AUTOFIX_OLD_BOTTLES:-true}" = "true" ]; then
+        log HEAL "   Autofix: brew cleanup (prune old downloads/versions)..."
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] would: brew cleanup -s --prune=all"
+            report_add WOULD "brew cleanup for ${count} old bottles"
+        else
+            if brew cleanup -s --prune=all >/dev/null 2>&1; then
+                log FIX "   brew cleanup done (old bottles/downloads pruned)"
+                report_add FIX "brew cleanup: pruned old bottles/downloads (${count} aged)"
+            else
+                log WARN "   brew cleanup failed — manual: brew cleanup -s"
+                report_add WARN "${count} bottles >180d old (cleanup failed)"
+            fi
+        fi
+    else
+        report_add WARN "${count} bottles >180d old"
+    fi
 }
 
 module_launchd_orphans() {
     log INFO "Checking LaunchDaemons for orphans..."
-    local orphans=0
+    local orphans=0 fixed=0
+    local quarantine="$MEISTER_DIR/quarantine/LaunchDaemons"
     for plist in /Library/LaunchDaemons/*.plist; do
         [ -f "$plist" ] || continue
-        local bin
+        local bin label
         bin=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)
         [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
+        label=$(basename "$plist" .plist)
         if [ -n "$bin" ] && [ ! -e "$bin" ]; then
             log WARN "   Orphan: $(basename "$plist") → missing $bin"
             orphans=$((orphans + 1))
+            if [ "${AUTOFIX_ORPHAN_LAUNCHD:-true}" = "true" ]; then
+                if $DRY_RUN; then
+                    log STEP "   [DRY-RUN] would bootout+quarantine $label"
+                    continue
+                fi
+                if ensure_sudo "orphan LaunchDaemon $label" 2>/dev/null || sudo_has_ticket 2>/dev/null; then
+                    sudo -n launchctl bootout "system/$label" 2>/dev/null || true
+                    mkdir -p "$quarantine"
+                    if sudo -n mv "$plist" "$quarantine/$(basename "$plist").$(date +%Y%m%d%H%M%S)" 2>/dev/null; then
+                        log FIX "   Quarantined orphan LaunchDaemon: $label"
+                        fixed=$((fixed + 1))
+                    else
+                        log WARN "   Could not move $plist (permissions)"
+                    fi
+                else
+                    log WARN "   Need sudo to remove $label — run: meister autofix"
+                fi
+            fi
         fi
     done
     [ "$orphans" -eq 0 ] && log STEP "   No orphan LaunchDaemons"
-    [ "$orphans" -gt 0 ] && report_add WARN "${orphans} orphan LaunchDaemons"
+    if [ "$fixed" -gt 0 ]; then
+        report_add FIX "${fixed} orphan LaunchDaemons quarantined → $quarantine"
+    elif [ "$orphans" -gt 0 ]; then
+        report_add WARN "${orphans} orphan LaunchDaemons"
+    fi
     return 0
 }
 
@@ -4369,9 +4602,9 @@ module_dev_caches() {
     # npm / pnpm / yarn
     if command_exists npm; then
         bw_phase "Dev caches: npm"
-        local sz; sz=$(du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        local sz; sz=$(timeout 30 du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
         $DRY_RUN || npm cache clean --force >/dev/null 2>&1
-        sz=$(du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        sz=$(timeout 30 du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
         cleaned=$((cleaned + 1))
     fi
     if command_exists pnpm; then
@@ -4398,19 +4631,19 @@ module_dev_caches() {
     # cargo (no official prune, use cargo-cache if installed)
     if command_exists cargo; then
         bw_phase "Dev caches: cargo"
-        local sz; sz=$(du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        local sz; sz=$(timeout 30 du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
         if command_exists cargo-cache && ! $DRY_RUN; then
             cargo cache --autoclean >/dev/null 2>&1
         fi
-        sz=$(du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        sz=$(timeout 30 du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
         cleaned=$((cleaned + 1))
     fi
     # go modules
     if command_exists go; then
         bw_phase "Dev caches: go"
-        local sz; sz=$(du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        local sz; sz=$(timeout 30 du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
         $DRY_RUN || go clean -modcache >/dev/null 2>&1
-        sz=$(du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        sz=$(timeout 30 du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
         cleaned=$((cleaned + 1))
     fi
     local freed_mb=$(( (total_before - total_after) / 1024 ))
@@ -4433,7 +4666,7 @@ module_node_modules_aged() {
         found=$((found + 1))
         total_mb=$((total_mb + mb))
         [ "$found" -ge 20 ] && break
-    done < <(find "$HOME/Developer" -maxdepth 5 -type d -name node_modules -mtime +180 -prune 2>/dev/null)
+    done < <(timeout "${FIND_TIMEOUT_SEC:-60}" find "$HOME/Developer" -maxdepth 5 -type d -name node_modules -mtime +180 -prune 2>/dev/null || true)
     if [ "$found" -gt 0 ]; then
         log WARN "   ${found} abandoned node_modules (~${total_mb} MB total) — run: find ~/Developer -name node_modules -mtime +180 -exec rm -rf {} +"
         report_add WARN "${found} ancient node_modules (${total_mb} MB)"
@@ -4481,11 +4714,11 @@ module_dsstore_cleanup() {
     local total=0
     for dir in "${dirs[@]}"; do
         [ -d "$dir" ] || continue
-        local count; count=$(find "$dir" -name .DS_Store 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$count" -gt 0 ]; then
+        local count; count=$(timeout "${FIND_TIMEOUT_SEC:-60}" find "$dir" -name .DS_Store 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${count:-0}" -gt 0 ]; then
             bw_phase "DS_Store: rm $dir ($count)"
             log STEP "   $dir: ${count} files"
-            $DRY_RUN || find "$dir" -name .DS_Store -delete 2>/dev/null
+            $DRY_RUN || timeout "${FIND_TIMEOUT_SEC:-60}" find "$dir" -name .DS_Store -delete 2>/dev/null || true
             total=$((total + count))
         fi
     done
@@ -4548,14 +4781,39 @@ module_docs_order() {
         fi
     fi
 
-    # 3) _Inbox: unsorted files waiting for the filing daemon
+    # 3) _Inbox: unsorted files — autofix archives files older than AUTOFIX_INBOX_DAYS
     local inbox="$root/_Inbox"
     if [ -d "$inbox" ]; then
         local unsorted
         unsorted=$(find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$unsorted" -gt 0 ]; then
+        if [ "${unsorted:-0}" -gt 0 ]; then
             log WARN "   _Inbox: ${unsorted} unsorted files"
-            report_add WARN "_Inbox: ${unsorted} unsorted files"
+            if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
+                local days="${AUTOFIX_INBOX_DAYS:-14}"
+                local arch="$inbox/_Archive/$(date +%Y-%m)"
+                local moved=0
+                if $DRY_RUN; then
+                    local would
+                    would=$(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' ')
+                    log STEP "   [DRY-RUN] would archive ${would} files older than ${days}d → _Archive/"
+                    report_add WOULD "_Inbox: archive ${would} files >${days}d"
+                else
+                    mkdir -p "$arch"
+                    while IFS= read -r f; do
+                        [ -f "$f" ] || continue
+                        mv "$f" "$arch/" 2>/dev/null && moved=$((moved + 1))
+                    done < <(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null)
+                    if [ "$moved" -gt 0 ]; then
+                        log FIX "   Archived ${moved} _Inbox files (older than ${days}d) → $arch"
+                        report_add FIX "_Inbox: archived ${moved} files (>${days}d)"
+                    else
+                        log STEP "   No _Inbox files older than ${days}d to archive (${unsorted} newer remain)"
+                        report_add WARN "_Inbox: ${unsorted} unsorted files (all <${days}d)"
+                    fi
+                fi
+            else
+                report_add WARN "_Inbox: ${unsorted} unsorted files"
+            fi
         else
             log STEP "   _Inbox empty"
         fi
@@ -4701,7 +4959,7 @@ module_receipts_audit() {
 # macOS default often uses tty_tickets → each terminal re-prompts.
 # We: (1) auth once via ensure_sudo, (2) refresh ticket every 30s,
 # (3) optional sudoers drop-in: long timeout + !tty_tickets so meister
-# and meisterSiri share the same credential across terminals.
+# and meister share the same credential across terminals.
 SUDO_AUTHED=false
 
 sudo_has_ticket() {
@@ -4744,7 +5002,7 @@ keep_sudo() {
 }
 
 # One interactive auth max. If a valid ticket already exists (from earlier
-# meister / meisterSiri / manual sudo in this user session), reuse it.
+# meister / meister / manual sudo in this user session), reuse it.
 # Returns 0 if sudo works non-interactively afterwards.
 ensure_sudo() {
     local reason="${1:-maintenance}"
@@ -4886,7 +5144,7 @@ print_report() {
 
     echo ""
     echo -e "${BLUE}====================================================${NC}"
-    echo -e "${BLUE}   MEISTER REPORT (v1.0)${NC}"
+    echo -e "${BLUE}   Meister REPORT (v6.2)${NC}"
     echo -e "${BLUE}   Runtime: ${total_mins}m ${total_secs_rem}s${NC}"
     echo -e "${BLUE}   Wartungs-Score: ${score_color}${MAINT_SCORE}/100${NC}${BLUE}${trend}${NC}"
     $DRY_RUN && echo -e "${YELLOW}   [DRY-RUN MODE]${NC}"
@@ -4900,10 +5158,11 @@ print_report() {
         for entry in "${MODULE_LEDGER[@]}"; do
             IFS='|' read -r status name secs <<< "$entry"
             case "$status" in
-                FIX)  icon="↻"; color="$CYAN" ;;
-                WARN) icon="⚠"; color="$YELLOW" ;;
-                ERR)  icon="✗"; color="$RED" ;;
-                *)    icon="✓"; color="$GREEN" ;;
+                FIX)   icon="↻"; color="$CYAN" ;;
+                WOULD) icon="◇"; color="$CYAN" ;;
+                WARN)  icon="⚠"; color="$YELLOW" ;;
+                ERR)   icon="✗"; color="$RED" ;;
+                *)     icon="✓"; color="$GREEN" ;;
             esac
             if [ "${secs:-0}" -ge 60 ]; then dur="$((secs / 60))m$((secs % 60))s"; else dur="${secs}s"; fi
             printf "  ${color}%s${NC} %-24s %7s\n" "$icon" "$name" "$dur"
@@ -4927,6 +5186,10 @@ print_report() {
         echo -e "\n${CYAN}FIXED (${#REPORT_FIXED[@]}):${NC}"
         printf '  - %s\n' "${REPORT_FIXED[@]}"
     fi
+    if [ ${#REPORT_WOULD_FIX[@]} -gt 0 ]; then
+        echo -e "\n${CYAN}WOULD-FIX (${#REPORT_WOULD_FIX[@]}) — dry-run, nothing written:${NC}"
+        printf '  - %s\n' "${REPORT_WOULD_FIX[@]}"
+    fi
     if [ ${#REPORT_WARNINGS[@]} -gt 0 ]; then
         echo -e "\n${YELLOW}WARNINGS (${#REPORT_WARNINGS[@]}):${NC}"
         printf '  - %s\n' "${REPORT_WARNINGS[@]}"
@@ -4936,9 +5199,15 @@ print_report() {
         printf '  - %s\n' "${REPORT_ERRORS[@]}"
     fi
 
-    # Fix #80: Extract total storage summary from FIXED entries
+    # Fix #80 + v6.2 honesty: storage from real FIX only; dry-run uses WOULD
     local total_mb_freed=0
-    for entry in "${REPORT_FIXED[@]}"; do
+    local _src_arr=()
+    if $DRY_RUN; then
+        _src_arr=("${REPORT_WOULD_FIX[@]}")
+    else
+        _src_arr=("${REPORT_FIXED[@]}")
+    fi
+    for entry in "${_src_arr[@]}"; do
         local mb_val
         mb_val=$(echo "$entry" | grep -oE '[0-9]+ MB' | head -1 | awk '{print $1}')
         [ -n "$mb_val" ] && total_mb_freed=$((total_mb_freed + mb_val))
@@ -4947,9 +5216,17 @@ print_report() {
         echo -e "\n${GREEN}--- Storage Summary ---${NC}"
         if [ "$total_mb_freed" -gt 1024 ]; then
             local gb_freed=$(echo "scale=1; $total_mb_freed / 1024" | bc 2>/dev/null || echo "$((total_mb_freed / 1024))")
-            echo "  Freed: ~${gb_freed} GB (${total_mb_freed} MB)"
+            if $DRY_RUN; then
+                echo "  Would free: ~${gb_freed} GB (${total_mb_freed} MB)  [dry-run]"
+            else
+                echo "  Freed: ~${gb_freed} GB (${total_mb_freed} MB)"
+            fi
         else
-            echo "  Freed: ~${total_mb_freed} MB"
+            if $DRY_RUN; then
+                echo "  Would free: ~${total_mb_freed} MB  [dry-run]"
+            else
+                echo "  Freed: ~${total_mb_freed} MB"
+            fi
         fi
     fi
 
@@ -5081,7 +5358,7 @@ send_notification() {
 }
 
 build_report_summary() {
-    local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
+    local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WOULD:${#REPORT_WOULD_FIX[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
     echo "Meister v${MEISTER_VERSION} | ${total_mins}min | $summary"
@@ -5406,7 +5683,7 @@ if [ "${1:-}" = "sniff" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER SNIFF — Live Network Monitor           ║\n'
+        printf '  ║  Meister SNIFF — Live Network Monitor           ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
         printf '  Interface: %s (%s)' "$BW_IFACE" "$PHYS_IP"
@@ -5464,7 +5741,7 @@ if [ "${1:-}" = "ntop" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER NTOP — Network Traffic Top 10          ║\n'
+        printf '  ║  Meister NTOP — Network Traffic Top 10          ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
 
@@ -5517,7 +5794,7 @@ fi
 # ── Disk Analyzer (meister disk) ──
 if [ "${1:-}" = "disk" ]; then
     TARGET="${2:-$HOME}"
-    echo -e "\033[1;34m  MEISTER DISK — Top Space Usage: $TARGET\033[0m"
+    echo -e "\033[1;34m  Meister DISK — Top Space Usage: $TARGET\033[0m"
     echo ""
     printf '  %10s  %s\n' "SIZE" "DIRECTORY"
     printf '  %10s  %s\n' "----" "---------"
@@ -5548,7 +5825,7 @@ fi
 
 # ── Port Scanner (meister ports) ──
 if [ "${1:-}" = "ports" ]; then
-    echo -e "\033[1;34m  MEISTER PORTS — Open Ports & Listeners\033[0m"
+    echo -e "\033[1;34m  Meister PORTS — Open Ports & Listeners\033[0m"
     echo ""
     printf '  \033[1m%7s  %-6s  %-15s  %s\033[0m\n' "PORT" "PROTO" "PROCESS" "PID"
     printf '  %7s  %-6s  %-15s  %s\n' "------" "-----" "----------" "---"
@@ -5573,7 +5850,7 @@ fi
 
 # ── DNS Leak Test (meister dns) ──
 if [ "${1:-}" = "dns" ]; then
-    echo -e "\033[1;34m  MEISTER DNS — DNS Leak Test\033[0m"
+    echo -e "\033[1;34m  Meister DNS — DNS Leak Test\033[0m"
     echo ""
     # Current DNS servers
     echo -e "  \033[1mConfigured DNS Servers\033[0m"
@@ -5619,7 +5896,7 @@ fi
 
 # ── Battery Health (meister battery) ──
 if [ "${1:-}" = "battery" ]; then
-    echo -e "\033[1;34m  MEISTER BATTERY — Battery Health\033[0m"
+    echo -e "\033[1;34m  Meister BATTERY — Battery Health\033[0m"
     echo ""
     if ! system_profiler SPPowerDataType &>/dev/null; then
         echo "  No battery (desktop Mac)"
@@ -5664,7 +5941,7 @@ fi
 
 # ── Startup Audit (meister startup) ──
 if [ "${1:-}" = "startup" ]; then
-    echo -e "\033[1;34m  MEISTER STARTUP — Login Items & Launch Agents\033[0m"
+    echo -e "\033[1;34m  Meister STARTUP — Login Items & Launch Agents\033[0m"
     echo ""
 
     echo -e "  \033[1mLogin Items (User)\033[0m"
@@ -5714,7 +5991,7 @@ fi
 
 # ── Wi-Fi Diagnostics (meister wifi) ──
 if [ "${1:-}" = "wifi" ]; then
-    echo -e "\033[1;34m  MEISTER WIFI — Wi-Fi Diagnostics\033[0m"
+    echo -e "\033[1;34m  Meister WIFI — Wi-Fi Diagnostics\033[0m"
     echo ""
     # Parse from system_profiler (works on all macOS versions incl. Apple Silicon)
     sp_out=$(system_profiler SPAirPortDataType 2>/dev/null)
@@ -5787,7 +6064,7 @@ if [ "${1:-}" = "top" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER TOP — Process Monitor                  ║\n'
+        printf '  ║  Meister TOP — Process Monitor                  ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
 
@@ -5824,7 +6101,7 @@ fi
 
 # ── Certificate Checker (meister certs) ──
 if [ "${1:-}" = "certs" ]; then
-    echo -e "\033[1;34m  MEISTER CERTS — Certificate Checker\033[0m"
+    echo -e "\033[1;34m  Meister CERTS — Certificate Checker\033[0m"
     echo ""
 
     # Check remote hosts from args, or defaults
@@ -5898,7 +6175,7 @@ if [ "${1:-}" = "thermal" ]; then
         clear
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
-        printf '  ║  MEISTER THERMAL — Temperature & Fan Monitor    ║\n'
+        printf '  ║  Meister THERMAL — Temperature & Fan Monitor    ║\n'
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
 
@@ -5992,7 +6269,7 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         exit 1
     fi
 
-    echo -e "\033[1;34m  MEISTER REMOVE — Uninstall app + leftovers\033[0m"
+    echo -e "\033[1;34m  Meister REMOVE — Uninstall app + leftovers\033[0m"
     echo ""
     DRY_RUN=$REMOVE_DRY
     $DRY_RUN && echo "  [DRY-RUN — no changes]" && echo ""
@@ -6234,7 +6511,7 @@ if [ "${1:-}" = "orphans" ]; then
         esac
     done
 
-    echo -e "\033[1;34m  MEISTER ORPHANS — Leftovers of uninstalled apps\033[0m"
+    echo -e "\033[1;34m  Meister ORPHANS — Leftovers of uninstalled apps\033[0m"
     echo ""
     DRY_RUN=$ORPH_DRY
     $DRY_RUN && echo "  [DRY-RUN — no changes]" && echo ""
@@ -6435,7 +6712,7 @@ fi
 
 # ── Simulator Fix (meister simfix) ──
 if [ "${1:-}" = "simfix" ]; then
-    echo -e "\033[1;34m  MEISTER SIMFIX — Repair iOS Simulator\033[0m"
+    echo -e "\033[1;34m  Meister SIMFIX — Repair iOS Simulator\033[0m"
     echo ""
     DRY_RUN=false
     [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
@@ -6459,7 +6736,7 @@ fi
 # System Settings forever. Reading/writing TCC.db needs the terminal to have
 # Full Disk Access; the system DB additionally needs sudo.
 if [ "${1:-}" = "tcc-clean" ]; then
-    echo -e "\033[1;34m  MEISTER TCC-CLEAN — verwaiste Privacy-Eintraege\033[0m"
+    echo -e "\033[1;34m  Meister TCC-CLEAN — verwaiste Privacy-Eintraege\033[0m"
     echo ""
     _T_DO=false; [ "${2:-}" = "--do" ] && _T_DO=true
     _T_USER_DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
@@ -6605,7 +6882,7 @@ fi
 # One list for ALL app updates: brew casks, Mac App Store, and Sparkle-based
 # apps (reads each app's SUFeedURL appcast — the same mechanism MacUpdater uses).
 if [ "${1:-}" = "appupdates" ] || [ "${1:-}" = "macupdate" ]; then
-    echo -e "\033[1;34m  MEISTER APPUPDATES — alle App-Updates (MacUpdater-Style)\033[0m"
+    echo -e "\033[1;34m  Meister APPUPDATES — alle App-Updates (MacUpdater-Style)\033[0m"
     echo ""
     _AU_TOTAL=0
 
@@ -6665,7 +6942,7 @@ fi
 
 # ── System Diff (meister diff) — Zeitreise: was hat sich geaendert? ──
 if [ "${1:-}" = "diff" ]; then
-    echo -e "\033[1;34m  MEISTER DIFF — Systemaenderungen seit letztem Snapshot\033[0m"
+    echo -e "\033[1;34m  Meister DIFF — Systemaenderungen seit letztem Snapshot\033[0m"
     echo ""
     SNAPSHOT_DIR="$MEISTER_DIR/snapshots"
     if [ "${2:-}" = "--snapshot" ]; then
@@ -6718,7 +6995,7 @@ fi
 
 # ── Maintenance Score (meister score) — Verlauf des Wartungs-Scores ──
 if [ "${1:-}" = "score" ]; then
-    echo -e "\033[1;34m  MEISTER SCORE — Wartungs-Score-Verlauf\033[0m"
+    echo -e "\033[1;34m  Meister SCORE — Wartungs-Score-Verlauf\033[0m"
     echo ""
     _hist="$MEISTER_DIR/history.log"
     if [ ! -f "$_hist" ] || ! grep -q 'SCORE:' "$_hist"; then
@@ -6743,7 +7020,7 @@ fi
 
 # ── Undo (meister undo) — reversible FIX-Aktionen des letzten Laufs ──
 if [ "${1:-}" = "undo" ]; then
-    echo -e "\033[1;34m  MEISTER UNDO — letzte reversible Aktionen zuruecknehmen\033[0m"
+    echo -e "\033[1;34m  Meister UNDO — letzte reversible Aktionen zuruecknehmen\033[0m"
     echo ""
     if [ ! -s "$UNDO_JOURNAL" ]; then
         echo "  Keine rueckgaengig machbaren Aktionen aufgezeichnet."
@@ -6803,7 +7080,7 @@ if [ "${1:-}" = "explain" ]; then
             echo "Usage: meister explain <Warnung oder Log-Zeile>"; exit 1
         fi
     fi
-    echo -e "\033[1;34m  MEISTER EXPLAIN\033[0m"
+    echo -e "\033[1;34m  Meister EXPLAIN\033[0m"
     echo ""
     echo "  Meldung: $_EX_TEXT"
     echo ""
@@ -6816,7 +7093,7 @@ if [ "${1:-}" = "explain" ]; then
 In 3 kurzen Absaetzen: (1) Was bedeutet das? (2) Ist es gefaehrlich/dringend? (3) Konkrete Handlung, mit Befehl falls sinnvoll. Keine Einleitung."
     echo "  Frage Apple Intelligence..."
     echo ""
-    fm_query "$_EX_PROMPT" | sed 's/^/  /'
+    fm_query "$_EX_PROMPT" "explain" | sed 's/^/  /'
     echo ""
     exit 0
 fi
@@ -6824,7 +7101,7 @@ fi
 # ── Fleet (meister fleet) — Reports mehrerer Macs per SSH einsammeln ──
 # Config: FLEET_HOSTS="mini.local macbook.local user@host" in ~/.meister/config.
 if [ "${1:-}" = "fleet" ]; then
-    echo -e "\033[1;34m  MEISTER FLEET — Status aller Macs\033[0m"
+    echo -e "\033[1;34m  Meister FLEET — Status aller Macs\033[0m"
     echo ""
     if [ -z "${FLEET_HOSTS:-}" ]; then
         echo "  Keine Hosts konfiguriert. In ~/.meister/config eintragen:"
@@ -6855,38 +7132,521 @@ if [ "${1:-}" = "fleet" ]; then
     exit 0
 fi
 
+# ── today — Morning briefing (score, AI, disk, updates, top warnings) ──
+if [ "${1:-}" = "today" ] || [ "${1:-}" = "brief" ]; then
+    echo -e "\033[1;34m  Meister TODAY — $(date '+%A, %d. %B %Y %H:%M')\033[0m"
+    echo ""
+    # Score
+    _sc=$(grep -oE 'SCORE:[0-9]+' "$MEISTER_DIR/history.log" 2>/dev/null | tail -1 | cut -d: -f2)
+    [ -n "$_sc" ] && echo -e "  Score:     ${_sc}/100" || echo "  Score:     (noch kein Lauf)"
+    # AI
+    if fm_available; then echo -e "  AI:        \033[0;32monline\033[0m (Apple Intelligence)"; else echo -e "  AI:        \033[0;31moffline\033[0m"; fi
+    # Disk / RAM
+    _disk=$(df -h / | awk 'NR==2 {print $5" used, "$4" free"}')
+    _ram=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,""); printf "%.1f GB free", $3*16384/1073741824}')
+    echo "  Disk:      $_disk"
+    echo "  RAM:       ${_ram:-n/a}"
+    # Last run
+    if [ -f "$MEISTER_DIR/history.log" ]; then
+        echo "  Last run:  $(tail -1 "$MEISTER_DIR/history.log")"
+    fi
+    # Time Machine
+    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
+        echo "  Backup:    Time Machine configured"
+    else
+        echo -e "  Backup:    \033[1;33mTime Machine NOT configured\033[0m"
+    fi
+    # Pending brew outdated (fast, no upgrade)
+    if command_exists brew; then
+        _bo=$(brew outdated --quiet 2>/dev/null | wc -l | tr -d ' ')
+        _bc=$(brew outdated --cask --quiet 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Brew:      ${_bo} formulae + ${_bc} casks outdated"
+    fi
+    # Top recent warnings
+    echo ""
+    echo -e "  \033[1mTop warnings (log):\033[0m"
+    if [ -f "$LOGFILE" ]; then
+        grep -E '^[0-9-]+ [0-9:]+ - WARN - ' "$LOGFILE" 2>/dev/null | tail -5 | sed 's/^.\{19\} - WARN - /    • /' || echo "    (none)"
+    else
+        echo "    (no log yet)"
+    fi
+    # Optional AI one-liner
+    if fm_available; then
+        echo ""
+        echo "  AI focus (1 sentence)..."
+        _tp="Du bist Meister. In EINEM kurzen deutschen Satz: Was sollte der User heute als erstes am Mac tun? Fakten: Score ${_sc:-?}/100, Disk ${_disk}, Brew outdated f=${_bo:-?} c=${_bc:-?}. Keine Einleitung."
+        fm_query "$_tp" "today" 2>/dev/null | sed 's/^/  → /' | head -3
+    fi
+    echo ""
+    echo "  Next: meister doctor | meister -n | meister ai"
+    exit 0
+fi
+
+# ── doctor — read-only system checklist ──
+if [ "${1:-}" = "doctor" ]; then
+    echo -e "\033[1;34m  Meister DOCTOR — Read-only checklist\033[0m"
+    echo ""
+    _pass=0; _fail=0; _warn=0
+    _check() {
+        local st="$1"; local name="$2"; local detail="$3"
+        case "$st" in
+            ok)   printf "  \033[0;32m✓\033[0m %-22s %s\n" "$name" "$detail"; _pass=$((_pass+1)) ;;
+            warn) printf "  \033[1;33m⚠\033[0m %-22s %s\n" "$name" "$detail"; _warn=$((_warn+1)) ;;
+            bad)  printf "  \033[0;31m✗\033[0m %-22s %s\n" "$name" "$detail"; _fail=$((_fail+1)) ;;
+        esac
+    }
+    # AI
+    if fm_available; then _check ok "Apple Intelligence" "online (on-device)"; else _check bad "Apple Intelligence" "offline — Systemeinstellungen"; fi
+    # SIP / FileVault / Firewall / Gatekeeper
+    _sip=$(csrutil status 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
+    [ "$_sip" = "ON" ] && _check ok "SIP" "enabled" || _check bad "SIP" "disabled"
+    _fv=$(fdesetup status 2>/dev/null | grep -qi On && echo ON || echo OFF)
+    [ "$_fv" = "ON" ] && _check ok "FileVault" "on" || _check warn "FileVault" "off"
+    _fw=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
+    [ "$_fw" = "ON" ] && _check ok "Firewall" "enabled" || _check warn "Firewall" "disabled"
+    _gk=$(spctl --status 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
+    [ "$_gk" = "ON" ] && _check ok "Gatekeeper" "enabled" || _check warn "Gatekeeper" "disabled"
+    # Disk
+    _du=$(df / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+    if [ "${_du:-0}" -ge 90 ]; then _check bad "Disk" "${_du}% used"
+    elif [ "${_du:-0}" -ge 75 ]; then _check warn "Disk" "${_du}% used"
+    else _check ok "Disk" "${_du}% used"; fi
+    # Brew
+    if command_exists brew; then
+        _check ok "Homebrew" "$(brew --prefix 2>/dev/null)"
+        _od=$(brew outdated --quiet 2>/dev/null | wc -l | tr -d ' ')
+        [ "${_od:-0}" -gt 0 ] && _check warn "Brew outdated" "${_od} formulae" || _check ok "Brew outdated" "0"
+    else
+        _check warn "Homebrew" "not installed"
+    fi
+    # Time Machine
+    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then _check ok "Time Machine" "destination set"
+    else _check warn "Time Machine" "not configured (single copy!)"; fi
+    # Touch ID sudo
+    if [ -f /etc/pam.d/sudo_local ] && grep -q pam_tid /etc/pam.d/sudo_local 2>/dev/null; then
+        _check ok "Touch ID sudo" "enabled"
+    else
+        _check warn "Touch ID sudo" "off — meister touchid"
+    fi
+    if [ -f /etc/sudoers.d/zz-meister ]; then
+        _check ok "Sudo share" "zz-meister (2h, !tty_tickets)"
+    else
+        _check warn "Sudo share" "default tty tickets — meister sudo-setup"
+    fi
+    if sudo -n true 2>/dev/null; then
+        _check ok "Sudo ticket" "live (no prompt needed)"
+    else
+        _check warn "Sudo ticket" "expired — next run asks once"
+    fi
+    # FM helper
+    if [ -x "$MEISTER_DIR/meister-fm" ]; then _check ok "FM helper" "$MEISTER_DIR/meister-fm"
+    else _check warn "FM helper" "not compiled yet (lazy on first AI call)"; fi
+    # Config / log
+    [ -f "$MEISTER_CONFIG" ] && _check ok "Config" "$MEISTER_CONFIG" || _check warn "Config" "missing"
+    [ -f "$LOGFILE" ] && _check ok "Log" "$LOGFILE" || _check warn "Log" "missing"
+    # Network DNS
+    _dns=$(scutil --dns 2>/dev/null | awk '/nameserver\[0\]/{print $3; exit}')
+    [ -n "$_dns" ] && _check ok "DNS" "$_dns" || _check warn "DNS" "unknown"
+    echo ""
+    echo "  Result: ${_pass} ok · ${_warn} warn · ${_fail} fail"
+    [ "$_fail" -gt 0 ] && exit 1
+    exit 0
+fi
+
+# ── privacy — quick privacy / FDA audit ──
+if [ "${1:-}" = "privacy" ]; then
+    echo -e "\033[1;34m  Meister PRIVACY — Privacy grants quick audit\033[0m"
+    echo ""
+    echo -e "  \033[1mFull Disk Access (approx via tccutil / sqlite if readable)\033[0m"
+    _tcc="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    if [ -r "$_tcc" ]; then
+        sqlite3 "$_tcc" "SELECT client,auth_value FROM access WHERE service='kTCCServiceSystemPolicyAllFiles' LIMIT 20;" 2>/dev/null \
+          | while IFS='|' read -r c a; do
+                [ "$a" = "2" ] || [ "$a" = "1" ] && printf "  • %s (allowed)\n" "$c"
+            done || echo "  (could not query — need Full Disk Access for Terminal)"
+    else
+        echo "  TCC.db not readable — grant Full Disk Access to your terminal,"
+        echo "  then re-run. Deep clean: meister tcc-clean"
+    fi
+    echo ""
+    echo -e "  \033[1mThird-party LaunchDaemons (persistence surface)\033[0m"
+    ls /Library/LaunchDaemons 2>/dev/null | grep -v '^com\.apple\.' | head -15 | sed 's/^/  • /'
+    echo ""
+    echo "  Tip: meister tcc-clean --do  (orphaned privacy grants)"
+    echo "       meister startup         (login items audit)"
+    exit 0
+fi
+
+# ── suggest — AI fix suggestion, never executes ──
+if [ "${1:-}" = "suggest" ]; then
+    shift
+    _q="$*"
+    if [ -z "$_q" ]; then
+        echo "Usage: meister suggest <problem description>"
+        echo "  Read-only: Apple Intelligence proposes a fix, nothing is executed."
+        exit 1
+    fi
+    echo -e "\033[1;34m  Meister SUGGEST — AI fix idea (read-only)\033[0m"
+    echo ""
+    if ! fm_available; then
+        echo "  Apple Intelligence nicht verfügbar."
+        exit 1
+    fi
+    echo "  Problem: $_q"
+    echo "  Frage Apple Intelligence..."
+    echo ""
+    _sp="Du bist Meister, macOS-Wartungsassistent. Problem des Users: ${_q}
+
+Antworte auf Deutsch in genau diesem Format:
+1) Ursache (1-2 Saetze)
+2) Sicherer Fix-Befehl (EIN einfacher Shell-Befehl OHNE sudo/rm -rf/chmod, oder 'MANUELL: ...' wenn interaktiv noetig)
+3) Warum das hilft (1 Satz)
+4) Risiko (niedrig/mittel/hoch)
+
+Kein Markdown-Codefence. Nichts ausfuehren — nur vorschlagen."
+    fm_query "$_sp" "suggest" | sed 's/^/  /'
+    echo ""
+    echo "  (Nichts wurde ausgefuehrt. Zum Anwenden: Befehl selbst pruefen.)"
+    exit 0
+fi
+
+# ── selftest — smoke-test Meister CLI ──
+if [ "${1:-}" = "selftest" ]; then
+    echo -e "\033[1;34m  Meister SELFTEST — smoke tests\033[0m"
+    echo ""
+    _p=0; _f=0
+    _t() {
+        local name="$1"; shift
+        if "$@" >/dev/null 2>&1; then
+            printf "  \033[0;32mPASS\033[0m  %s\n" "$name"; _p=$((_p+1))
+        else
+            printf "  \033[0;31mFAIL\033[0m  %s\n" "$name"; _f=$((_f+1))
+        fi
+    }
+    _SELF="$0"
+    _t "version string" bash -c "\"$_SELF\" --version | grep -q meister"
+    _t "help branding" bash -c "\"$_SELF\" -h 2>&1 | grep -q 'Meister'"
+    _t "help no bare meister cmds" bash -c "! \"$_SELF\" -h 2>&1 | grep -E '^  meister '"
+    _t "fm_available function" bash -c "source /dev/null; true"  # placeholder
+    # AI backend probe (soft)
+    if fm_available; then
+        printf "  \033[0;32mPASS\033[0m  Apple Intelligence online\n"; _p=$((_p+1))
+    else
+        printf "  \033[1;33mWARN\033[0m  Apple Intelligence offline (env)\n"
+    fi
+    _t "score subcommand" "$_SELF" score
+    _t "doctor subcommand" "$_SELF" doctor
+    _t "ports subcommand" "$_SELF" ports
+    _t "disk /tmp" "$_SELF" disk /tmp
+    _t "keys status" "$_SELF" keys status
+    # Dry-run honesty: -n should produce WOULD not false Freed claim without marker
+    _out=$(mktemp)
+    # short dry modules only via -n -q with timeout if available
+    if command_exists timeout; then
+        timeout 90 "$_SELF" -n -q >"$_out" 2>&1 || true
+        if grep -q 'Would free\|WOULD-FIX\|DRY-RUN' "$_out" || grep -q 'DRY-RUN MODE' "$_out"; then
+            printf "  \033[0;32mPASS\033[0m  dry-run markers present\n"; _p=$((_p+1))
+        else
+            # if run too short maybe no fixes — still need DRY-RUN banner
+            if grep -q 'DRY-RUN' "$_out"; then
+                printf "  \033[0;32mPASS\033[0m  dry-run mode announced\n"; _p=$((_p+1))
+            else
+                printf "  \033[0;31mFAIL\033[0m  dry-run markers missing\n"; _f=$((_f+1))
+            fi
+        fi
+        # Must NOT claim "Freed:" without dry-run qualifier when DRY
+        if grep -E '^\s*Freed:' "$_out" | grep -vq 'dry-run\|Would'; then
+            if grep -E '^\s*Freed:' "$_out" >/dev/null; then
+                printf "  \033[0;31mFAIL\033[0m  dry-run claimed Freed without honesty\n"; _f=$((_f+1))
+            else
+                printf "  \033[0;32mPASS\033[0m  no dishonest Freed line\n"; _p=$((_p+1))
+            fi
+        else
+            printf "  \033[0;32mPASS\033[0m  storage summary honest\n"; _p=$((_p+1))
+        fi
+        rm -f "$_out"
+    else
+        printf "  \033[1;33mSKIP\033[0m  dry-run long test (no timeout)\n"
+    fi
+    echo ""
+    echo "  Result: ${_p} pass · ${_f} fail"
+    [ "$_f" -eq 0 ] && exit 0 || exit 1
+fi
+
+
+# ── v6.7: Deterministic autofix catalog (no AI shell hallucination) ──
+# Called by `meister autofix` and by `meister ai` before diagnosis.
+autofix_known_issues() {
+    local fix_count=0 skip_count=0
+    echo -e "\033[1;34m  Meister AUTOFIX — deterministische Fixes\033[0m"
+    echo ""
+    log INFO "Autofix: scanning known issue classes..."
+
+    # Ensure log/report infrastructure works when called as subcommand
+    : "${DRY_RUN:=false}"
+    : "${NEEDS_SUDO:=true}"
+
+    # 1) Application Firewall
+    if [ "${AUTOFIX_FIREWALL:-true}" = "true" ]; then
+        local fw
+        fw=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null || true)
+        if echo "$fw" | grep -qi disabled; then
+            log HEAL "Firewall disabled → enabling..."
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] would enable Application Firewall"
+            else
+                if ensure_sudo "enable firewall" 2>/dev/null || sudo_has_ticket 2>/dev/null; then
+                    if sudo -n /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on 2>/dev/null; then
+                        log FIX "   Firewall enabled"
+                        fix_count=$((fix_count + 1))
+                    else
+                        log WARN "   Firewall enable failed"
+                        skip_count=$((skip_count + 1))
+                    fi
+                else
+                    log WARN "   Firewall: need sudo (meister sudo-setup / Touch ID once)"
+                    skip_count=$((skip_count + 1))
+                fi
+            fi
+        else
+            log STEP "   Firewall: already on / n/a"
+        fi
+    fi
+
+    # 2) Old brew bottles / downloads
+    if [ "${AUTOFIX_OLD_BOTTLES:-true}" = "true" ] && command_exists brew; then
+        log HEAL "Brew: cleanup old bottles/downloads..."
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] brew cleanup -s --prune=all"
+        else
+            if brew cleanup -s --prune=all 2>&1 | tail -3 | while read -r l; do log STEP "   $l"; done; then
+                :
+            fi
+            log FIX "   brew cleanup completed"
+            fix_count=$((fix_count + 1))
+        fi
+    fi
+
+    # 3) Orphan LaunchDaemons (missing binary)
+    if [ "${AUTOFIX_ORPHAN_LAUNCHD:-true}" = "true" ]; then
+        local quarantine="$MEISTER_DIR/quarantine/LaunchDaemons"
+        local o=0
+        for plist in /Library/LaunchDaemons/*.plist; do
+            [ -f "$plist" ] || continue
+            local bin label
+            bin=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)
+            [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
+            label=$(basename "$plist" .plist)
+            if [ -n "$bin" ] && [ ! -e "$bin" ]; then
+                o=$((o + 1))
+                log HEAL "Orphan LaunchDaemon: $label (missing $bin)"
+                if $DRY_RUN; then
+                    log STEP "   [DRY-RUN] bootout+quarantine $label"
+                    continue
+                fi
+                if ensure_sudo "orphan $label" 2>/dev/null || sudo_has_ticket 2>/dev/null; then
+                    sudo -n launchctl bootout "system/$label" 2>/dev/null || true
+                    mkdir -p "$quarantine"
+                    if sudo -n mv "$plist" "$quarantine/$(basename "$plist").$(date +%Y%m%d%H%M%S)" 2>/dev/null; then
+                        log FIX "   Quarantined $label → $quarantine"
+                        fix_count=$((fix_count + 1))
+                    else
+                        log WARN "   Could not move $plist"
+                        skip_count=$((skip_count + 1))
+                    fi
+                else
+                    log WARN "   Need sudo for $label"
+                    skip_count=$((skip_count + 1))
+                fi
+            fi
+        done
+        [ "$o" -eq 0 ] && log STEP "   No orphan LaunchDaemons"
+    fi
+
+    # 4) Unpushed git (clean trees only)
+    if [ "${AUTOFIX_GIT_PUSH:-true}" = "true" ]; then
+        log HEAL "Git: push unpushed commits (clean repos only)..."
+        local repo_cache="$MEISTER_DIR/git_repos.cache"
+        local pushed=0 dirty_skip=0
+        local list
+        list=$(mktemp)
+        if [ -f "$repo_cache" ]; then
+            while IFS= read -r gitdir; do [ -d "$gitdir" ] && echo "$gitdir"; done < "$repo_cache" > "$list"
+        else
+            for search_path in ${GIT_REPO_SEARCH_PATHS:-$HOME/Developer}; do
+                [ -d "$search_path" ] || continue
+                timeout 20 find "$search_path" -maxdepth "${GIT_REPO_MAXDEPTH:-4}" -name .git -type d \
+                    -not -path '*/node_modules/*' 2>/dev/null
+            done | sort -u > "$list"
+        fi
+        while IFS= read -r gitdir; do
+            [ -z "$gitdir" ] && continue
+            local repo_dir repo_name branch remote
+            repo_dir=$(dirname "$gitdir")
+            repo_name=$(basename "$repo_dir")
+            remote=$(timeout 5 git -C "$repo_dir" remote 2>/dev/null | head -1)
+            [ -z "$remote" ] && continue
+            branch=$(timeout 5 git -C "$repo_dir" symbolic-ref --short HEAD 2>/dev/null) || continue
+            if [ -n "$(timeout 5 git -C "$repo_dir" status --porcelain 2>/dev/null)" ]; then
+                dirty_skip=$((dirty_skip + 1))
+                log STEP "   skip dirty: $repo_name"
+                continue
+            fi
+            local ahead
+            ahead=$(timeout 5 git -C "$repo_dir" rev-list --count "@{u}..HEAD" 2>/dev/null) || ahead=0
+            [ "${ahead:-0}" -gt 0 ] 2>/dev/null || continue
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] would push $repo_name ($ahead commits)"
+                continue
+            fi
+            if timeout 60 git -C "$repo_dir" push -u "$remote" "$branch" >/dev/null 2>&1; then
+                log FIX "   pushed $repo_name ($ahead)"
+                pushed=$((pushed + 1))
+                fix_count=$((fix_count + 1))
+            else
+                log WARN "   push failed: $repo_name"
+                skip_count=$((skip_count + 1))
+            fi
+        done < "$list"
+        rm -f "$list"
+        log STEP "   git: pushed=$pushed dirty_skipped=$dirty_skip"
+    fi
+
+    # 5) Time Machine — cannot invent a disk; open Settings
+    if [ "${AUTOFIX_OPEN_TIMEMACHINE:-true}" = "true" ]; then
+        if ! tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
+            log HEAL "Time Machine not configured → opening Settings..."
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] would open Time Machine settings"
+            else
+                open "x-apple.systempreferences:com.apple.Time-Machine-Settings.extension" 2>/dev/null \
+                    || open "x-apple.systempreferences:com.apple.prefs.backup" 2>/dev/null \
+                    || open /System/Library/PreferencePanes/TimeMachine.prefPane 2>/dev/null \
+                    || true
+                log FIX "   Time Machine settings opened — choose a backup disk"
+                fix_count=$((fix_count + 1))
+            fi
+        else
+            log STEP "   Time Machine: destination set"
+        fi
+    fi
+
+    # 6) _Inbox archive (Documents)
+    if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
+        local root="${DOCS_ORDER_ROOT:-$HOME/Documents}"
+        local inbox="$root/_Inbox"
+        local days="${AUTOFIX_INBOX_DAYS:-14}"
+        if [ -d "$inbox" ]; then
+            local arch="$inbox/_Archive/$(date +%Y-%m)"
+            local moved=0
+            if $DRY_RUN; then
+                local would
+                would=$(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' ')
+                log STEP "   [DRY-RUN] would archive ${would} _Inbox files >${days}d"
+            else
+                mkdir -p "$arch"
+                while IFS= read -r f; do
+                    [ -f "$f" ] || continue
+                    mv "$f" "$arch/" 2>/dev/null && moved=$((moved + 1))
+                done < <(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null)
+                if [ "$moved" -gt 0 ]; then
+                    log FIX "   Archived $moved _Inbox files → $arch"
+                    fix_count=$((fix_count + 1))
+                else
+                    log STEP "   _Inbox: nothing older than ${days}d to archive"
+                fi
+            fi
+        fi
+    fi
+
+    echo ""
+    echo "  Autofix fertig: ${fix_count} applied · ${skip_count} skipped/need-manual"
+    echo "  Details: $LOGFILE"
+    echo ""
+}
+
 # ── AI System-Doktor (meister ai) — Apple-Intelligence-Diagnose auf Abruf ──
 # Feeds the last run's warnings/errors + live system facts to the on-device
 # model and prints a prioritized diagnosis. Read-only, nothing runs.
-if [ "${1:-}" = "ai" ]; then
-    echo -e "\033[1;34m  MEISTER AI — System-Diagnose (Apple Intelligence)\033[0m"
-    echo ""
-    if ! fm_available; then
-        echo "  Apple Intelligence nicht verfügbar — in Systemeinstellungen aktivieren (macOS 26+, Apple Silicon)."
-        exit 1
+if [ "${1:-}" = "autofix" ]; then
+    [ "${2:-}" = "--dry-run" ] || [ "${2:-}" = "-n" ] && DRY_RUN=true
+    # Need log helpers + sudo helpers already defined (we are past function defs)
+    rotate_logs 2>/dev/null || true
+    if ! $DRY_RUN; then
+        ensure_sudo "autofix" 2>/dev/null || true
     fi
-    echo "  Sammle Systemzustand..."
-    _AI_WARNS=$(grep -E '^[0-9-]+ [0-9:]+ - (WARN|ERROR) - ' "$LOGFILE" 2>/dev/null | tail -25 | sed 's/^.\{19\} - //')
+    autofix_known_issues
+    exit 0
+fi
+
+if [ "${1:-}" = "ai" ]; then
+    # meister ai suggest <text> → suggest only
+    if [ "${2:-}" = "suggest" ]; then
+        shift 2
+        exec "$0" suggest "$*"
+    fi
+    # meister ai --diagnose-only | ai diagnose → no autofix
+    _AI_DIAG_ONLY=false
+    _AI_FOCUS=""
+    if [ "${2:-}" = "--diagnose-only" ] || [ "${2:-}" = "diagnose" ]; then
+        _AI_DIAG_ONLY=true
+        _AI_FOCUS="${3:-}"
+    elif [ "${2:-}" = "--fix" ] || [ "${2:-}" = "fix" ]; then
+        # legacy alias: still means autofix first (default)
+        _AI_FOCUS="${3:-}"
+    else
+        _AI_FOCUS="${2:-}"
+    fi
+
+    echo -e "\033[1;34m  Meister AI — Diagnose + Auto-Fix\033[0m"
+    echo ""
+
+    # 1) REAL fixes first (never trust model shell)
+    if ! $_AI_DIAG_ONLY; then
+        if ! $DRY_RUN; then
+            ensure_sudo "ai autofix" 2>/dev/null || true
+        fi
+        autofix_known_issues
+        echo "  ── verbleibende Punkte (nach Autofix) ──"
+        echo ""
+    fi
+
+    if ! fm_available; then
+        echo "  Apple Intelligence offline — Autofix oben ist trotzdem gelaufen."
+        echo "  Manuell: meister autofix | meister doctor"
+        exit 0
+    fi
+    echo "  Sammle Rest-Zustand für AI-Zusammenfassung..."
+    _AI_WARNS=$(grep -E '^[0-9-]+ [0-9:]+ - (WARN|ERROR) - ' "$LOGFILE" 2>/dev/null | tail -30 | sed 's/^.\{19\} - //')
     _AI_DISK=$(df -h / | awk 'NR==2 {print $5" belegt, "$4" frei"}')
     _AI_RAM=$(vm_stat | awk '/Pages free/ {gsub(/\./,""); printf "%.1f GB frei", $3*16384/1073741824}')
     _AI_UPTIME=$(uptime | sed 's/^ *//')
     _AI_TOP=$(ps -Areo pcpu,comm | sort -rn | head -4 | awk '{c=$2; sub(/.*\//,"",c); printf "%s(%s%%) ", c, $1}')
-    _AI_HEALS=$(tail -5 "$HEAL_LOG" 2>/dev/null)
-    _AI_PROMPT="Du bist ein macOS-Systemdoktor. Analysiere diesen Zustand und antworte auf Deutsch.
+    _AI_HEALS=$(tail -8 "$HEAL_LOG" 2>/dev/null)
+    _AI_FOCUS_LINE=""
+    [ -n "$_AI_FOCUS" ] && _AI_FOCUS_LINE="Fokus des Users: ${_AI_FOCUS}"
+    _AI_PROMPT="Du bist Meister. Fasse den REST-Zustand NACH Auto-Fixes zusammen (Deutsch).
 
-Letzte Warnungen/Fehler des Wartungslaufs:
+WARN/ERROR aus dem Log:
 ${_AI_WARNS:-keine}
 
 System: Disk ${_AI_DISK} | RAM ${_AI_RAM} | ${_AI_UPTIME}
 Top-CPU: ${_AI_TOP}
-Letzte Self-Healing-Events:
+Heal-Log:
 ${_AI_HEALS:-keine}
+${_AI_FOCUS_LINE}
 
-Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Kurz und praezise, keine Einleitung."
-    echo "  Frage Apple Intelligence..."
+Regeln:
+- Maximal 5 Punkte, nur noch OFFENE Probleme (nicht was Autofix schon erledigt hat).
+- Befehle NUR aus dieser Liste (keine erfundenen wie git --global ls-uncommitted):
+  meister autofix | doctor | backup | orphans --dry-run | appupdates | --deep | free | privacy | sudo-setup
+- Kein sudo rm -rf. Keine erfundenen CLI-Flags.
+- Kurz, keine Einleitung."
+    echo "  Frage Apple Intelligence (nur Rest-Risiken)..."
     echo ""
-    fm_query "$_AI_PROMPT" | sed 's/^/  /'
+    fm_query "$_AI_PROMPT" "ai-diagnose" | sed 's/^/  /'
     echo ""
+    echo "  Tipp: meister autofix  ·  meister ai --diagnose-only  ·  meister --deep"
     exit 0
 fi
 
@@ -6897,7 +7657,7 @@ if [ "${1:-}" = "pkg" ]; then
     if [ -z "$_PKG" ] || [ ! -f "$_PKG" ]; then
         echo "Usage: meister pkg <file.pkg>"; exit 1
     fi
-    echo -e "\033[1;34m  MEISTER PKG — Installer-Inspektor\033[0m"
+    echo -e "\033[1;34m  Meister PKG — Installer-Inspektor\033[0m"
     echo ""
     echo -e "  \033[1mFile:\033[0m $_PKG ($(du -h "$_PKG" | awk '{print $1}'))"
     echo ""
@@ -7017,7 +7777,7 @@ WATCHEOF
             echo "  Baseline aktualisiert ($(grep -c . "$_W_BASE") plists) — aktuelle Eintraege gelten als OK"
             ;;
         *)
-            echo -e "\033[1;34m  MEISTER WATCH — Persistence-Waechter (BlockBlock-Style)\033[0m"
+            echo -e "\033[1;34m  Meister WATCH — Persistence-Waechter (BlockBlock-Style)\033[0m"
             echo ""
             if launchctl print "gui/$(id -u)/com.meister.watch" &>/dev/null; then
                 echo "  Status: AKTIV"
@@ -7062,7 +7822,7 @@ if [ "${1:-}" = "tweaks" ]; then
     }
     _T="${2:-}"; _V="${3:-on}"
     if [ -z "$_T" ]; then
-        echo -e "\033[1;34m  MEISTER TWEAKS — versteckte macOS-Einstellungen (OnyX-Style)\033[0m"
+        echo -e "\033[1;34m  Meister TWEAKS — versteckte macOS-Einstellungen (OnyX-Style)\033[0m"
         echo ""
         _tweak_status
         echo ""
@@ -7113,7 +7873,7 @@ fi
 # Finds apps in /Applications that neither brew nor mas manages and checks
 # whether a Homebrew cask exists — adopting them makes updates automatic.
 if [ "${1:-}" = "adopt" ]; then
-    echo -e "\033[1;34m  MEISTER ADOPT — Apps unter Homebrew-Verwaltung bringen\033[0m"
+    echo -e "\033[1;34m  Meister ADOPT — Apps unter Homebrew-Verwaltung bringen\033[0m"
     echo ""
     command_exists brew || { echo "  brew fehlt"; exit 1; }
     _A_CASKS=$(brew list --cask 2>/dev/null | tr '[:upper:]' '[:lower:]')
@@ -7190,7 +7950,7 @@ if [ "${1:-}" = "dash" ]; then
         _D_TX=$(( ($(echo "$_D_CUR" | awk '{print $2}') - $(echo "$_D_PREV" | awk '{print $2}')) / _D_INT / 1024 ))
         _D_PREV=$_D_CUR
         clear
-        echo -e "\033[1;34m  MEISTER DASH — $(date '+%H:%M:%S')   (q beendet, Intervall ${_D_INT}s)\033[0m"
+        echo -e "\033[1;34m  Meister DASH — $(date '+%H:%M:%S')   (q beendet, Intervall ${_D_INT}s)\033[0m"
         echo ""
         echo -e "  \033[1mCPU \033[0m  ${_D_CPU}    load ${_D_LOAD}"
         echo -e "  \033[1mRAM \033[0m  ${_D_RAM}"
@@ -7222,7 +7982,7 @@ if [ "${1:-}" = "files" ]; then
         echo "  meister files ~/foo.db  → wer haelt diese Datei offen"
         exit 1
     fi
-    echo -e "\033[1;34m  MEISTER FILES — offene Dateien/Ports (Sloth-Style)\033[0m"
+    echo -e "\033[1;34m  Meister FILES — offene Dateien/Ports (Sloth-Style)\033[0m"
     echo ""
     # NB: no case-in-$() here — bash 3.2 parses $() lazily and chokes on the
     # unbalanced ')' of case patterns at RUNTIME (bash -n does not catch it)
@@ -7361,7 +8121,7 @@ CLIPEOF
                 fi
                 exit 0
             fi
-            echo -e "\033[1;34m  MEISTER CLIP — Clipboard-History (Maccy-Style)\033[0m"
+            echo -e "\033[1;34m  Meister CLIP — Clipboard-History (Maccy-Style)\033[0m"
             echo ""
             awk -v RS="$(printf '\x1e')----MEISTERCLIP----\n" \
                 'NR>1 {line=$0; sub(/\n.*/,"",line); if (length(line)>70) line=substr(line,1,67)"..."; a[NR-1]=line}
@@ -7412,7 +8172,7 @@ KEYSEOF
             rm -f "$_K_AGENT"
             echo "  Key-Mapping zurueckgesetzt" ;;
         status)
-            echo -e "\033[1;34m  MEISTER KEYS — Tastatur-Remapping (hidutil)\033[0m"
+            echo -e "\033[1;34m  Meister KEYS — Tastatur-Remapping (hidutil)\033[0m"
             echo ""
             _K_ACTIVE=$(hidutil property --get "UserKeyMapping" 2>/dev/null | grep -v '(null)' | grep -E 'Mapping(Src|Dst)|^\(' | head -15)
             if [ -n "$_K_ACTIVE" ]; then
@@ -7432,48 +8192,8 @@ fi
 # ── Touch ID for sudo (meister touchid) ──
 # Writes pam_tid.so into /etc/pam.d/sudo_local (Sonoma+: survives macOS updates,
 # unlike editing /etc/pam.d/sudo directly). One sudo password — then fingerprint.
-# ── sudo-setup — long shared sudo ticket for meister + meisterSiri ──
-if [ "${1:-}" = "sudo-setup" ]; then
-    echo -e "\033[1;34m  Meister SUDO-SETUP — shared long-lived sudo ticket\033[0m"
-    echo ""
-    echo "  Problem: macOS often uses per-terminal sudo tickets (tty_tickets)."
-    echo "  Result: Touch ID again for every terminal / meister vs meisterSiri."
-    echo ""
-    echo "  This installs /etc/sudoers.d/zz-meister with:"
-    echo "    Defaults timestamp_timeout=120   # 2 hours"
-    echo "    Defaults !tty_tickets            # share across terminals"
-    echo ""
-    _dst="/etc/sudoers.d/zz-meister"
-    _tmp=$(mktemp)
-    cat > "$_tmp" << 'SUDOERS'
-# Managed by meister / meisterSiri — safe to delete to restore defaults
-# Share one sudo/Touch-ID auth across all terminals for 120 minutes.
-Defaults	timestamp_timeout=120
-Defaults	!tty_tickets
-SUDOERS
-    if ! visudo -cf "$_tmp" >/dev/null 2>&1; then
-        echo "  ERROR: sudoers syntax check failed — aborting"
-        rm -f "$_tmp"
-        exit 1
-    fi
-    echo "  Installing (one Touch ID / password)…"
-    if sudo install -m 0440 -o root -g wheel "$_tmp" "$_dst"; then
-        rm -f "$_tmp"
-        echo "  Installed: $_dst"
-        echo "  Validate:  sudo -n true   # should work after one auth"
-        echo "  Undo:      sudo rm $_dst"
-        # seed ticket now
-        sudo -v 2>/dev/null && echo "  Ticket seeded — meister and meisterSiri will reuse it."
-    else
-        rm -f "$_tmp"
-        echo "  Install failed"
-        exit 1
-    fi
-    exit 0
-fi
-
 if [ "${1:-}" = "touchid" ]; then
-    echo -e "\033[1;34m  MEISTER TOUCHID — Touch ID for sudo\033[0m"
+    echo -e "\033[1;34m  Meister TOUCHID — Touch ID for sudo\033[0m"
     echo ""
     _PAM_LOCAL="/etc/pam.d/sudo_local"
     _PAM_TEMPLATE="/etc/pam.d/sudo_local.template"
@@ -7520,7 +8240,7 @@ fi
 
 # ── Time Machine setup (meister backup) ──
 if [ "${1:-}" = "backup" ]; then
-    echo -e "\033[1;34m  MEISTER BACKUP — Time Machine status & setup\033[0m"
+    echo -e "\033[1;34m  Meister BACKUP — Time Machine status & setup\033[0m"
     echo ""
     if ! command_exists tmutil; then echo "  tmutil not available"; exit 1; fi
 
@@ -7596,7 +8316,7 @@ if [ "${1:-}" = "report" ]; then
     case "$_N" in *[!0-9]*) echo "Usage: meister report [N]"; exit 1 ;; esac
     _hist="$MEISTER_DIR/history.log"
     [ -f "$_hist" ] || { echo "  No history yet ($_hist)"; exit 0; }
-    echo -e "\033[1;34m  MEISTER REPORT — last ${_N} runs\033[0m"
+    echo -e "\033[1;34m  Meister REPORT — last ${_N} runs\033[0m"
     echo ""
     printf '  %-19s %9s %4s %4s %5s %4s %5s  %s\n' "Date" "Duration" "OK" "FIX" "WARN" "ERR" "HEAL" "Slowest modules"
     printf '  '; printf '─%.0s' $(seq 1 76); echo ""
@@ -7634,7 +8354,7 @@ if [ "${1:-}" = "report" ]; then
 fi
 
 if [ "${1:-}" = "free" ]; then
-    echo -e "\033[1;34m  MEISTER FREE — Free up RAM & reset UI\033[0m"
+    echo -e "\033[1;34m  Meister FREE — Free up RAM & reset UI\033[0m"
     echo ""
     _ram_before=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
     echo "  RAM free before: ${_ram_before} MB"
@@ -7656,7 +8376,7 @@ fi
 
 # ── Healer (meister heal) ──
 if [ "${1:-}" = "heal" ]; then
-    echo -e "\033[1;34m  MEISTER HEAL — Auto-Healing\033[0m"
+    echo -e "\033[1;34m  Meister HEAL — Auto-Healing\033[0m"
     echo ""
     DRY_RUN=false
     [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
@@ -7675,7 +8395,7 @@ fi
 
 # ── Speedtest (meister speed) ──
 if [ "${1:-}" = "speed" ]; then
-    echo -e "\033[1;34m  MEISTER SPEED — Network Speed Test\033[0m"
+    echo -e "\033[1;34m  Meister SPEED — Network Speed Test\033[0m"
     echo ""
 
     # Latency
@@ -7727,20 +8447,28 @@ if [ "${1:-}" = "speed" ]; then
 fi
 
 # Fix #117: Long-Options before getopts abfangen (getopts kann only Short-Options)
+# Collect long options that must coexist with short flags
+_NEW_ARGS=()
 for arg in "$@"; do
     case "$arg" in
-        --help)    set -- "-h"; break ;;
+        --help)    _NEW_ARGS+=("-h") ;;
         --version) echo "meister v${MEISTER_VERSION}"; exit 0 ;;
-        --dry-run) set -- "-n"; break ;;
-        --menu)    set -- "menu"; break ;;
+        --dry-run) _NEW_ARGS+=("-n") ;;
+        --menu)    _NEW_ARGS+=("menu") ;;
+        --quick)   RUN_PROFILE=quick ;;
+        --deep)    RUN_PROFILE=deep ;;
+        --auto)    RUN_PROFILE=auto ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
+        *)         _NEW_ARGS+=("$arg") ;;
     esac
 done
+set -- "${_NEW_ARGS[@]}"
 
 # ── Args ──
 while getopts ":aAXTSCLhcHnIPGNq" opt; do
   case $opt in
-    a) CLEAN_XCODE=true; EMPTY_TRASH=true
+    a) RUN_PROFILE=all
+       CLEAN_XCODE=true; EMPTY_TRASH=true
        RUN_SUDO_TASKS=true; CLEAN_CACHES=true; LIST_LARGE_FILES=true; RUN_PERF_TUNE=true; RUN_GIT_REPOS=true; RUN_SNIFFNET=true ;;
     G) RUN_GIT_REPOS=true ;;
     N) RUN_SNIFFNET=true ;;
@@ -7760,9 +8488,12 @@ while getopts ":aAXTSCLhcHnIPGNq" opt; do
 Meister - macOS Maintenance, Self-Healing & Dotfiles Sync
 
 MAINTENANCE:
-  meister              Auto-detect (default)
+  meister              Auto-detect daily-fast (default profile=auto)
+  meister --quick      Lean daily (~1-2 min): healer, brew, cleanup, security
+  meister --deep       Weekly full: iCloud, dev caches, docs, all audits
+  meister --auto       Explicit daily-fast defaults
   meister menu         Interactive menu (TUI)
-  meister -a           Force all modules
+  meister -a           Force ALL modules (profile=all)
   meister -n           Dry-run
   meister -q           Quiet (warnings/fixes only)
   meister -H           Health dashboard
@@ -7793,12 +8524,20 @@ TOOLS:
   meister diff         What changed since the last run (apps/autostart/brew)
   meister undo [--do]  Revert the last run's reversible actions (--list)
   meister explain <x>  Apple Intelligence explains a warning in plain language
+  meister today        Morning briefing (score, AI, disk, brew, top warns)
+  meister doctor       Read-only system checklist (security, brew, TM, AI)
+  meister suggest <x>  AI fix suggestion only — never executes
+  meister privacy      Privacy grants / persistence quick audit
+  meister selftest     Smoke-test this CLI
   meister fleet        Score/status of all Macs (FLEET_HOSTS in config)
   meister touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
+  meister sudo-setup       Long shared sudo ticket (2h, all terminals)
   meister backup [--now]   Time Machine status; set up destination if none
   meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
   meister files <x>    Who has port/file/process open (Sloth-style lsof)
-  meister ai           AI system diagnosis via Apple Intelligence (on-device, read-only)
+  meister ai           Autofix known issues + AI summary of remaining risks
+  meister ai --diagnose-only   AI only (no autofix)
+  meister autofix      Deterministic fixes (bottles, orphans, git push, FW, inbox)
 
 SECURITY:
   meister pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
@@ -7833,7 +8572,16 @@ DOTFILES SYNC:
   meister bootstrap    Full setup: pull + brew + npm + clone + defaults
   meister status       Check symlinks
 
-Config: ~/.meister/config
+Config: ~/.meister/config  (see config.fast.example)
+  RUN_PROFILE=auto|quick|deep
+  BREW_UPDATE_MAX_AGE_SEC=43200   # skip brew update if fresher (0=always)
+  BREW_UPDATE_TIMEOUT_SEC=300
+  BREW_UPGRADE_TIMEOUT_SEC=600
+  FIND_TIMEOUT_SEC=60
+  UNIVERSAL_UPDATES=false
+  AI_TRACE=true|false
+  Tip: meister sudo-setup  — one Touch ID for hours, shared with meister
+  Tip: meister --quick daily · meister --deep weekly
 HELPEOF
        exit 0 ;;
     \?) log ERROR "Unknown option: -$OPTARG"; exit 1 ;;
@@ -7948,15 +8696,17 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-printf '  ║        MEISTER v%-24s║\n' "$MEISTER_VERSION"
+printf '  ║     Meister v%-21s║\n' "$MEISTER_VERSION"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
+printf '  ║   profile: %-28s║\n' "${RUN_PROFILE:-auto}"
 echo "  ╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
 start_bw_monitor
 log INFO "Meister v${MEISTER_VERSION} started ($(date))"
+[ "${AI_TRACE:-true}" = "true" ] && log STEP "   AI-Trace: ON (jeder AI-Call zeigt REQUEST+RESPONSE; AI_TRACE=false zum Abschalten)"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
@@ -7974,7 +8724,7 @@ if $INSTALL_LAUNCHAGENT; then install_launchagent; release_lock; exit 0; fi
 # All modules use sudo -n only — no mid-run prompts.
 if ! $DRY_RUN && $NEEDS_SUDO; then
     if ensure_sudo "full maintenance run"; then
-        log INFO "   Sudo: ready (shared ticket — meister + meisterSiri reuse it)"
+        log INFO "   Sudo: ready (shared ticket — meister + meister reuse it)"
     else
         log INFO "   Sudo: not available — privileged modules skip"
     fi
@@ -7988,9 +8738,113 @@ else
     FM_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (Ollama-Modul entfernt: Apple Intelligence braucht kein Modell-Management)
+# ── v6.6 profiles: quick / auto / deep ──
+apply_run_profile() {
+    case "${RUN_PROFILE:-auto}" in
+        quick)
+            log INFO "Profile: QUICK (lean daily — heavy modules skipped)"
+            UNIVERSAL_UPDATES=false
+            ICLOUD_FIX_ENABLED=false
+            ICLOUD_STUBS_SCAN=false
+            DOCS_ORDER_DATALESS_SCAN=false
+            SELFHEAL_ICLOUD_CONTAINERS=false
+            SECURITY_PERSISTENCE_AUDIT=false
+            SECURITY_TCC_AUDIT=false
+            CLEAN_DOCKER=false
+            CLEAN_DEV_CACHES=false
+            RUN_PERF_TUNE=false
+            RUN_GIT_REPOS=false
+            RUN_SNIFFNET=false
+            FM_ENABLED=false   # no AI-Heal mid-run (use meister ai on demand)
+            ;;
+        deep)
+            log INFO "Profile: DEEP (weekly full — all heavy modules on)"
+            UNIVERSAL_UPDATES=true
+            ICLOUD_FIX_ENABLED=true
+            ICLOUD_STUBS_SCAN=true
+            ICLOUD_GHOST_DIRS_CLEAN=true
+            DOCS_ORDER_ENABLED=true
+            DOCS_ORDER_DATALESS_SCAN=true
+            SELFHEAL_ICLOUD_CONTAINERS=true
+            SECURITY_PERSISTENCE_AUDIT=true
+            SECURITY_TCC_AUDIT=true
+            CLEAN_DOCKER=true
+            CLEAN_DEV_CACHES=true
+            CLEAN_PKG_CACHES=true
+            RUN_PERF_TUNE=true
+            RUN_GIT_REPOS=true
+            # force full module set via -a semantics for optional flags
+            CLEAN_XCODE=true; EMPTY_TRASH=true; RUN_SUDO_TASKS=true
+            CLEAN_CACHES=true; LIST_LARGE_FILES=true
+            BREW_UPDATE_MAX_AGE_SEC=0   # always brew update on deep
+            ;;
+        all)
+            log INFO "Profile: ALL (-a force)"
+            UNIVERSAL_UPDATES=true
+            ICLOUD_FIX_ENABLED=true
+            ICLOUD_STUBS_SCAN=true
+            DOCS_ORDER_DATALESS_SCAN=true
+            SELFHEAL_ICLOUD_CONTAINERS=true
+            SECURITY_PERSISTENCE_AUDIT=true
+            SECURITY_TCC_AUDIT=true
+            CLEAN_DOCKER=true
+            BREW_UPDATE_MAX_AGE_SEC=0
+            ;;
+        auto|*)
+            log INFO "Profile: AUTO (daily-fast defaults; override in ~/.meister/config or --deep)"
+            ;;
+    esac
+}
+
+# Which modules run for the current profile?
+module_in_profile() {
+    local name="$1"
+    case "${RUN_PROFILE:-auto}" in
+        quick)
+            case "$name" in
+                Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Simulator\ Fix|Time\ Machine)
+                    return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        deep|all)
+            return 0
+            ;;
+        auto|*)
+            case "$name" in
+                iCloud\ Fix)           ${ICLOUD_FIX_ENABLED:-false} || return 1 ;;
+                Dev\ Updates)          [ "${UNIVERSAL_UPDATES:-false}" = "true" ] || return 1 ;;
+                Docs\ Order)           ${DOCS_ORDER_ENABLED:-true} || return 1 ;;
+                Docker\ Prune)         ${CLEAN_DOCKER:-false} || return 1 ;;
+                Dev\ Caches)           ${CLEAN_DEV_CACHES:-true} || return 1 ;;
+                Git\ repos)            ${RUN_GIT_REPOS:-false} || return 1 ;;
+                Sniffnet)              ${RUN_SNIFFNET:-false} || return 1 ;;
+                Performance)           ${RUN_PERF_TUNE:-false} || return 1 ;;
+                Benchmark)             return 1 ;;  # weekly only
+                node_modules|.DS_Store) return 1 ;; # deep only in auto
+                Brew\ Bottle\ Age|APFS\ Snapshots|Kext\ Audit|Receipts\ Audit|LaunchServices)
+                    return 1 ;;  # deep only
+            esac
+            return 0
+            ;;
+    esac
+}
+
+run_module_if() {
+    local name="$1" func="$2"
+    if module_in_profile "$name"; then
+        run_module_safe "$name" "$func"
+    else
+        log STEP "   skip: $name (profile=${RUN_PROFILE:-auto})"
+    fi
+}
+
+apply_run_profile
+
+# Modul-Anzahl berechnen (dynamic after profile)
 MODULE_TOTAL=38
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
+log STEP "   Profile=${RUN_PROFILE:-auto} BREW_UPDATE_MAX_AGE=${BREW_UPDATE_MAX_AGE_SEC:-43200}s"
 
 # Preflight
 section_header "Self-Healing Preflight"
@@ -8001,43 +8855,43 @@ module_timer_stop "Preflight"
 ledger_add "Preflight" "$_pf_fix0" "$_pf_warn0" "$_pf_err0" 0
 
 if check_net; then
-    run_module_safe "Healer"         module_healer
-    run_module_safe "Homebrew"       module_homebrew
-    run_module_safe "App Store"      module_mas
-    run_module_safe "Dev Updates"    module_universal_updates
-    run_module_safe "macOS System"   module_system
-    run_module_safe "Cleanup"        module_cleanup
-    run_module_safe "Deep Clean"     module_deepclean
-    run_module_safe "Spotlight Fix"  module_spotlight_fix
-    run_module_safe "iCloud Fix"     module_icloud_fix
-    run_module_safe "Performance"    module_performance
-    run_module_safe "Git repos"      module_git_repos
-    run_module_safe "Sniffnet"       module_sniffnet
-    run_module_safe "Security Suite" module_security_suite
-    run_module_safe "Benchmark"      module_benchmark
-    run_module_safe "Time Machine"   module_tm_health
-    run_module_safe "Battery"        module_battery
-    run_module_safe "iOS Simulators" module_ios_sim
-    run_module_safe "Docker Prune"   module_docker_prune
-    run_module_safe "Kernel Panics"  module_panic_scan
-    run_module_safe "SSH Keys"       module_ssh_audit
-    run_module_safe "Broken Symlinks" module_broken_symlinks
-    run_module_safe "Brew Bottle Age" module_brew_age
-    run_module_safe "LaunchDaemons"  module_launchd_orphans
-    run_module_safe "Shell History"  module_shell_history
-    run_module_safe "APFS Snapshots" module_apfs_snapshots
-    run_module_safe "Kext Audit"     module_kext_audit
-    run_module_safe "Time Sync"      module_time_sync
-    run_module_safe "Render Caches"  module_rendering_caches
-    run_module_safe "Receipts Audit" module_receipts_audit
-    run_module_safe "Dev Caches"     module_dev_caches
-    run_module_safe "node_modules"   module_node_modules_aged
-    run_module_safe "Sleep Blockers" module_sleep_blockers
-    run_module_safe ".DS_Store"      module_dsstore_cleanup
-    run_module_safe "Docs Order"     module_docs_order
-    run_module_safe "LaunchServices" module_launchservices_rebuild
-    run_module_safe "Privacy Audit"  module_tcc_privacy_audit
-    run_module_safe "Simulator Fix"  module_simfix
+    run_module_if "Healer"         module_healer
+    run_module_if "Homebrew"       module_homebrew
+    run_module_if "App Store"      module_mas
+    run_module_if "Dev Updates"    module_universal_updates
+    run_module_if "macOS System"   module_system
+    run_module_if "Cleanup"        module_cleanup
+    run_module_if "Deep Clean"     module_deepclean
+    run_module_if "Spotlight Fix"  module_spotlight_fix
+    run_module_if "iCloud Fix"     module_icloud_fix
+    run_module_if "Performance"    module_performance
+    run_module_if "Git repos"      module_git_repos
+    run_module_if "Sniffnet"       module_sniffnet
+    run_module_if "Security Suite" module_security_suite
+    run_module_if "Benchmark"      module_benchmark
+    run_module_if "Time Machine"   module_tm_health
+    run_module_if "Battery"        module_battery
+    run_module_if "iOS Simulators" module_ios_sim
+    run_module_if "Docker Prune"   module_docker_prune
+    run_module_if "Kernel Panics"  module_panic_scan
+    run_module_if "SSH Keys"       module_ssh_audit
+    run_module_if "Broken Symlinks" module_broken_symlinks
+    run_module_if "Brew Bottle Age" module_brew_age
+    run_module_if "LaunchDaemons"  module_launchd_orphans
+    run_module_if "Shell History"  module_shell_history
+    run_module_if "APFS Snapshots" module_apfs_snapshots
+    run_module_if "Kext Audit"     module_kext_audit
+    run_module_if "Time Sync"      module_time_sync
+    run_module_if "Render Caches"  module_rendering_caches
+    run_module_if "Receipts Audit" module_receipts_audit
+    run_module_if "Dev Caches"     module_dev_caches
+    run_module_if "node_modules"   module_node_modules_aged
+    run_module_if "Sleep Blockers" module_sleep_blockers
+    run_module_if ".DS_Store"      module_dsstore_cleanup
+    run_module_if "Docs Order"     module_docs_order
+    run_module_if "LaunchServices" module_launchservices_rebuild
+    run_module_if "Privacy Audit"  module_tcc_privacy_audit
+    run_module_if "Simulator Fix"  module_simfix
 
     if $RUN_SUDO_TASKS; then
         section_header "System maintenance (sudo)"

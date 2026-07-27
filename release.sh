@@ -27,6 +27,12 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 
+# MERKREGEL: twins parallel — meisterSiri is source of truth
+if [ -x "$SCRIPT_DIR/scripts/sync-twins.sh" ]; then
+    echo "--- Twin sync (meisterSiri → meister) ---"
+    "$SCRIPT_DIR/scripts/sync-twins.sh"
+fi
+
 echo "=== meister Release v${VERSION} ==="
 echo ""
 
@@ -34,7 +40,7 @@ echo ""
 echo "--- Step 1: Update repo ---"
 cd "$SCRIPT_DIR"
 git add meister.sh meisterSiri.sh tools/ Formula/ LICENSE .gitignore release.sh 2>/dev/null || true
-git add meister.sh meisterSiri.sh Formula/ release.sh
+git add meister.sh meisterSiri.sh Formula/ release.sh scripts/sync-twins.sh 2>/dev/null || git add meister.sh meisterSiri.sh Formula/ release.sh
 # tools/ LICENSE may not always change
 git add tools/ LICENSE .gitignore 2>/dev/null || true
 if git diff --cached --quiet; then

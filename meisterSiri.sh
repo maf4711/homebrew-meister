@@ -4,7 +4,14 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.6
+# Version: 6.7
+# NEW in v6.7 — diagnose → real autofix (no fake AI shell):
+#  - meisterSiri ai / autofix: deterministic fixes for known WARNs
+#      old brew bottles, orphan LaunchDaemons, unpushed git, firewall,
+#      Time Machine (opens Settings), _Inbox archive
+#  - AI text only for remaining issues; prompts list real meisterSiri cmds
+#  - module_brew_age / launchd_orphans can apply fixes (not warn-only)
+#
 # NEW in v6.6 — runtime profiles + speed:
 #  - --quick / --deep profiles (daily lean vs weekly full)
 #  - Faster auto defaults (heavy scans weekly via --deep)
@@ -332,8 +339,8 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
-    _NUM_KEYS=" BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
+    _BOOL_KEYS=" AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
+    _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
     _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
     while IFS='=' read -r key value; do
@@ -4429,27 +4436,67 @@ module_brew_age() {
         return 0
     fi
     local count; count=$(echo "$old_pkgs" | wc -l | tr -d ' ')
-    log WARN "   ${count} bottles older than 180d (consider 'brew reinstall')"
+    log WARN "   ${count} bottles older than 180d"
     echo "$old_pkgs" | head -10 | while read -r p; do log STEP "     - $p"; done
     [ "$count" -gt 10 ] && log STEP "     ... +$((count - 10)) more"
-    report_add WARN "${count} bottles >180d old"
+    if [ "${AUTOFIX_OLD_BOTTLES:-true}" = "true" ]; then
+        log HEAL "   Autofix: brew cleanup (prune old downloads/versions)..."
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] would: brew cleanup -s --prune=all"
+            report_add WOULD "brew cleanup for ${count} old bottles"
+        else
+            if brew cleanup -s --prune=all >/dev/null 2>&1; then
+                log FIX "   brew cleanup done (old bottles/downloads pruned)"
+                report_add FIX "brew cleanup: pruned old bottles/downloads (${count} aged)"
+            else
+                log WARN "   brew cleanup failed — manual: brew cleanup -s"
+                report_add WARN "${count} bottles >180d old (cleanup failed)"
+            fi
+        fi
+    else
+        report_add WARN "${count} bottles >180d old"
+    fi
 }
 
 module_launchd_orphans() {
     log INFO "Checking LaunchDaemons for orphans..."
-    local orphans=0
+    local orphans=0 fixed=0
+    local quarantine="$MEISTER_DIR/quarantine/LaunchDaemons"
     for plist in /Library/LaunchDaemons/*.plist; do
         [ -f "$plist" ] || continue
-        local bin
+        local bin label
         bin=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)
         [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
+        label=$(basename "$plist" .plist)
         if [ -n "$bin" ] && [ ! -e "$bin" ]; then
             log WARN "   Orphan: $(basename "$plist") → missing $bin"
             orphans=$((orphans + 1))
+            if [ "${AUTOFIX_ORPHAN_LAUNCHD:-true}" = "true" ]; then
+                if $DRY_RUN; then
+                    log STEP "   [DRY-RUN] would bootout+quarantine $label"
+                    continue
+                fi
+                if ensure_sudo "orphan LaunchDaemon $label" 2>/dev/null || sudo_has_ticket 2>/dev/null; then
+                    sudo -n launchctl bootout "system/$label" 2>/dev/null || true
+                    mkdir -p "$quarantine"
+                    if sudo -n mv "$plist" "$quarantine/$(basename "$plist").$(date +%Y%m%d%H%M%S)" 2>/dev/null; then
+                        log FIX "   Quarantined orphan LaunchDaemon: $label"
+                        fixed=$((fixed + 1))
+                    else
+                        log WARN "   Could not move $plist (permissions)"
+                    fi
+                else
+                    log WARN "   Need sudo to remove $label — run: meisterSiri autofix"
+                fi
+            fi
         fi
     done
     [ "$orphans" -eq 0 ] && log STEP "   No orphan LaunchDaemons"
-    [ "$orphans" -gt 0 ] && report_add WARN "${orphans} orphan LaunchDaemons"
+    if [ "$fixed" -gt 0 ]; then
+        report_add FIX "${fixed} orphan LaunchDaemons quarantined → $quarantine"
+    elif [ "$orphans" -gt 0 ]; then
+        report_add WARN "${orphans} orphan LaunchDaemons"
+    fi
     return 0
 }
 
@@ -4733,14 +4780,39 @@ module_docs_order() {
         fi
     fi
 
-    # 3) _Inbox: unsorted files waiting for the filing daemon
+    # 3) _Inbox: unsorted files — autofix archives files older than AUTOFIX_INBOX_DAYS
     local inbox="$root/_Inbox"
     if [ -d "$inbox" ]; then
         local unsorted
         unsorted=$(find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$unsorted" -gt 0 ]; then
+        if [ "${unsorted:-0}" -gt 0 ]; then
             log WARN "   _Inbox: ${unsorted} unsorted files"
-            report_add WARN "_Inbox: ${unsorted} unsorted files"
+            if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
+                local days="${AUTOFIX_INBOX_DAYS:-14}"
+                local arch="$inbox/_Archive/$(date +%Y-%m)"
+                local moved=0
+                if $DRY_RUN; then
+                    local would
+                    would=$(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' ')
+                    log STEP "   [DRY-RUN] would archive ${would} files older than ${days}d → _Archive/"
+                    report_add WOULD "_Inbox: archive ${would} files >${days}d"
+                else
+                    mkdir -p "$arch"
+                    while IFS= read -r f; do
+                        [ -f "$f" ] || continue
+                        mv "$f" "$arch/" 2>/dev/null && moved=$((moved + 1))
+                    done < <(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null)
+                    if [ "$moved" -gt 0 ]; then
+                        log FIX "   Archived ${moved} _Inbox files (older than ${days}d) → $arch"
+                        report_add FIX "_Inbox: archived ${moved} files (>${days}d)"
+                    else
+                        log STEP "   No _Inbox files older than ${days}d to archive (${unsorted} newer remain)"
+                        report_add WARN "_Inbox: ${unsorted} unsorted files (all <${days}d)"
+                    fi
+                fi
+            else
+                report_add WARN "_Inbox: ${unsorted} unsorted files"
+            fi
         else
             log STEP "   _Inbox empty"
         fi
@@ -7300,49 +7372,280 @@ if [ "${1:-}" = "selftest" ]; then
     [ "$_f" -eq 0 ] && exit 0 || exit 1
 fi
 
+
+# ── v6.7: Deterministic autofix catalog (no AI shell hallucination) ──
+# Called by `meisterSiri autofix` and by `meisterSiri ai` before diagnosis.
+autofix_known_issues() {
+    local fix_count=0 skip_count=0
+    echo -e "\033[1;34m  MeisterSiri AUTOFIX — deterministische Fixes\033[0m"
+    echo ""
+    log INFO "Autofix: scanning known issue classes..."
+
+    # Ensure log/report infrastructure works when called as subcommand
+    : "${DRY_RUN:=false}"
+    : "${NEEDS_SUDO:=true}"
+
+    # 1) Application Firewall
+    if [ "${AUTOFIX_FIREWALL:-true}" = "true" ]; then
+        local fw
+        fw=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null || true)
+        if echo "$fw" | grep -qi disabled; then
+            log HEAL "Firewall disabled → enabling..."
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] would enable Application Firewall"
+            else
+                if ensure_sudo "enable firewall" 2>/dev/null || sudo_has_ticket 2>/dev/null; then
+                    if sudo -n /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on 2>/dev/null; then
+                        log FIX "   Firewall enabled"
+                        fix_count=$((fix_count + 1))
+                    else
+                        log WARN "   Firewall enable failed"
+                        skip_count=$((skip_count + 1))
+                    fi
+                else
+                    log WARN "   Firewall: need sudo (meisterSiri sudo-setup / Touch ID once)"
+                    skip_count=$((skip_count + 1))
+                fi
+            fi
+        else
+            log STEP "   Firewall: already on / n/a"
+        fi
+    fi
+
+    # 2) Old brew bottles / downloads
+    if [ "${AUTOFIX_OLD_BOTTLES:-true}" = "true" ] && command_exists brew; then
+        log HEAL "Brew: cleanup old bottles/downloads..."
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] brew cleanup -s --prune=all"
+        else
+            if brew cleanup -s --prune=all 2>&1 | tail -3 | while read -r l; do log STEP "   $l"; done; then
+                :
+            fi
+            log FIX "   brew cleanup completed"
+            fix_count=$((fix_count + 1))
+        fi
+    fi
+
+    # 3) Orphan LaunchDaemons (missing binary)
+    if [ "${AUTOFIX_ORPHAN_LAUNCHD:-true}" = "true" ]; then
+        local quarantine="$MEISTER_DIR/quarantine/LaunchDaemons"
+        local o=0
+        for plist in /Library/LaunchDaemons/*.plist; do
+            [ -f "$plist" ] || continue
+            local bin label
+            bin=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)
+            [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
+            label=$(basename "$plist" .plist)
+            if [ -n "$bin" ] && [ ! -e "$bin" ]; then
+                o=$((o + 1))
+                log HEAL "Orphan LaunchDaemon: $label (missing $bin)"
+                if $DRY_RUN; then
+                    log STEP "   [DRY-RUN] bootout+quarantine $label"
+                    continue
+                fi
+                if ensure_sudo "orphan $label" 2>/dev/null || sudo_has_ticket 2>/dev/null; then
+                    sudo -n launchctl bootout "system/$label" 2>/dev/null || true
+                    mkdir -p "$quarantine"
+                    if sudo -n mv "$plist" "$quarantine/$(basename "$plist").$(date +%Y%m%d%H%M%S)" 2>/dev/null; then
+                        log FIX "   Quarantined $label → $quarantine"
+                        fix_count=$((fix_count + 1))
+                    else
+                        log WARN "   Could not move $plist"
+                        skip_count=$((skip_count + 1))
+                    fi
+                else
+                    log WARN "   Need sudo for $label"
+                    skip_count=$((skip_count + 1))
+                fi
+            fi
+        done
+        [ "$o" -eq 0 ] && log STEP "   No orphan LaunchDaemons"
+    fi
+
+    # 4) Unpushed git (clean trees only)
+    if [ "${AUTOFIX_GIT_PUSH:-true}" = "true" ]; then
+        log HEAL "Git: push unpushed commits (clean repos only)..."
+        local repo_cache="$MEISTER_DIR/git_repos.cache"
+        local pushed=0 dirty_skip=0
+        local list
+        list=$(mktemp)
+        if [ -f "$repo_cache" ]; then
+            while IFS= read -r gitdir; do [ -d "$gitdir" ] && echo "$gitdir"; done < "$repo_cache" > "$list"
+        else
+            for search_path in ${GIT_REPO_SEARCH_PATHS:-$HOME/Developer}; do
+                [ -d "$search_path" ] || continue
+                timeout 20 find "$search_path" -maxdepth "${GIT_REPO_MAXDEPTH:-4}" -name .git -type d \
+                    -not -path '*/node_modules/*' 2>/dev/null
+            done | sort -u > "$list"
+        fi
+        while IFS= read -r gitdir; do
+            [ -z "$gitdir" ] && continue
+            local repo_dir repo_name branch remote
+            repo_dir=$(dirname "$gitdir")
+            repo_name=$(basename "$repo_dir")
+            remote=$(timeout 5 git -C "$repo_dir" remote 2>/dev/null | head -1)
+            [ -z "$remote" ] && continue
+            branch=$(timeout 5 git -C "$repo_dir" symbolic-ref --short HEAD 2>/dev/null) || continue
+            if [ -n "$(timeout 5 git -C "$repo_dir" status --porcelain 2>/dev/null)" ]; then
+                dirty_skip=$((dirty_skip + 1))
+                log STEP "   skip dirty: $repo_name"
+                continue
+            fi
+            local ahead
+            ahead=$(timeout 5 git -C "$repo_dir" rev-list --count "@{u}..HEAD" 2>/dev/null) || ahead=0
+            [ "${ahead:-0}" -gt 0 ] 2>/dev/null || continue
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] would push $repo_name ($ahead commits)"
+                continue
+            fi
+            if timeout 60 git -C "$repo_dir" push -u "$remote" "$branch" >/dev/null 2>&1; then
+                log FIX "   pushed $repo_name ($ahead)"
+                pushed=$((pushed + 1))
+                fix_count=$((fix_count + 1))
+            else
+                log WARN "   push failed: $repo_name"
+                skip_count=$((skip_count + 1))
+            fi
+        done < "$list"
+        rm -f "$list"
+        log STEP "   git: pushed=$pushed dirty_skipped=$dirty_skip"
+    fi
+
+    # 5) Time Machine — cannot invent a disk; open Settings
+    if [ "${AUTOFIX_OPEN_TIMEMACHINE:-true}" = "true" ]; then
+        if ! tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
+            log HEAL "Time Machine not configured → opening Settings..."
+            if $DRY_RUN; then
+                log STEP "   [DRY-RUN] would open Time Machine settings"
+            else
+                open "x-apple.systempreferences:com.apple.Time-Machine-Settings.extension" 2>/dev/null \
+                    || open "x-apple.systempreferences:com.apple.prefs.backup" 2>/dev/null \
+                    || open /System/Library/PreferencePanes/TimeMachine.prefPane 2>/dev/null \
+                    || true
+                log FIX "   Time Machine settings opened — choose a backup disk"
+                fix_count=$((fix_count + 1))
+            fi
+        else
+            log STEP "   Time Machine: destination set"
+        fi
+    fi
+
+    # 6) _Inbox archive (Documents)
+    if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
+        local root="${DOCS_ORDER_ROOT:-$HOME/Documents}"
+        local inbox="$root/_Inbox"
+        local days="${AUTOFIX_INBOX_DAYS:-14}"
+        if [ -d "$inbox" ]; then
+            local arch="$inbox/_Archive/$(date +%Y-%m)"
+            local moved=0
+            if $DRY_RUN; then
+                local would
+                would=$(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' ')
+                log STEP "   [DRY-RUN] would archive ${would} _Inbox files >${days}d"
+            else
+                mkdir -p "$arch"
+                while IFS= read -r f; do
+                    [ -f "$f" ] || continue
+                    mv "$f" "$arch/" 2>/dev/null && moved=$((moved + 1))
+                done < <(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null)
+                if [ "$moved" -gt 0 ]; then
+                    log FIX "   Archived $moved _Inbox files → $arch"
+                    fix_count=$((fix_count + 1))
+                else
+                    log STEP "   _Inbox: nothing older than ${days}d to archive"
+                fi
+            fi
+        fi
+    fi
+
+    echo ""
+    echo "  Autofix fertig: ${fix_count} applied · ${skip_count} skipped/need-manual"
+    echo "  Details: $LOGFILE"
+    echo ""
+}
+
 # ── AI System-Doktor (meister ai) — Apple-Intelligence-Diagnose auf Abruf ──
 # Feeds the last run's warnings/errors + live system facts to the on-device
 # model and prints a prioritized diagnosis. Read-only, nothing runs.
+if [ "${1:-}" = "autofix" ]; then
+    [ "${2:-}" = "--dry-run" ] || [ "${2:-}" = "-n" ] && DRY_RUN=true
+    # Need log helpers + sudo helpers already defined (we are past function defs)
+    rotate_logs 2>/dev/null || true
+    if ! $DRY_RUN; then
+        ensure_sudo "autofix" 2>/dev/null || true
+    fi
+    autofix_known_issues
+    exit 0
+fi
+
 if [ "${1:-}" = "ai" ]; then
-    # meisterSiri ai fix <text> → suggest
-    if [ "${2:-}" = "fix" ] || [ "${2:-}" = "suggest" ]; then
+    # meisterSiri ai suggest <text> → suggest only
+    if [ "${2:-}" = "suggest" ]; then
         shift 2
-        set -- suggest "$*"
-        # fall through by re-exec pattern: call suggest path via recursive
         exec "$0" suggest "$*"
     fi
-    _AI_FOCUS="${2:-}"
-    echo -e "\033[1;34m  MeisterSiri AI — System-Diagnose (Apple Intelligence)\033[0m"
-    echo ""
-    if ! fm_available; then
-        echo "  Apple Intelligence nicht verfügbar — in Systemeinstellungen aktivieren (macOS 26+, Apple Silicon)."
-        exit 1
+    # meisterSiri ai --diagnose-only | ai diagnose → no autofix
+    _AI_DIAG_ONLY=false
+    _AI_FOCUS=""
+    if [ "${2:-}" = "--diagnose-only" ] || [ "${2:-}" = "diagnose" ]; then
+        _AI_DIAG_ONLY=true
+        _AI_FOCUS="${3:-}"
+    elif [ "${2:-}" = "--fix" ] || [ "${2:-}" = "fix" ]; then
+        # legacy alias: still means autofix first (default)
+        _AI_FOCUS="${3:-}"
+    else
+        _AI_FOCUS="${2:-}"
     fi
-    echo "  Sammle Systemzustand..."
-    _AI_WARNS=$(grep -E '^[0-9-]+ [0-9:]+ - (WARN|ERROR) - ' "$LOGFILE" 2>/dev/null | tail -25 | sed 's/^.\{19\} - //')
+
+    echo -e "\033[1;34m  MeisterSiri AI — Diagnose + Auto-Fix\033[0m"
+    echo ""
+
+    # 1) REAL fixes first (never trust model shell)
+    if ! $_AI_DIAG_ONLY; then
+        if ! $DRY_RUN; then
+            ensure_sudo "ai autofix" 2>/dev/null || true
+        fi
+        autofix_known_issues
+        echo "  ── verbleibende Punkte (nach Autofix) ──"
+        echo ""
+    fi
+
+    if ! fm_available; then
+        echo "  Apple Intelligence offline — Autofix oben ist trotzdem gelaufen."
+        echo "  Manuell: meisterSiri autofix | meisterSiri doctor"
+        exit 0
+    fi
+    echo "  Sammle Rest-Zustand für AI-Zusammenfassung..."
+    _AI_WARNS=$(grep -E '^[0-9-]+ [0-9:]+ - (WARN|ERROR) - ' "$LOGFILE" 2>/dev/null | tail -30 | sed 's/^.\{19\} - //')
     _AI_DISK=$(df -h / | awk 'NR==2 {print $5" belegt, "$4" frei"}')
     _AI_RAM=$(vm_stat | awk '/Pages free/ {gsub(/\./,""); printf "%.1f GB frei", $3*16384/1073741824}')
     _AI_UPTIME=$(uptime | sed 's/^ *//')
     _AI_TOP=$(ps -Areo pcpu,comm | sort -rn | head -4 | awk '{c=$2; sub(/.*\//,"",c); printf "%s(%s%%) ", c, $1}')
-    _AI_HEALS=$(tail -5 "$HEAL_LOG" 2>/dev/null)
+    _AI_HEALS=$(tail -8 "$HEAL_LOG" 2>/dev/null)
     _AI_FOCUS_LINE=""
     [ -n "$_AI_FOCUS" ] && _AI_FOCUS_LINE="Fokus des Users: ${_AI_FOCUS}"
-    _AI_PROMPT="Du bist MeisterSiri, ein macOS-Systemdoktor. Analysiere diesen Zustand und antworte auf Deutsch.
+    _AI_PROMPT="Du bist MeisterSiri. Fasse den REST-Zustand NACH Auto-Fixes zusammen (Deutsch).
 
-Letzte Warnungen/Fehler des Wartungslaufs:
+WARN/ERROR aus dem Log:
 ${_AI_WARNS:-keine}
 
 System: Disk ${_AI_DISK} | RAM ${_AI_RAM} | ${_AI_UPTIME}
 Top-CPU: ${_AI_TOP}
-Letzte Self-Healing-Events:
+Heal-Log:
 ${_AI_HEALS:-keine}
 ${_AI_FOCUS_LINE}
 
-Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Nur sichere Befehle vorschlagen (kein sudo rm -rf). Kurz und praezise, keine Einleitung."
-    echo "  Frage Apple Intelligence..."
+Regeln:
+- Maximal 5 Punkte, nur noch OFFENE Probleme (nicht was Autofix schon erledigt hat).
+- Befehle NUR aus dieser Liste (keine erfundenen wie git --global ls-uncommitted):
+  meisterSiri autofix | doctor | backup | orphans --dry-run | appupdates | --deep | free | privacy | sudo-setup
+- Kein sudo rm -rf. Keine erfundenen CLI-Flags.
+- Kurz, keine Einleitung."
+    echo "  Frage Apple Intelligence (nur Rest-Risiken)..."
     echo ""
     fm_query "$_AI_PROMPT" "ai-diagnose" | sed 's/^/  /'
     echo ""
+    echo "  Tipp: meisterSiri autofix  ·  meisterSiri ai --diagnose-only  ·  meisterSiri --deep"
     exit 0
 fi
 
@@ -8231,7 +8534,9 @@ TOOLS:
   meisterSiri backup [--now]   Time Machine status; set up destination if none
   meisterSiri dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
   meisterSiri files <x>    Who has port/file/process open (Sloth-style lsof)
-  meisterSiri ai           AI system diagnosis via Apple Intelligence (on-device, read-only)
+  meisterSiri ai           Autofix known issues + AI summary of remaining risks
+  meisterSiri ai --diagnose-only   AI only (no autofix)
+  meisterSiri autofix      Deterministic fixes (bottles, orphans, git push, FW, inbox)
 
 SECURITY:
   meisterSiri pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
