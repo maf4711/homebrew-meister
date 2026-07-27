@@ -4,7 +4,7 @@
 # meister.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.5
+# Version: 6.6
 # Date: 2026-07-15
 #
 # NEW in v6.0 — "MeisterSiri": Ollama fully replaced by Apple Intelligence
@@ -1154,18 +1154,42 @@ module_homebrew() {
     local brew_version=$(brew --version 2>/dev/null | head -1)
     log STEP "   Version: $brew_version"
 
-    # brew update mit korrektem Exit-Code
-    log INFO "   brew update..."
-    run_verbose brew update
-    local update_rc=$?
-    if [ $update_rc -ne 0 ]; then
-        log WARN "brew update failed (Exit: $update_rc). Trying unshallow..."
-        git -C "$(brew --repo)" fetch --unshallow &>/dev/null
-        run_verbose brew update
-        if [ $? -eq 0 ]; then
-            report_add FIX "Fixed Homebrew repo (unshallow)"
+    # brew update: skip if fresh + timeout (v6.6)
+    local brew_stamp="$MEISTER_DIR/brew_last_update"
+    local skip_update=false
+    BREW_UPDATE_MAX_AGE_SEC="${BREW_UPDATE_MAX_AGE_SEC:-43200}"
+    BREW_UPDATE_TIMEOUT_SEC="${BREW_UPDATE_TIMEOUT_SEC:-300}"
+    BREW_UPGRADE_TIMEOUT_SEC="${BREW_UPGRADE_TIMEOUT_SEC:-600}"
+    if [ -f "$brew_stamp" ]; then
+        local last_ts age
+        last_ts=$(cat "$brew_stamp" 2>/dev/null | tr -d '[:space:]')
+        if [[ "$last_ts" =~ ^[0-9]+$ ]]; then
+            age=$(( $(date +%s) - last_ts ))
+            if [ "$age" -ge 0 ] && [ "$age" -lt "$BREW_UPDATE_MAX_AGE_SEC" ]; then
+                log INFO "   brew update skipped (last ${age}s ago < ${BREW_UPDATE_MAX_AGE_SEC}s)"
+                skip_update=true
+            fi
+        fi
+    fi
+    local update_rc=0
+    if ! $skip_update; then
+        log INFO "   brew update (timeout ${BREW_UPDATE_TIMEOUT_SEC}s)..."
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] brew update"
+        elif command_exists timeout; then
+            run_verbose timeout "$BREW_UPDATE_TIMEOUT_SEC" brew update
+            update_rc=$?
+            [ $update_rc -eq 124 ] && log WARN "brew update timed out"
         else
-            log ERROR "brew update weiterhin failed"
+            run_verbose brew update
+            update_rc=$?
+        fi
+        if [ $update_rc -eq 0 ]; then
+            date +%s > "$brew_stamp" 2>/dev/null || true
+        elif [ $update_rc -ne 124 ]; then
+            log WARN "brew update failed (Exit: $update_rc). Trying unshallow..."
+            git -C "$(brew --repo)" fetch --unshallow &>/dev/null
+            run_verbose brew update && date +%s > "$brew_stamp" 2>/dev/null || true
         fi
     fi
 

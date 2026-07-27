@@ -4,7 +4,14 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.5
+# Version: 6.6
+# NEW in v6.6 — runtime profiles + speed:
+#  - --quick / --deep profiles (daily lean vs weekly full)
+#  - Faster auto defaults (heavy scans weekly via --deep)
+#  - brew update skip if fresh (BREW_UPDATE_MAX_AGE_SEC, default 12h)
+#  - brew update/upgrade timeouts; find timeouts for .DS_Store / node_modules
+#  - config.fast.example shipped for Daily-Fast overrides
+#
 # NEW in v6.5 — same as 6.4 (fresh tag; GitHub CDN had stale v6.4 tarball)
 # NEW in v6.4 — sudo once + runtime:
 #  - ensure_sudo(): one Touch ID/password at start; rest is sudo -n only
@@ -267,9 +274,9 @@ SPOTLIGHT_MDS_CPU_THRESHOLD=30     # mds CPU threshold for restart (%)
 SPOTLIGHT_REINDEX_ON_ERROR=true    # Auto-reindex on error
 
 # iCloud Sync Fix (automatic on every run)
-ICLOUD_FIX_ENABLED=true            # iCloud diagnosis and repair
+ICLOUD_FIX_ENABLED=false           # heavy: enable or use --deep
 ICLOUD_GHOST_DIRS_CLEAN=true       # Remove empty ghost folders in HOME
-ICLOUD_STUBS_SCAN=true             # Detect corrupt iCloud stubs (65535 links)
+ICLOUD_STUBS_SCAN=false            # heavy find — --deep
 ICLOUD_STUBS_DELETE=false          # Auto-delete corrupt stubs (default: off, safety)
 ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
 ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
@@ -279,19 +286,19 @@ DOCS_ORDER_ENABLED=true            # Order check for DOCS_ORDER_ROOT
 DOCS_ORDER_ROOT="$HOME/Documents"  # Directory to check
 DOCS_ORDER_KNOWN=""                # Extra allowed top-level entries ("|"-separated), on top of learned baseline
 DOCS_ORDER_GHOST_CLEAN=true        # Remove EMPTY "X 2"/"X 3" ghost folders at root
-DOCS_ORDER_DATALESS_SCAN=true      # Scan for dataless files (content only in iCloud)
+DOCS_ORDER_DATALESS_SCAN=false     # heavy — --deep
 DOCS_ORDER_DATALESS_WARN_GB=5      # WARN when more than X GB exist only in iCloud
 
 # Self-Healing v0.06: Automatic repair for all warnings
 SELFHEAL_APPSTORE_OPEN=false       # Open App Store on missing login
 SELFHEAL_FDA_OPEN=true             # Open privacy settings for FDA
 SELFHEAL_ORPHAN_PREFS=true         # Backup + delete orphaned preferences
-SELFHEAL_ICLOUD_CONTAINERS=true    # Delete orphaned iCloud containers
-SELFHEAL_GIT_AUTOCOMMIT=true       # Auto-commit uncommitted changes
+SELFHEAL_ICLOUD_CONTAINERS=false   # --deep / weekly
+SELFHEAL_GIT_AUTOCOMMIT=false      # safer daily default
 SELFHEAL_PERF_AUTO=true            # Auto-apply performance optimizations
 
 # Git Repo Management (via -G Flag enabled)
-GIT_AUTO_PUSH=true                          # Auto-push unpushed commits
+GIT_AUTO_PUSH=false                         # enable in config if wanted
 GIT_REPO_SEARCH_PATHS="$HOME/Documents $HOME/Developer"  # Search paths for repos
 GIT_REPO_MAXDEPTH=5                         # Max depth for repo search
 # GIT_BACKUP_DIR/RETENTION/EXCLUDE removed (v0.09) - GitHub is the backup
@@ -307,11 +314,11 @@ DISK_CRITICAL_THRESHOLD=95    # Percent - emergency cleanup threshold
 
 # Fix #144: Auto-Detect Schwellwerte (via ~/.meister/config steuerbar)
 # Security Suite Konfiguration
-SECURITY_PERSISTENCE_AUDIT=true        # LaunchAgent/Daemon integrity check
-SECURITY_TCC_AUDIT=true                # Privacy permissions checking
+SECURITY_PERSISTENCE_AUDIT=false       # --deep
+SECURITY_TCC_AUDIT=false               # --deep
 
 # Docker + LaunchAgent Defaults
-CLEAN_DOCKER=true                      # Docker Cleanup
+CLEAN_DOCKER=false                     # --deep
 LAUNCHAGENT_SCHEDULE="weekly"          # daily/weekly/monthly
 
 AUTO_DETECT=true                       # Auto-detection enabled
@@ -325,9 +332,9 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
-    _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
-    _STR_KEYS=" NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
+    _BOOL_KEYS=" UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
+    _NUM_KEYS=" BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
+    _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
@@ -377,6 +384,7 @@ MODULE_LEDGER=()  # "status|name|secs" per module — topgrade-style summary (v5
 MAINT_SCORE=""    # 0-100 maintenance score for this run (v5.25)
 SHOW_HEALTH=false
 DRY_RUN=false
+RUN_PROFILE="${RUN_PROFILE:-auto}"   # auto|quick|deep (overridden by --quick/--deep/-a)
 INSTALL_LAUNCHAGENT=false
 RUN_PERF_TUNE=false
 RUN_GIT_REPOS=false
@@ -1315,18 +1323,52 @@ module_homebrew() {
     local brew_version=$(brew --version 2>/dev/null | head -1)
     log STEP "   Version: $brew_version"
 
-    # brew update mit korrektem Exit-Code
-    log INFO "   brew update..."
-    run_verbose brew update
-    local update_rc=$?
-    if [ $update_rc -ne 0 ]; then
-        log WARN "brew update failed (Exit: $update_rc). Trying unshallow..."
-        git -C "$(brew --repo)" fetch --unshallow &>/dev/null
-        run_verbose brew update
-        if [ $? -eq 0 ]; then
-            report_add FIX "Fixed Homebrew repo (unshallow)"
+    # brew update: skip if fresh (default 12h) + hard timeout
+    local brew_stamp="$MEISTER_DIR/brew_last_update"
+    local skip_update=false
+    if [ -f "$brew_stamp" ]; then
+        local last_ts age
+        last_ts=$(cat "$brew_stamp" 2>/dev/null | tr -d '[:space:]')
+        if [[ "$last_ts" =~ ^[0-9]+$ ]]; then
+            age=$(( $(date +%s) - last_ts ))
+            if [ "$age" -ge 0 ] && [ "$age" -lt "${BREW_UPDATE_MAX_AGE_SEC:-43200}" ]; then
+                log INFO "   brew update skipped (last ${age}s ago < ${BREW_UPDATE_MAX_AGE_SEC:-43200}s) — force: rm $brew_stamp"
+                skip_update=true
+            fi
+        fi
+    fi
+    local update_rc=0
+    if $skip_update; then
+        :
+    else
+        log INFO "   brew update (timeout ${BREW_UPDATE_TIMEOUT_SEC:-300}s)..."
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] brew update"
+            update_rc=0
+        elif command_exists timeout; then
+            run_verbose timeout "${BREW_UPDATE_TIMEOUT_SEC:-300}" brew update
+            update_rc=$?
+            [ $update_rc -eq 124 ] && log WARN "brew update timed out after ${BREW_UPDATE_TIMEOUT_SEC:-300}s"
         else
-            log ERROR "brew update weiterhin failed"
+            run_verbose brew update
+            update_rc=$?
+        fi
+        if [ $update_rc -ne 0 ] && [ $update_rc -ne 124 ]; then
+            log WARN "brew update failed (Exit: $update_rc). Trying unshallow..."
+            git -C "$(brew --repo)" fetch --unshallow &>/dev/null
+            if command_exists timeout; then
+                run_verbose timeout "${BREW_UPDATE_TIMEOUT_SEC:-300}" brew update
+            else
+                run_verbose brew update
+            fi
+            if [ $? -eq 0 ]; then
+                report_add FIX "Fixed Homebrew repo (unshallow)"
+                date +%s > "$brew_stamp" 2>/dev/null || true
+            else
+                log ERROR "brew update weiterhin failed"
+            fi
+        elif [ $update_rc -eq 0 ]; then
+            date +%s > "$brew_stamp" 2>/dev/null || true
         fi
     fi
 
@@ -1358,8 +1400,14 @@ module_homebrew() {
         log STEP "   [DRY-RUN] brew upgrade"
         : > "$formula_out"
     else
-        brew upgrade > "$formula_out" 2>&1
-        rc=$?
+        if command_exists timeout; then
+            timeout "${BREW_UPGRADE_TIMEOUT_SEC:-600}" brew upgrade > "$formula_out" 2>&1
+            rc=$?
+            [ $rc -eq 124 ] && log WARN "brew upgrade timed out after ${BREW_UPGRADE_TIMEOUT_SEC:-600}s"
+        else
+            brew upgrade > "$formula_out" 2>&1
+            rc=$?
+        fi
         while IFS= read -r l; do [ -n "$l" ] && log STEP "   $l"; done < "$formula_out"
     fi
     if [ $rc -eq 0 ]; then
@@ -4506,9 +4554,9 @@ module_dev_caches() {
     # npm / pnpm / yarn
     if command_exists npm; then
         bw_phase "Dev caches: npm"
-        local sz; sz=$(du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        local sz; sz=$(timeout 30 du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
         $DRY_RUN || npm cache clean --force >/dev/null 2>&1
-        sz=$(du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        sz=$(timeout 30 du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
         cleaned=$((cleaned + 1))
     fi
     if command_exists pnpm; then
@@ -4535,19 +4583,19 @@ module_dev_caches() {
     # cargo (no official prune, use cargo-cache if installed)
     if command_exists cargo; then
         bw_phase "Dev caches: cargo"
-        local sz; sz=$(du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        local sz; sz=$(timeout 30 du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
         if command_exists cargo-cache && ! $DRY_RUN; then
             cargo cache --autoclean >/dev/null 2>&1
         fi
-        sz=$(du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        sz=$(timeout 30 du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
         cleaned=$((cleaned + 1))
     fi
     # go modules
     if command_exists go; then
         bw_phase "Dev caches: go"
-        local sz; sz=$(du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        local sz; sz=$(timeout 30 du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
         $DRY_RUN || go clean -modcache >/dev/null 2>&1
-        sz=$(du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        sz=$(timeout 30 du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
         cleaned=$((cleaned + 1))
     fi
     local freed_mb=$(( (total_before - total_after) / 1024 ))
@@ -4570,7 +4618,7 @@ module_node_modules_aged() {
         found=$((found + 1))
         total_mb=$((total_mb + mb))
         [ "$found" -ge 20 ] && break
-    done < <(find "$HOME/Developer" -maxdepth 5 -type d -name node_modules -mtime +180 -prune 2>/dev/null)
+    done < <(timeout "${FIND_TIMEOUT_SEC:-60}" find "$HOME/Developer" -maxdepth 5 -type d -name node_modules -mtime +180 -prune 2>/dev/null || true)
     if [ "$found" -gt 0 ]; then
         log WARN "   ${found} abandoned node_modules (~${total_mb} MB total) — run: find ~/Developer -name node_modules -mtime +180 -exec rm -rf {} +"
         report_add WARN "${found} ancient node_modules (${total_mb} MB)"
@@ -4618,11 +4666,11 @@ module_dsstore_cleanup() {
     local total=0
     for dir in "${dirs[@]}"; do
         [ -d "$dir" ] || continue
-        local count; count=$(find "$dir" -name .DS_Store 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$count" -gt 0 ]; then
+        local count; count=$(timeout "${FIND_TIMEOUT_SEC:-60}" find "$dir" -name .DS_Store 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${count:-0}" -gt 0 ]; then
             bw_phase "DS_Store: rm $dir ($count)"
             log STEP "   $dir: ${count} files"
-            $DRY_RUN || find "$dir" -name .DS_Store -delete 2>/dev/null
+            $DRY_RUN || timeout "${FIND_TIMEOUT_SEC:-60}" find "$dir" -name .DS_Store -delete 2>/dev/null || true
             total=$((total + count))
         fi
     done
@@ -8095,20 +8143,28 @@ if [ "${1:-}" = "speed" ]; then
 fi
 
 # Fix #117: Long-Options before getopts abfangen (getopts kann only Short-Options)
+# Collect long options that must coexist with short flags
+_NEW_ARGS=()
 for arg in "$@"; do
     case "$arg" in
-        --help)    set -- "-h"; break ;;
+        --help)    _NEW_ARGS+=("-h") ;;
         --version) echo "meisterSiri v${MEISTER_VERSION} (Apple Intelligence)"; exit 0 ;;
-        --dry-run) set -- "-n"; break ;;
-        --menu)    set -- "menu"; break ;;
-        --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
+        --dry-run) _NEW_ARGS+=("-n") ;;
+        --menu)    _NEW_ARGS+=("menu") ;;
+        --quick)   RUN_PROFILE=quick ;;
+        --deep)    RUN_PROFILE=deep ;;
+        --auto)    RUN_PROFILE=auto ;;
+        --*)       echo "[ERROR] Unknown option: $arg (see meisterSiri -h)"; exit 1 ;;
+        *)         _NEW_ARGS+=("$arg") ;;
     esac
 done
+set -- "${_NEW_ARGS[@]}"
 
 # ── Args ──
 while getopts ":aAXTSCLhcHnIPGNq" opt; do
   case $opt in
-    a) CLEAN_XCODE=true; EMPTY_TRASH=true
+    a) RUN_PROFILE=all
+       CLEAN_XCODE=true; EMPTY_TRASH=true
        RUN_SUDO_TASKS=true; CLEAN_CACHES=true; LIST_LARGE_FILES=true; RUN_PERF_TUNE=true; RUN_GIT_REPOS=true; RUN_SNIFFNET=true ;;
     G) RUN_GIT_REPOS=true ;;
     N) RUN_SNIFFNET=true ;;
@@ -8128,9 +8184,12 @@ while getopts ":aAXTSCLhcHnIPGNq" opt; do
 MeisterSiri - macOS Maintenance, Self-Healing & Dotfiles Sync (Apple Intelligence)
 
 MAINTENANCE:
-  meisterSiri              Auto-detect (default)
+  meisterSiri              Auto-detect daily-fast (default profile=auto)
+  meisterSiri --quick      Lean daily (~1-2 min): healer, brew, cleanup, security
+  meisterSiri --deep       Weekly full: iCloud, dev caches, docs, all audits
+  meisterSiri --auto       Explicit daily-fast defaults
   meisterSiri menu         Interactive menu (TUI)
-  meisterSiri -a           Force all modules
+  meisterSiri -a           Force ALL modules (profile=all)
   meisterSiri -n           Dry-run
   meisterSiri -q           Quiet (warnings/fixes only)
   meisterSiri -H           Health dashboard
@@ -8207,10 +8266,16 @@ DOTFILES SYNC:
   meisterSiri bootstrap    Full setup: pull + brew + npm + clone + defaults
   meisterSiri status       Check symlinks
 
-Config: ~/.meister/config
-  AI_TRACE=true   (default) — show full AI REQUEST+RESPONSE at runtime
-  AI_TRACE=false  — silence AI boxes (still logs to ~/.meister/meister.log)
+Config: ~/.meister/config  (see config.fast.example)
+  RUN_PROFILE=auto|quick|deep
+  BREW_UPDATE_MAX_AGE_SEC=43200   # skip brew update if fresher (0=always)
+  BREW_UPDATE_TIMEOUT_SEC=300
+  BREW_UPGRADE_TIMEOUT_SEC=600
+  FIND_TIMEOUT_SEC=60
+  UNIVERSAL_UPDATES=false
+  AI_TRACE=true|false
   Tip: meisterSiri sudo-setup  — one Touch ID for hours, shared with meister
+  Tip: meisterSiri --quick daily · meisterSiri --deep weekly
 HELPEOF
        exit 0 ;;
     \?) log ERROR "Unknown option: -$OPTARG"; exit 1 ;;
@@ -8329,6 +8394,7 @@ printf '  ║     MeisterSiri v%-21s║\n' "$MEISTER_VERSION"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
+printf '  ║   profile: %-28s║\n' "${RUN_PROFILE:-auto}"
 echo "  ╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -8366,9 +8432,113 @@ else
     FM_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (Ollama-Modul entfernt: Apple Intelligence braucht kein Modell-Management)
+# ── v6.6 profiles: quick / auto / deep ──
+apply_run_profile() {
+    case "${RUN_PROFILE:-auto}" in
+        quick)
+            log INFO "Profile: QUICK (lean daily — heavy modules skipped)"
+            UNIVERSAL_UPDATES=false
+            ICLOUD_FIX_ENABLED=false
+            ICLOUD_STUBS_SCAN=false
+            DOCS_ORDER_DATALESS_SCAN=false
+            SELFHEAL_ICLOUD_CONTAINERS=false
+            SECURITY_PERSISTENCE_AUDIT=false
+            SECURITY_TCC_AUDIT=false
+            CLEAN_DOCKER=false
+            CLEAN_DEV_CACHES=false
+            RUN_PERF_TUNE=false
+            RUN_GIT_REPOS=false
+            RUN_SNIFFNET=false
+            FM_ENABLED=false   # no AI-Heal mid-run (use meisterSiri ai on demand)
+            ;;
+        deep)
+            log INFO "Profile: DEEP (weekly full — all heavy modules on)"
+            UNIVERSAL_UPDATES=true
+            ICLOUD_FIX_ENABLED=true
+            ICLOUD_STUBS_SCAN=true
+            ICLOUD_GHOST_DIRS_CLEAN=true
+            DOCS_ORDER_ENABLED=true
+            DOCS_ORDER_DATALESS_SCAN=true
+            SELFHEAL_ICLOUD_CONTAINERS=true
+            SECURITY_PERSISTENCE_AUDIT=true
+            SECURITY_TCC_AUDIT=true
+            CLEAN_DOCKER=true
+            CLEAN_DEV_CACHES=true
+            CLEAN_PKG_CACHES=true
+            RUN_PERF_TUNE=true
+            RUN_GIT_REPOS=true
+            # force full module set via -a semantics for optional flags
+            CLEAN_XCODE=true; EMPTY_TRASH=true; RUN_SUDO_TASKS=true
+            CLEAN_CACHES=true; LIST_LARGE_FILES=true
+            BREW_UPDATE_MAX_AGE_SEC=0   # always brew update on deep
+            ;;
+        all)
+            log INFO "Profile: ALL (-a force)"
+            UNIVERSAL_UPDATES=true
+            ICLOUD_FIX_ENABLED=true
+            ICLOUD_STUBS_SCAN=true
+            DOCS_ORDER_DATALESS_SCAN=true
+            SELFHEAL_ICLOUD_CONTAINERS=true
+            SECURITY_PERSISTENCE_AUDIT=true
+            SECURITY_TCC_AUDIT=true
+            CLEAN_DOCKER=true
+            BREW_UPDATE_MAX_AGE_SEC=0
+            ;;
+        auto|*)
+            log INFO "Profile: AUTO (daily-fast defaults; override in ~/.meister/config or --deep)"
+            ;;
+    esac
+}
+
+# Which modules run for the current profile?
+module_in_profile() {
+    local name="$1"
+    case "${RUN_PROFILE:-auto}" in
+        quick)
+            case "$name" in
+                Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Simulator\ Fix|Time\ Machine)
+                    return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        deep|all)
+            return 0
+            ;;
+        auto|*)
+            case "$name" in
+                iCloud\ Fix)           ${ICLOUD_FIX_ENABLED:-false} || return 1 ;;
+                Dev\ Updates)          [ "${UNIVERSAL_UPDATES:-false}" = "true" ] || return 1 ;;
+                Docs\ Order)           ${DOCS_ORDER_ENABLED:-true} || return 1 ;;
+                Docker\ Prune)         ${CLEAN_DOCKER:-false} || return 1 ;;
+                Dev\ Caches)           ${CLEAN_DEV_CACHES:-true} || return 1 ;;
+                Git\ repos)            ${RUN_GIT_REPOS:-false} || return 1 ;;
+                Sniffnet)              ${RUN_SNIFFNET:-false} || return 1 ;;
+                Performance)           ${RUN_PERF_TUNE:-false} || return 1 ;;
+                Benchmark)             return 1 ;;  # weekly only
+                node_modules|.DS_Store) return 1 ;; # deep only in auto
+                Brew\ Bottle\ Age|APFS\ Snapshots|Kext\ Audit|Receipts\ Audit|LaunchServices)
+                    return 1 ;;  # deep only
+            esac
+            return 0
+            ;;
+    esac
+}
+
+run_module_if() {
+    local name="$1" func="$2"
+    if module_in_profile "$name"; then
+        run_module_safe "$name" "$func"
+    else
+        log STEP "   skip: $name (profile=${RUN_PROFILE:-auto})"
+    fi
+}
+
+apply_run_profile
+
+# Modul-Anzahl berechnen (dynamic after profile)
 MODULE_TOTAL=38
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
+log STEP "   Profile=${RUN_PROFILE:-auto} BREW_UPDATE_MAX_AGE=${BREW_UPDATE_MAX_AGE_SEC:-43200}s"
 
 # Preflight
 section_header "Self-Healing Preflight"
@@ -8379,43 +8549,43 @@ module_timer_stop "Preflight"
 ledger_add "Preflight" "$_pf_fix0" "$_pf_warn0" "$_pf_err0" 0
 
 if check_net; then
-    run_module_safe "Healer"         module_healer
-    run_module_safe "Homebrew"       module_homebrew
-    run_module_safe "App Store"      module_mas
-    run_module_safe "Dev Updates"    module_universal_updates
-    run_module_safe "macOS System"   module_system
-    run_module_safe "Cleanup"        module_cleanup
-    run_module_safe "Deep Clean"     module_deepclean
-    run_module_safe "Spotlight Fix"  module_spotlight_fix
-    run_module_safe "iCloud Fix"     module_icloud_fix
-    run_module_safe "Performance"    module_performance
-    run_module_safe "Git repos"      module_git_repos
-    run_module_safe "Sniffnet"       module_sniffnet
-    run_module_safe "Security Suite" module_security_suite
-    run_module_safe "Benchmark"      module_benchmark
-    run_module_safe "Time Machine"   module_tm_health
-    run_module_safe "Battery"        module_battery
-    run_module_safe "iOS Simulators" module_ios_sim
-    run_module_safe "Docker Prune"   module_docker_prune
-    run_module_safe "Kernel Panics"  module_panic_scan
-    run_module_safe "SSH Keys"       module_ssh_audit
-    run_module_safe "Broken Symlinks" module_broken_symlinks
-    run_module_safe "Brew Bottle Age" module_brew_age
-    run_module_safe "LaunchDaemons"  module_launchd_orphans
-    run_module_safe "Shell History"  module_shell_history
-    run_module_safe "APFS Snapshots" module_apfs_snapshots
-    run_module_safe "Kext Audit"     module_kext_audit
-    run_module_safe "Time Sync"      module_time_sync
-    run_module_safe "Render Caches"  module_rendering_caches
-    run_module_safe "Receipts Audit" module_receipts_audit
-    run_module_safe "Dev Caches"     module_dev_caches
-    run_module_safe "node_modules"   module_node_modules_aged
-    run_module_safe "Sleep Blockers" module_sleep_blockers
-    run_module_safe ".DS_Store"      module_dsstore_cleanup
-    run_module_safe "Docs Order"     module_docs_order
-    run_module_safe "LaunchServices" module_launchservices_rebuild
-    run_module_safe "Privacy Audit"  module_tcc_privacy_audit
-    run_module_safe "Simulator Fix"  module_simfix
+    run_module_if "Healer"         module_healer
+    run_module_if "Homebrew"       module_homebrew
+    run_module_if "App Store"      module_mas
+    run_module_if "Dev Updates"    module_universal_updates
+    run_module_if "macOS System"   module_system
+    run_module_if "Cleanup"        module_cleanup
+    run_module_if "Deep Clean"     module_deepclean
+    run_module_if "Spotlight Fix"  module_spotlight_fix
+    run_module_if "iCloud Fix"     module_icloud_fix
+    run_module_if "Performance"    module_performance
+    run_module_if "Git repos"      module_git_repos
+    run_module_if "Sniffnet"       module_sniffnet
+    run_module_if "Security Suite" module_security_suite
+    run_module_if "Benchmark"      module_benchmark
+    run_module_if "Time Machine"   module_tm_health
+    run_module_if "Battery"        module_battery
+    run_module_if "iOS Simulators" module_ios_sim
+    run_module_if "Docker Prune"   module_docker_prune
+    run_module_if "Kernel Panics"  module_panic_scan
+    run_module_if "SSH Keys"       module_ssh_audit
+    run_module_if "Broken Symlinks" module_broken_symlinks
+    run_module_if "Brew Bottle Age" module_brew_age
+    run_module_if "LaunchDaemons"  module_launchd_orphans
+    run_module_if "Shell History"  module_shell_history
+    run_module_if "APFS Snapshots" module_apfs_snapshots
+    run_module_if "Kext Audit"     module_kext_audit
+    run_module_if "Time Sync"      module_time_sync
+    run_module_if "Render Caches"  module_rendering_caches
+    run_module_if "Receipts Audit" module_receipts_audit
+    run_module_if "Dev Caches"     module_dev_caches
+    run_module_if "node_modules"   module_node_modules_aged
+    run_module_if "Sleep Blockers" module_sleep_blockers
+    run_module_if ".DS_Store"      module_dsstore_cleanup
+    run_module_if "Docs Order"     module_docs_order
+    run_module_if "LaunchServices" module_launchservices_rebuild
+    run_module_if "Privacy Audit"  module_tcc_privacy_audit
+    run_module_if "Simulator Fix"  module_simfix
 
     if $RUN_SUDO_TASKS; then
         section_header "System maintenance (sudo)"
