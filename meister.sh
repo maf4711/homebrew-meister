@@ -4,7 +4,7 @@
 # meister.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.4
+# Version: 6.5
 # Date: 2026-07-15
 #
 # NEW in v6.0 — "MeisterSiri": Ollama fully replaced by Apple Intelligence

@@ -4,7 +4,8 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.4
+# Version: 6.5
+# NEW in v6.5 — same as 6.4 (fresh tag; GitHub CDN had stale v6.4 tarball)
 # NEW in v6.4 — sudo once + runtime:
 #  - ensure_sudo(): one Touch ID/password at start; rest is sudo -n only
 #  - keep_sudo every 30s (was 60); reuses existing ticket across meister + meisterSiri
