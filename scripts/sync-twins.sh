@@ -73,15 +73,33 @@ fm_available() {
     [ "${FM_ENABLED:-true}" = "true" ] || return 1
     curl -sf --max-time 2 "${MEISTER_OLLAMA_URL:-http://localhost:11434}/api/tags" >/dev/null 2>&1
 }
+# $1=prompt  $2=label  $3=mode — same audit UX as Apple twin
 fm_query() {
     local prompt="$1"
     local label="${2:-query}"
+    local mode="${3:-readonly}"
+    local purpose="$label"
     local url="${MEISTER_OLLAMA_URL:-http://localhost:11434}"
     local model="${MEISTER_OLLAMA_MODEL:-qwen3-coder:30b}"
-    if [ "${AI_TRACE:-true}" = "true" ]; then
-        ai_trace_box "REQUEST → ${AI_BACKEND_LABEL} ($label / $model)" "$prompt"
-        ai_trace_line "Warte auf Antwort (${AI_BACKEND_LABEL})…"
+    case "$label" in
+        AI-Heal:*|ai-heal:*|heal:*) purpose="ai-heal"; mode="heal-candidate" ;;
+        explain*) purpose="explain"; mode="readonly" ;;
+        ai-diagnose*|diagnose*) purpose="ai-diagnose"; mode="readonly" ;;
+        today*) purpose="today"; mode="readonly" ;;
+        suggest*) purpose="suggest"; mode="readonly" ;;
+    esac
+    AI_CALLS_THIS_RUN=$(( ${AI_CALLS_THIS_RUN:-0} + 1 ))
+    if [ "$mode" = "heal-candidate" ]; then
+        AI_HEAL_CALLS_THIS_RUN=$(( ${AI_HEAL_CALLS_THIS_RUN:-0} + 1 ))
+    else
+        AI_READONLY_CALLS_THIS_RUN=$(( ${AI_READONLY_CALLS_THIS_RUN:-0} + 1 ))
     fi
+    if [ "${AI_TRACE:-true}" = "true" ]; then
+        ai_call_banner "$purpose" "$mode" "$label / model=$model"
+        ai_trace_box "REQUEST → ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  mode=${mode}  |  model=${model}" "$prompt"
+        ai_trace_line "⏳ ${AI_BACKEND_LABEL} denkt nach… (Call #${AI_CALLS_THIS_RUN})"
+    fi
+    ai_usage_record "$purpose" "$mode" "request" "label=$label model=$model"
     local payload resp
     if command -v jq >/dev/null 2>&1; then
         payload=$(jq -n --arg m "$model" --arg p "$prompt" '{model:$m, prompt:$p, stream:false}')
@@ -92,11 +110,21 @@ fm_query() {
         -H 'Content-Type: application/json' -d "$payload" 2>/dev/null \
         | if command -v jq >/dev/null 2>&1; then jq -r '.response // empty'
           else python3 -c 'import sys,json; print(json.load(sys.stdin).get("response") or "")'; fi) || true
-    if [ "${AI_TRACE:-true}" = "true" ]; then
-        if [ -n "$resp" ]; then
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL} ($label)" "$resp"
-        else
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL} ($label)" "(leer — ollama serve / model pull?)"
+    if [ -n "$resp" ]; then
+        ai_usage_record "$purpose" "$mode" "response-ok" "chars=${#resp}"
+        if [ "${AI_TRACE:-true}" = "true" ]; then
+            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  MODE=${mode}  |  (noch NICHT ausgeführt)" "$resp"
+            if [ "$mode" = "readonly" ]; then
+                ai_trace_line "✓ ${AI_BACKEND_LABEL}: nur Textanzeige — kein Befehl wird ausgeführt"
+            else
+                ai_trace_line "→ ${AI_BACKEND_LABEL}: Vorschlag geht an Allowlist (heal)"
+            fi
+        fi
+    else
+        ai_usage_record "$purpose" "$mode" "response-empty" "label=$label"
+        if [ "${AI_TRACE:-true}" = "true" ]; then
+            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}" "(leer — ollama serve / model pull?)"
+            ai_trace_line "✗ ${AI_BACKEND_LABEL}: keine Antwort"
         fi
     fi
     printf '%s' "$resp"

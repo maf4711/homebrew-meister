@@ -4,7 +4,14 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.8
+# Version: 6.9
+# NEW in v6.9 — AI transparency (what is Apple Intelligence / Ollama?):
+#  - Every model call records: when, backend, purpose, mode (read-only|heal-candidate),
+#    executed? (yes/no/rejected), label → ~/.meister/ai_usage.log
+#  - Terminal boxes show ZWECK + MODUS + BACKEND clearly
+#  - meister ai usage | ai-log  — human summary of AI activity
+#  - End-of-run report section: AI calls this run
+#
 # NEW in v6.8 — always-on Mac upkeep (both twins):
 #  - AUTOFIX_ON_RUN: every maintenance run runs autofix catalog first
 #  - AI-Heal stays on in quick/auto/deep (backend: Apple on meister, Ollama on meister)
@@ -275,6 +282,10 @@ MEISTER_OLLAMA_MODEL="${MEISTER_OLLAMA_MODEL:-qwen3-coder:30b}"
 FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
 FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
 AI_TRACE=true                           # always show AI REQUEST+RESPONSE at runtime
+AI_USAGE_LOG="$MEISTER_DIR/ai_usage.log" # structured audit of every model call
+AI_CALLS_THIS_RUN=0
+AI_HEAL_CALLS_THIS_RUN=0
+AI_READONLY_CALLS_THIS_RUN=0
 NET_CHECK_HOSTS="google.com apple.com cloudflare.com"
 
 # Fix #78: Deep Clean Config-Gating (via ~/.meister/config steuerbar)
@@ -764,6 +775,40 @@ exit(code)
 SWIFT_EOF
 }
 
+# ===== AI USAGE AUDIT (shared; works for Apple + Ollama) =====
+# mode: readonly | heal-candidate
+# purpose: short machine key (explain|ai-diagnose|ai-heal|today|suggest|query)
+ai_usage_record() {
+    local purpose="$1" mode="$2" status="$3" detail="${4:-}"
+    local backend="${AI_BACKEND_LABEL:-AI}"
+    local kind="${AI_BACKEND_KIND:-unknown}"
+    detail=$(printf '%s' "$detail" | tr '\n' ' ' | cut -c1-200)
+    mkdir -p "$MEISTER_DIR" 2>/dev/null || true
+    printf '%s | backend=%s | kind=%s | purpose=%s | mode=%s | status=%s | %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$backend" "$kind" "$purpose" "$mode" "$status" "$detail" \
+        >> "${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}" 2>/dev/null || true
+}
+
+# Pretty terminal banner for a model call
+ai_call_banner() {
+    # $1 purpose  $2 mode  $3 extra
+    local purpose="$1" mode="$2" extra="${3:-}"
+    local backend="${AI_BACKEND_LABEL:-AI}"
+    local kind="${AI_BACKEND_KIND:-unknown}"
+    local mode_de="nur lesen (nichts wird ausgefuehrt)"
+    [ "$mode" = "heal-candidate" ] && mode_de="Heal-Kandidat → Allowlist → ggf. 1 Befehl"
+    ai_trace_line "╔══ ${backend} ══════════════════════════════════════"
+    ai_trace_line "║ BACKEND:  ${backend}  [${kind}]"
+    ai_trace_line "║ ZWECK:    ${purpose}"
+    ai_trace_line "║ MODUS:    ${mode_de}"
+    [ -n "$extra" ] && ai_trace_line "║ KONTEXT:  ${extra}"
+    ai_trace_line "║ WAS IST AI?  Nur Text-Antwort des On-Device/Local-Modells."
+    ai_trace_line "║ WAS NICHT?   Autofix/Healer/Known-Fix laufen OHNE Modell."
+    ai_trace_line "╚════════════════════════════════════════════════════"
+}
+
+# ===== /AI USAGE AUDIT =====
+
 # ===== TWIN:AI-BACKEND (Ollama — meister) =====
 ensure_fm_helper() {
     if ! command -v jq >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
@@ -775,15 +820,33 @@ fm_available() {
     [ "${FM_ENABLED:-true}" = "true" ] || return 1
     curl -sf --max-time 2 "${MEISTER_OLLAMA_URL:-http://localhost:11434}/api/tags" >/dev/null 2>&1
 }
+# $1=prompt  $2=label  $3=mode — same audit UX as Apple twin
 fm_query() {
     local prompt="$1"
     local label="${2:-query}"
+    local mode="${3:-readonly}"
+    local purpose="$label"
     local url="${MEISTER_OLLAMA_URL:-http://localhost:11434}"
     local model="${MEISTER_OLLAMA_MODEL:-qwen3-coder:30b}"
-    if [ "${AI_TRACE:-true}" = "true" ]; then
-        ai_trace_box "REQUEST → ${AI_BACKEND_LABEL} ($label / $model)" "$prompt"
-        ai_trace_line "Warte auf Antwort (${AI_BACKEND_LABEL})…"
+    case "$label" in
+        AI-Heal:*|ai-heal:*|heal:*) purpose="ai-heal"; mode="heal-candidate" ;;
+        explain*) purpose="explain"; mode="readonly" ;;
+        ai-diagnose*|diagnose*) purpose="ai-diagnose"; mode="readonly" ;;
+        today*) purpose="today"; mode="readonly" ;;
+        suggest*) purpose="suggest"; mode="readonly" ;;
+    esac
+    AI_CALLS_THIS_RUN=$(( ${AI_CALLS_THIS_RUN:-0} + 1 ))
+    if [ "$mode" = "heal-candidate" ]; then
+        AI_HEAL_CALLS_THIS_RUN=$(( ${AI_HEAL_CALLS_THIS_RUN:-0} + 1 ))
+    else
+        AI_READONLY_CALLS_THIS_RUN=$(( ${AI_READONLY_CALLS_THIS_RUN:-0} + 1 ))
     fi
+    if [ "${AI_TRACE:-true}" = "true" ]; then
+        ai_call_banner "$purpose" "$mode" "$label / model=$model"
+        ai_trace_box "REQUEST → ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  mode=${mode}  |  model=${model}" "$prompt"
+        ai_trace_line "⏳ ${AI_BACKEND_LABEL} denkt nach… (Call #${AI_CALLS_THIS_RUN})"
+    fi
+    ai_usage_record "$purpose" "$mode" "request" "label=$label model=$model"
     local payload resp
     if command -v jq >/dev/null 2>&1; then
         payload=$(jq -n --arg m "$model" --arg p "$prompt" '{model:$m, prompt:$p, stream:false}')
@@ -794,11 +857,21 @@ fm_query() {
         -H 'Content-Type: application/json' -d "$payload" 2>/dev/null \
         | if command -v jq >/dev/null 2>&1; then jq -r '.response // empty'
           else python3 -c 'import sys,json; print(json.load(sys.stdin).get("response") or "")'; fi) || true
-    if [ "${AI_TRACE:-true}" = "true" ]; then
-        if [ -n "$resp" ]; then
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL} ($label)" "$resp"
-        else
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL} ($label)" "(leer — ollama serve / model pull?)"
+    if [ -n "$resp" ]; then
+        ai_usage_record "$purpose" "$mode" "response-ok" "chars=${#resp}"
+        if [ "${AI_TRACE:-true}" = "true" ]; then
+            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  MODE=${mode}  |  (noch NICHT ausgeführt)" "$resp"
+            if [ "$mode" = "readonly" ]; then
+                ai_trace_line "✓ ${AI_BACKEND_LABEL}: nur Textanzeige — kein Befehl wird ausgeführt"
+            else
+                ai_trace_line "→ ${AI_BACKEND_LABEL}: Vorschlag geht an Allowlist (heal)"
+            fi
+        fi
+    else
+        ai_usage_record "$purpose" "$mode" "response-empty" "label=$label"
+        if [ "${AI_TRACE:-true}" = "true" ]; then
+            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}" "(leer — ollama serve / model pull?)"
+            ai_trace_line "✗ ${AI_BACKEND_LABEL}: keine Antwort"
         fi
     fi
     printf '%s' "$resp"
@@ -851,7 +924,8 @@ try_learned_fix() {
         mv "$learned.tmp" "$learned"
         return 1
     fi
-    ai_trace_line "LEARNED-FIX (gemerkt, kein neuer AI-Call): Modul=$module_name"
+    ai_trace_line "LEARNED-FIX (gemerkt, KEIN ${AI_BACKEND_LABEL}-Call): Modul=$module_name"
+    ai_usage_record "learned-fix" "heal-candidate" "no-model" "module=$module_name (cached, not AI)"
     ai_trace_line "LEARNED-FIX Befehl: $cmd"
     log HEAL "Learned-Fix: trying remembered fix for $module_name: $cmd"
     if $DRY_RUN; then
@@ -928,6 +1002,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
         ai_trace_line "AI-FIX ERGEBNIS: no-fix (Model sagt NO_FIX / leer)"
+        ai_usage_record "ai-heal" "heal-candidate" "no-fix" "module=$module_name"
         log_heal_event "ai-heal" "$module_name" "no-fix" ""
         return 1
     fi
@@ -937,6 +1012,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if echo "$ai_response" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'; then
         log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
         ai_trace_line "AI-FIX ERGEBNIS: rejected — Placeholder: $ai_response"
+        ai_usage_record "ai-heal" "heal-candidate" "rejected-placeholder" "module=$module_name"
         log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
         return 1
     fi
@@ -949,6 +1025,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|rm -rf?[[:space:]]+(/|~)[[:space:]]*(\||;|&|$)|sudo[[:space:]]+rm|rm -rf?[[:space:]][^;|&]*\*|mkfs|dd if=|:\(\)\{ :|> /dev/sd|shutdown|reboot|halt"; then
         log WARN "AI-Heal: Dangerous command blocked: $ai_response"
         ai_trace_line "AI-FIX ERGEBNIS: blocked — dangerous: $ai_response"
+        ai_usage_record "ai-heal" "heal-candidate" "rejected-dangerous" "module=$module_name"
         log_heal_event "ai-heal" "$module_name" "blocked" "$ai_response"
         return 1
     fi
@@ -960,6 +1037,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
         && ! echo "$ai_response" | grep -qE "^[[:space:]]*sudo[[:space:]]"; then
         log WARN "AI-Heal: System-path mutation without sudo blocked: $ai_response"
         ai_trace_line "AI-FIX ERGEBNIS: blocked-syspath: $ai_response"
+        ai_usage_record "ai-heal" "heal-candidate" "rejected-syspath" "module=$module_name cmd=$ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked-syspath" "$ai_response"
         return 1
     fi
@@ -970,6 +1048,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if ! heal_command_allowed "$ai_response"; then
         log WARN "AI-Heal: Command not allowlisted — rejected: $ai_response"
         ai_trace_line "AI-FIX ERGEBNIS: rejected-allowlist: $ai_response"
+        ai_usage_record "ai-heal" "heal-candidate" "rejected-allowlist" "module=$module_name cmd=$ai_response"
         log_heal_event "ai-heal" "$module_name" "rejected-allowlist" "$ai_response"
         return 1
     fi
@@ -997,6 +1076,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if [ $ai_rc -eq 0 ]; then
         log FIX "AI-Heal: Command successful"
         ai_trace_line "AI-FIX ERGEBNIS: success (exit 0) — Modul wird erneut getestet"
+        ai_usage_record "ai-heal" "heal-candidate" "executed-ok" "module=$module_name cmd=$ai_response"
         [ -n "$ai_fix_output" ] && {
             log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
             ai_trace_line "AI-FIX stdout: $(echo "$ai_fix_output" | head -3 | tr '\n' ' ')"
@@ -1009,6 +1089,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     else
         log WARN "AI-Heal: Command failed (Exit: $ai_rc)"
         ai_trace_line "AI-FIX ERGEBNIS: failed (exit $ai_rc)"
+        ai_usage_record "ai-heal" "heal-candidate" "executed-fail" "module=$module_name rc=$ai_rc"
         log_heal_event "ai-heal" "$module_name" "failed" "$ai_response"
         [ -n "$ai_fix_output" ] && {
             log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
@@ -5175,6 +5256,17 @@ print_report() {
         fi
     fi
 
+    # v6.9: AI transparency summary for this run
+    if [ "${AI_CALLS_THIS_RUN:-0}" -gt 0 ] || [ -f "${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}" ]; then
+        echo -e "\n${MAGENTA}--- AI diese Session (${AI_BACKEND_LABEL:-AI}) ---${NC}"
+        echo "  Backend:     ${AI_BACKEND_LABEL:-?} [${AI_BACKEND_KIND:-?}]"
+        echo "  Calls:       ${AI_CALLS_THIS_RUN:-0} total  ·  heal-kandidaten: ${AI_HEAL_CALLS_THIS_RUN:-0}  ·  nur-lesen: ${AI_READONLY_CALLS_THIS_RUN:-0}"
+        echo "  Audit-Log:   ${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}"
+        echo "  Anzeigen:    meister ai usage"
+        echo "  Legende:     readonly = nur Text | heal-candidate = Allowlist vor Ausführung"
+        echo "  Autofix/Known-Fix/Healer = OHNE Modell (nicht in AI-Zählung)"
+    fi
+
     echo -e "\n${BLUE}====================================================${NC}"
     echo "Log: $LOGFILE"
     echo "Config: $MEISTER_CONFIG"
@@ -5188,6 +5280,13 @@ health_dashboard() {
         echo -e "  AI:      ${GREEN}online${NC} (${AI_BACKEND_LABEL:-AI}, ${AI_BACKEND_KIND:-apple})"
     else
         echo -e "  AI:      ${RED}offline${NC} (${AI_BACKEND_LABEL:-AI} unavailable)"
+    fi
+    if [ -f "${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}" ]; then
+        local _ai_n _ai_last
+        _ai_n=$(wc -l < "${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}" | tr -d ' ')
+        _ai_last=$(tail -1 "${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}" 2>/dev/null | cut -c1-90)
+        echo -e "  AI-Log:  ${_ai_n} calls  (meister ai usage)"
+        [ -n "$_ai_last" ] && echo -e "  Last:    ${_ai_last}"
     fi
     echo -e "  Disk:    $(df -h / | awk 'NR==2 {print $5}') used ($(df -h / | awk 'NR==2 {print $4}') free)"
     local pc=$(( $(ls -1 "$MEISTER_DIR/patches/" 2>/dev/null | wc -l) ))
@@ -7548,6 +7647,50 @@ if [ "${1:-}" = "autofix" ]; then
     exit 0
 fi
 
+
+# ── ai usage / ai-log — audit: what did the model do? ──
+if [ "${1:-}" = "ai-log" ] || [ "${1:-}" = "ai-usage" ] || { [ "${1:-}" = "ai" ] && { [ "${2:-}" = "usage" ] || [ "${2:-}" = "log" ]; }; }; then
+    echo -e "\033[1;34m  Meister AI USAGE — was kam vom Modell?\033[0m"
+    echo ""
+    echo "  Backend jetzt: ${AI_BACKEND_LABEL:-?} [${AI_BACKEND_KIND:-?}]"
+    echo "  Audit-Datei:   ${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}"
+    echo ""
+    echo "  ── Wann wird welches Backend genutzt? ──"
+    echo "  purpose=explain        meister explain …     → nur Text erklären"
+    echo "  purpose=today          meister today         → 1-Satz Fokus"
+    echo "  purpose=suggest        meister suggest …     → Fix-Idee, nie ausführen"
+    echo "  purpose=ai-diagnose    meister ai            → Rest-Risiken nach Autofix"
+    echo "  purpose=ai-heal        Modul fail im Wartungslauf → 1 Shell-Befehl nach Allowlist"
+    echo "  purpose=learned-fix    gemerkter Fix             → KEIN Modell-Call"
+    echo ""
+    echo "  ── Autofix / Healer / Known-Fix nutzen KEIN ${AI_BACKEND_LABEL:-AI} ──"
+    echo ""
+    _logf="${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}"
+    if [ ! -f "$_logf" ]; then
+        echo "  (noch keine AI-Calls protokolliert — z.B. meister explain \"test\")"
+        exit 0
+    fi
+    _n=$(wc -l < "$_logf" | tr -d ' ')
+    echo "  Einträge gesamt: $_n"
+    echo "  Nach purpose:"
+    awk -F' *\\| *' '{
+      for(i=1;i<=NF;i++) if($i ~ /^purpose=/) { split($i,a,"="); p[a[2]]++ }
+    } END { for (k in p) printf "    %-16s %d\n", k, p[k] }' "$_logf" | sort
+    echo ""
+    echo "  Nach status:"
+    awk -F' *\\| *' '{
+      for(i=1;i<=NF;i++) if($i ~ /^status=/) { split($i,a,"="); s[a[2]]++ }
+    } END { for (k in s) printf "    %-20s %d\n", k, s[k] }' "$_logf" | sort
+    echo ""
+    echo "  Letzte 20 Calls:"
+    echo "  ────────────────────────────────────────────────────────────"
+    tail -20 "$_logf" | sed 's/^/  /'
+    echo ""
+    echo "  Live-Request/Response: AI_TRACE=true (default)"
+    echo "  Roh-Log:  grep ' - AI - ' ~/.meister/meister.log | tail -40"
+    exit 0
+fi
+
 if [ "${1:-}" = "ai" ]; then
     # meister ai suggest <text> → suggest only
     if [ "${2:-}" = "suggest" ]; then
@@ -8505,6 +8648,8 @@ TOOLS:
   meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
   meister files <x>    Who has port/file/process open (Sloth-style lsof)
   meister ai           Autofix known issues + AI summary of remaining risks
+  meister ai usage     Was hat Apple Intelligence / Ollama wann gemacht?
+  meister ai-log       Alias für ai usage
   meister ai --diagnose-only   AI only (no autofix)
   meister autofix      Deterministic fixes (bottles, orphans, git push, FW, inbox)
 
