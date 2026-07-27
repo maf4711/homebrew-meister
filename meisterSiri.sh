@@ -4,7 +4,12 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.9
+# Version: 6.10
+# NEW in v6.10 — AI-HEAL visually unmistakable:
+#  - Distinct [AI-HEAL] prefix (bold yellow/black), full-width banners
+#  - Clear phases: START → MODEL → ALLOWLIST → EXECUTE → RESULT
+#  - Request/response boxes labeled AI-HEAL not generic AI
+#
 # NEW in v6.9 — AI transparency (what is Apple Intelligence / Ollama?):
 #  - Every model call records: when, backend, purpose, mode (read-only|heal-candidate),
 #    executed? (yes/no/rejected), label → ~/.meister/ai_usage.log
@@ -429,6 +434,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
+YELLOW='\033[1;33m'
+BOLD='\033[1m'
+AIHEAL_FG='\033[1;33m'      # bold yellow — AI-HEAL only
+AIHEAL_BG='\033[43;30;1m'   # yellow bg black text
 BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
@@ -856,8 +865,11 @@ ai_call_banner() {
     local purpose="$1" mode="$2" extra="${3:-}"
     local backend="${AI_BACKEND_LABEL:-AI}"
     local kind="${AI_BACKEND_KIND:-unknown}"
+    if [ "$mode" = "heal-candidate" ] || [ "$purpose" = "ai-heal" ]; then
+        ai_heal_banner_start "$extra" "$backend" "$kind"
+        return 0
+    fi
     local mode_de="nur lesen (nichts wird ausgefuehrt)"
-    [ "$mode" = "heal-candidate" ] && mode_de="Heal-Kandidat → Allowlist → ggf. 1 Befehl"
     ai_trace_line "╔══ ${backend} ══════════════════════════════════════"
     ai_trace_line "║ BACKEND:  ${backend}  [${kind}]"
     ai_trace_line "║ ZWECK:    ${purpose}"
@@ -866,6 +878,65 @@ ai_call_banner() {
     ai_trace_line "║ WAS IST AI?  Nur Text-Antwort des On-Device/Local-Modells."
     ai_trace_line "║ WAS NICHT?   Autofix/Healer/Known-Fix laufen OHNE Modell."
     ai_trace_line "╚════════════════════════════════════════════════════"
+}
+
+# ── AI-HEAL only: high-visibility yellow banners (unmistakable) ──
+ai_heal_emit() {
+    local msg="$*"
+    local out="/dev/tty"
+    { [ -w /dev/tty ] 2>/dev/null; } || out="/dev/stderr"
+    # Prefer yellow; fall back to magenta if colors unset
+    local fg="${AIHEAL_FG:-$YELLOW}"; fg="${fg:-$MAGENTA}"
+    local bg="${AIHEAL_BG:-}"
+    {
+        if [ -n "$bg" ]; then
+            echo -e "${bg} AI-HEAL ${NC} ${fg}${msg}${NC}"
+        else
+            echo -e "${fg}[AI-HEAL]${NC} ${fg}${msg}${NC}"
+        fi
+    } >"$out" 2>/dev/null || echo -e "${fg}[AI-HEAL]${NC} ${msg}" >&2
+    echo "$(date +'%Y-%m-%d %H:%M:%S') - AI-HEAL - $msg" >> "$LOGFILE" 2>/dev/null || true
+}
+
+ai_heal_banner_start() {
+    local ctx="${1:-}" backend="${2:-${AI_BACKEND_LABEL:-AI}}" kind="${3:-${AI_BACKEND_KIND:-?}}"
+    ai_heal_emit "############################################################"
+    ai_heal_emit "###  AI-HEAL AKTIV  —  Modell schlägt Fix vor              ###"
+    ai_heal_emit "###  Backend: ${backend} [${kind}]"
+    [ -n "$ctx" ] && ai_heal_emit "###  Kontext: ${ctx}"
+    ai_heal_emit "###  Ablauf:  1) MODEL  2) ALLOWLIST  3) optional EXECUTE  ###"
+    ai_heal_emit "###  Autofix/Healer OHNE Modell — das hier IST das Modell  ###"
+    ai_heal_emit "############################################################"
+}
+
+ai_heal_box() {
+    local title="$1"; shift
+    local body="$*"
+    local ts; ts=$(date +'%H:%M:%S')
+    local fg="${AIHEAL_FG:-$YELLOW}"; fg="${fg:-$MAGENTA}"
+    local out="/dev/tty"
+    { [ -w /dev/tty ] 2>/dev/null; } || out="/dev/stderr"
+    {
+        echo ""
+        echo -e "${fg}┏━━ AI-HEAL ${title} ── ${ts} ━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        if [ -n "$body" ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+                echo -e "${fg}┃${NC} ${line}"
+            done <<< "$body"
+        fi
+        echo -e "${fg}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    } >"$out" 2>/dev/null || {
+        echo "" >&2
+        echo -e "${fg}[AI-HEAL] ${title}${NC}" >&2
+        printf '%s
+' "$body" | sed 's/^/  | /' >&2
+    }
+    {
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI-HEAL - === ${title} ==="
+        printf '%s
+' "$body" | sed 's/^/  /'
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI-HEAL - === /${title} ==="
+    } >> "$LOGFILE" 2>/dev/null || true
 }
 
 # ===== /AI USAGE AUDIT =====
@@ -923,8 +994,13 @@ fm_query() {
     fi
     if [ "${AI_TRACE:-true}" = "true" ]; then
         ai_call_banner "$purpose" "$mode" "$label"
-        ai_trace_box "REQUEST → ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  mode=${mode}" "$prompt"
-        ai_trace_line "⏳ ${AI_BACKEND_LABEL} denkt nach… (Call #${AI_CALLS_THIS_RUN})"
+        if [ "$mode" = "heal-candidate" ] || [ "$purpose" = "ai-heal" ]; then
+            ai_heal_box "PHASE 1/3  MODEL-ANFRAGE  → ${AI_BACKEND_LABEL}" "$prompt"
+            ai_heal_emit "⏳ PHASE 1: warte auf ${AI_BACKEND_LABEL}… (Call #${AI_CALLS_THIS_RUN})"
+        else
+            ai_trace_box "REQUEST → ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  mode=${mode}" "$prompt"
+            ai_trace_line "⏳ ${AI_BACKEND_LABEL} denkt nach… (Call #${AI_CALLS_THIS_RUN})"
+        fi
     fi
     ai_usage_record "$purpose" "$mode" "request" "label=$label"
     local resp
@@ -932,18 +1008,24 @@ fm_query() {
     if [ -n "$resp" ]; then
         ai_usage_record "$purpose" "$mode" "response-ok" "chars=${#resp}"
         if [ "${AI_TRACE:-true}" = "true" ]; then
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  MODE=${mode}  |  (noch NICHT ausgeführt)" "$resp"
-            if [ "$mode" = "readonly" ]; then
-                ai_trace_line "✓ ${AI_BACKEND_LABEL}: nur Textanzeige — kein Befehl wird ausgeführt"
+            if [ "$mode" = "heal-candidate" ] || [ "$purpose" = "ai-heal" ]; then
+                ai_heal_box "PHASE 1/3  MODEL-ANTWORT  ← ${AI_BACKEND_LABEL}  (noch NICHT ausgeführt)" "$resp"
+                ai_heal_emit "→ PHASE 2: Allowlist prüft den Vorschlag (kein Blind-Execute)"
             else
-                ai_trace_line "→ ${AI_BACKEND_LABEL}: Vorschlag geht an Allowlist (heal), nicht blind ausführen"
+                ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  MODE=${mode}  |  (noch NICHT ausgeführt)" "$resp"
+                ai_trace_line "✓ ${AI_BACKEND_LABEL}: nur Textanzeige — kein Befehl wird ausgeführt"
             fi
         fi
     else
         ai_usage_record "$purpose" "$mode" "response-empty" "label=$label"
         if [ "${AI_TRACE:-true}" = "true" ]; then
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}  |  purpose=${purpose}" "(leer / Fehler — Model offline oder Timeout)"
-            ai_trace_line "✗ ${AI_BACKEND_LABEL}: keine Antwort"
+            if [ "$mode" = "heal-candidate" ] || [ "$purpose" = "ai-heal" ]; then
+                ai_heal_box "PHASE 1/3  LEER" "(keine Antwort von ${AI_BACKEND_LABEL})"
+                ai_heal_emit "✗ AI-HEAL abgebrochen — Model lieferte nichts"
+            else
+                ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}  |  purpose=${purpose}" "(leer / Fehler — Model offline oder Timeout)"
+                ai_trace_line "✗ ${AI_BACKEND_LABEL}: keine Antwort"
+            fi
         fi
     fi
     printf '%s' "$resp"
@@ -1043,18 +1125,21 @@ ai_heal() {
     local prev_attempt="${3:-}"
 
     if ! fm_available; then
-        ai_trace_line "AI-Heal übersprungen — Apple Intelligence nicht verfügbar"
+        ai_heal_emit "SKIP — ${AI_BACKEND_LABEL:-AI} nicht verfügbar (kein AI-HEAL)"
         return 1
     fi
 
-    # Always-visible banner: AI fix is about to run
-    ai_trace_line "╔══ AI-FIX startet ══════════════════════════════════════"
-    ai_trace_line "║ Modul:  $module_name"
-    ai_trace_line "║ Fehler: $(printf '%s' "$error_output" | tr '\n' ' ' | cut -c1-200)"
-    [ -n "$prev_attempt" ] && ai_trace_line "║ Vorheriger Versuch (fehlgeschlagen): $prev_attempt"
-    ai_trace_line "╚════════════════════════════════════════════════════════"
+    # High-visibility AI-HEAL start (always, even if AI_TRACE=false for normal AI)
+    ai_heal_emit "############################################################"
+    ai_heal_emit "###  ★★★  AI-HEAL START  ★★★"
+    ai_heal_emit "###  Modul:   $module_name"
+    ai_heal_emit "###  Backend: ${AI_BACKEND_LABEL:-AI} [${AI_BACKEND_KIND:-?}]"
+    ai_heal_emit "###  Fehler:  $(printf '%s' "$error_output" | tr '\n' ' ' | cut -c1-160)"
+    [ -n "$prev_attempt" ] && ai_heal_emit "###  Vorher:  $prev_attempt (fehlgeschlagen)"
+    ai_heal_emit "###  Danach:  Allowlist → max. EIN Befehl → Modul-Retry"
+    ai_heal_emit "############################################################"
 
-    log HEAL "AI-Heal: Asking Apple Intelligence for fix for $module_name..."
+    log HEAL "★★★ AI-HEAL: frage ${AI_BACKEND_LABEL:-AI} für Modul $module_name"
     local retry_hint=""
     [ -n "$prev_attempt" ] && retry_hint="
 A previous suggestion was already executed and did NOT fix it: $prev_attempt
@@ -1074,7 +1159,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
 
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
-        ai_trace_line "AI-FIX ERGEBNIS: no-fix (Model sagt NO_FIX / leer)"
+        ai_heal_emit "ERGEBNIS: no-fix — Model sagt NO_FIX / leer (kein Befehl)"
         ai_usage_record "ai-heal" "heal-candidate" "no-fix" "module=$module_name"
         log_heal_event "ai-heal" "$module_name" "no-fix" ""
         return 1
@@ -1084,7 +1169,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # `/path/to/check` before, which then really ran (see INSIGHTS 2026-07-04 #1).
     if echo "$ai_response" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'; then
         log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
-        ai_trace_line "AI-FIX ERGEBNIS: rejected — Placeholder: $ai_response"
+        ai_heal_emit "ERGEBNIS: REJECTED — Placeholder im Model-Output: $ai_response"
         ai_usage_record "ai-heal" "heal-candidate" "rejected-placeholder" "module=$module_name"
         log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
         return 1
@@ -1097,7 +1182,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # group; GNU/ugrep abort the WHOLE pattern with exit 2 → nothing gets blocked.
     if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|rm -rf?[[:space:]]+(/|~)[[:space:]]*(\||;|&|$)|sudo[[:space:]]+rm|rm -rf?[[:space:]][^;|&]*\*|mkfs|dd if=|:\(\)\{ :|> /dev/sd|shutdown|reboot|halt"; then
         log WARN "AI-Heal: Dangerous command blocked: $ai_response"
-        ai_trace_line "AI-FIX ERGEBNIS: blocked — dangerous: $ai_response"
+        ai_heal_emit "ERGEBNIS: BLOCKED — gefährlicher Befehl: $ai_response"
         ai_usage_record "ai-heal" "heal-candidate" "rejected-dangerous" "module=$module_name"
         log_heal_event "ai-heal" "$module_name" "blocked" "$ai_response"
         return 1
@@ -1109,7 +1194,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if echo "$ai_response" | grep -qE "(chmod|chown|rm|mv|mkdir|touch|tee|>>?)[^|]*[[:space:]]+/(etc|System|Library|private|usr|bin|sbin|var)(/|[[:space:]]|$)" \
         && ! echo "$ai_response" | grep -qE "^[[:space:]]*sudo[[:space:]]"; then
         log WARN "AI-Heal: System-path mutation without sudo blocked: $ai_response"
-        ai_trace_line "AI-FIX ERGEBNIS: blocked-syspath: $ai_response"
+        ai_heal_emit "ERGEBNIS: BLOCKED — Systempfad ohne sudo: $ai_response"
         ai_usage_record "ai-heal" "heal-candidate" "rejected-syspath" "module=$module_name cmd=$ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked-syspath" "$ai_response"
         return 1
@@ -1120,23 +1205,24 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # sudo/rm/chmod. This does not trust the prompt; see heal_command_allowed.
     if ! heal_command_allowed "$ai_response"; then
         log WARN "AI-Heal: Command not allowlisted — rejected: $ai_response"
-        ai_trace_line "AI-FIX ERGEBNIS: rejected-allowlist: $ai_response"
+        ai_heal_emit "ERGEBNIS: REJECTED — nicht auf Allowlist: $ai_response"
         ai_usage_record "ai-heal" "heal-candidate" "rejected-allowlist" "module=$module_name cmd=$ai_response"
         log_heal_event "ai-heal" "$module_name" "rejected-allowlist" "$ai_response"
         return 1
     fi
 
-    log HEAL "AI-Heal suggestion: $ai_response"
-    ai_trace_line "AI-FIX Vorschlag (nach Filter): $ai_response"
-    ai_trace_line "AI-FIX Status: allowlist OK — wird ausgeführt"
+    log HEAL "★★★ AI-HEAL Vorschlag (Allowlist OK): $ai_response"
+    ai_heal_emit "PHASE 2/3 ALLOWLIST: OK"
+    ai_heal_box "PHASE 2/3  FREIGEGEBENER BEFEHL" "$ai_response"
+    ai_heal_emit "PHASE 3/3 EXECUTE: starte Befehl jetzt…"
 
     if $DRY_RUN; then
-        ai_trace_line "AI-FIX [DRY-RUN] würde ausführen: $ai_response"
+        ai_heal_emit "[DRY-RUN] würde ausführen: $ai_response"
         log STEP "   [DRY-RUN] Would execute: $ai_response"
         return 0
     fi
 
-    ai_trace_line "AI-FIX führe aus: $ai_response"
+    ai_heal_emit ">>> EXEC: $ai_response"
 
     # Execute WITHOUT a shell (word-split into an argv). heal_command_allowed has
     # already guaranteed there are no metacharacters, so this cannot chain,
@@ -1147,8 +1233,10 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     ai_rc=$?
 
     if [ $ai_rc -eq 0 ]; then
-        log FIX "AI-Heal: Command successful"
-        ai_trace_line "AI-FIX ERGEBNIS: success (exit 0) — Modul wird erneut getestet"
+        log FIX "★★★ AI-HEAL: Command successful"
+        ai_heal_emit "############################################################"
+        ai_heal_emit "###  AI-HEAL ERGEBNIS: SUCCESS (exit 0) — Modul-Retry  ###"
+        ai_heal_emit "############################################################"
         ai_usage_record "ai-heal" "heal-candidate" "executed-ok" "module=$module_name cmd=$ai_response"
         [ -n "$ai_fix_output" ] && {
             log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
@@ -1160,8 +1248,10 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
         AI_LAST_CMD="$ai_response"
         return 0
     else
-        log WARN "AI-Heal: Command failed (Exit: $ai_rc)"
-        ai_trace_line "AI-FIX ERGEBNIS: failed (exit $ai_rc)"
+        log WARN "★★★ AI-HEAL: Command failed (Exit: $ai_rc)"
+        ai_heal_emit "############################################################"
+        ai_heal_emit "###  AI-HEAL ERGEBNIS: FAILED (exit $ai_rc)              ###"
+        ai_heal_emit "############################################################"
         ai_usage_record "ai-heal" "heal-candidate" "executed-fail" "module=$module_name rc=$ai_rc"
         log_heal_event "ai-heal" "$module_name" "failed" "$ai_response"
         [ -n "$ai_fix_output" ] && {
@@ -1278,7 +1368,8 @@ run_module_safe() {
         module_output=$(tail -n +$((log_lines_before + 1)) "$LOGFILE" 2>/dev/null | tail -"$LOG_CAPTURE_LINES")
         if ai_heal "$module_name" "Exit: $rc. $module_output" "$last_ai_cmd"; then
             last_ai_cmd="$AI_LAST_CMD"
-            log HEAL "AI-Heal applied (round $ai_round), retrying..."
+            log HEAL "★★★ AI-HEAL applied (round $ai_round) — retry Modul..."
+            ai_heal_emit "Modul-Retry nach AI-HEAL (Runde $ai_round)…"
             sleep 1
             $module_func
             rc=$?
@@ -1286,7 +1377,8 @@ run_module_safe() {
                 # FIX entry + remembering only after the retest confirms the fix
                 report_add FIX "$module_name via AI-Heal repaired"
                 remember_fix "$module_name" "$last_ai_cmd"
-                log HEAL "Learned: fix for $module_name remembered for next time"
+                log HEAL "★★★ AI-HEAL learned: Fix für $module_name gemerkt"
+                ai_heal_emit "Learned-Fix gespeichert für nächstes Mal: $module_name"
             fi
         else
             break
@@ -5331,13 +5423,18 @@ print_report() {
 
     # v6.9: AI transparency summary for this run
     if [ "${AI_CALLS_THIS_RUN:-0}" -gt 0 ] || [ -f "${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}" ]; then
-        echo -e "\n${MAGENTA}--- AI diese Session (${AI_BACKEND_LABEL:-AI}) ---${NC}"
+        echo -e "\n${YELLOW}--- AI diese Session (${AI_BACKEND_LABEL:-AI}) ---${NC}"
         echo "  Backend:     ${AI_BACKEND_LABEL:-?} [${AI_BACKEND_KIND:-?}]"
-        echo "  Calls:       ${AI_CALLS_THIS_RUN:-0} total  ·  heal-kandidaten: ${AI_HEAL_CALLS_THIS_RUN:-0}  ·  nur-lesen: ${AI_READONLY_CALLS_THIS_RUN:-0}"
+        echo "  Calls:       ${AI_CALLS_THIS_RUN:-0} total  ·  nur-lesen: ${AI_READONLY_CALLS_THIS_RUN:-0}"
+        if [ "${AI_HEAL_CALLS_THIS_RUN:-0}" -gt 0 ]; then
+            echo -e "  ${AIHEAL_FG}★★★ AI-HEAL Calls: ${AI_HEAL_CALLS_THIS_RUN}  (Modul-Fails → Model → Allowlist)${NC}"
+            echo -e "  ${AIHEAL_FG}    Log: grep AI-HEAL ~/.meister/meister.log | tail${NC}"
+        else
+            echo "  AI-HEAL:     0  (kein Modul-Fail brauchte Modell-Fix)"
+        fi
         echo "  Audit-Log:   ${AI_USAGE_LOG:-$MEISTER_DIR/ai_usage.log}"
         echo "  Anzeigen:    meisterSiri ai usage"
-        echo "  Legende:     readonly = nur Text | heal-candidate = Allowlist vor Ausführung"
-        echo "  Autofix/Known-Fix/Healer = OHNE Modell (nicht in AI-Zählung)"
+        echo "  Autofix/Known-Fix/Healer = OHNE Modell"
     fi
 
     echo -e "\n${BLUE}====================================================${NC}"
