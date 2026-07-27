@@ -4,7 +4,7 @@
 # meister.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.3
+# Version: 6.4
 # Date: 2026-07-15
 #
 # NEW in v6.0 — "MeisterSiri": Ollama fully replaced by Apple Intelligence
@@ -538,7 +538,7 @@ cleanup() {
         print_report 2>/dev/null
         save_history 2>/dev/null
     fi
-    [ -n "$SUDO_KEEPALIVE_PID" ] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+    stop_sudo_keepalive
     rm -f "$MEISTER_DIR/output"/*_$$.log 2>/dev/null
     release_lock
 }
@@ -4673,9 +4673,88 @@ module_receipts_audit() {
 # 8. MAIN
 #############################
 
+# ── Sudo / Touch ID: once per session, shared system ticket ──────────────
+# macOS default often uses tty_tickets → each terminal re-prompts.
+# We: (1) auth once via ensure_sudo, (2) refresh ticket every 30s,
+# (3) optional sudoers drop-in: long timeout + !tty_tickets so meister
+# and meisterSiri share the same credential across terminals.
+SUDO_AUTHED=false
+
+sudo_has_ticket() {
+    sudo -n true 2>/dev/null
+}
+
+stop_sudo_keepalive() {
+    if [ -n "${SUDO_KEEPALIVE_PID:-}" ]; then
+        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        SUDO_KEEPALIVE_PID=""
+    fi
+}
+
 keep_sudo() {
-    while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+    # Only one keepalive per process
+    if [ -n "${SUDO_KEEPALIVE_PID:-}" ] && kill -0 "$SUDO_KEEPALIVE_PID" 2>/dev/null; then
+        return 0
+    fi
+    # Refresh every 30s (timeout is often 5 min; stay well under it)
+    (
+        while true; do
+            sudo -n true 2>/dev/null || exit 0
+            sleep 30
+            kill -0 "$$" 2>/dev/null || exit 0
+        done
+    ) >/dev/null 2>&1 &
     SUDO_KEEPALIVE_PID=$!
+    # Chain EXIT trap once (do not clobber prior traps)
+    if [ "${_MEISTER_SUDO_TRAP:-}" != "1" ]; then
+        _prev_exit_trap=$(trap -p EXIT | sed "s/^trap -- '\(.*\)' EXIT$/\1/")
+        if [ -n "$_prev_exit_trap" ]; then
+            # shellcheck disable=SC2064
+            trap "stop_sudo_keepalive; ${_prev_exit_trap}" EXIT
+        else
+            trap 'stop_sudo_keepalive' EXIT
+        fi
+        _MEISTER_SUDO_TRAP=1
+    fi
+}
+
+# One interactive auth max. If a valid ticket already exists (from earlier
+# meister / meisterSiri / manual sudo in this user session), reuse it.
+# Returns 0 if sudo works non-interactively afterwards.
+ensure_sudo() {
+    local reason="${1:-maintenance}"
+    if sudo_has_ticket; then
+        SUDO_AUTHED=true
+        NEEDS_SUDO=true
+        keep_sudo
+        return 0
+    fi
+    # Already tried and failed this process?
+    if [ "${SUDO_AUTH_FAILED:-false}" = "true" ]; then
+        NEEDS_SUDO=false
+        return 1
+    fi
+    # Need a TTY for Touch ID / password
+    if ! { [ -t 0 ] || ( : < /dev/tty ) 2>/dev/null; }; then
+        log WARN "No TTY — cannot prompt for sudo ($reason)"
+        SUDO_AUTH_FAILED=true
+        NEEDS_SUDO=false
+        return 1
+    fi
+    log INFO "Sudo once for $reason (Touch ID / password) — then cached for this session…"
+    # Prompt on controlling terminal so pipes/launchd wrappers still work
+    if sudo -v < /dev/tty 2>/dev/null || sudo -v 2>/dev/null; then
+        SUDO_AUTHED=true
+        NEEDS_SUDO=true
+        keep_sudo
+        log INFO "   Sudo OK — ticket live; no more prompts this run"
+        return 0
+    fi
+    log WARN "Sudo denied — privileged steps will be skipped (no further prompts)"
+    SUDO_AUTH_FAILED=true
+    NEEDS_SUDO=false
+    return 1
 }
 
 # Fix #16: Run-History
@@ -6042,9 +6121,11 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
     _authed=false
     _ensure_sudo() {
         $_authed && return 0
-        [ -t 0 ] || return 1            # never block on auth in a non-interactive run
-        log INFO "System-owned (root) items present — authorizing removal..."
-        sudo -v 2>/dev/null && { _authed=true; return 0; }
+        log INFO "System-owned (root) items present — authorizing once..."
+        if ensure_sudo "remove/orphans"; then
+            _authed=true
+            return 0
+        fi
         log WARN "Authorization failed — root-owned items will be skipped."
         return 1
     }
@@ -6335,7 +6416,7 @@ if [ "${1:-}" = "simfix" ]; then
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
     # Cache sudo for CoreSimulatorService kickstart
     if ! $DRY_RUN && [ -t 0 ]; then
-        sudo -v 2>/dev/null || echo "  (sudo unavailable — kickstart step will skip)"
+        ensure_sudo "simfix" || echo "  (sudo unavailable — kickstart step will skip)"
     fi
     MODULE_TOTAL=1
     start_bw_monitor
@@ -7325,6 +7406,46 @@ fi
 # ── Touch ID for sudo (meister touchid) ──
 # Writes pam_tid.so into /etc/pam.d/sudo_local (Sonoma+: survives macOS updates,
 # unlike editing /etc/pam.d/sudo directly). One sudo password — then fingerprint.
+# ── sudo-setup — long shared sudo ticket for meister + meisterSiri ──
+if [ "${1:-}" = "sudo-setup" ]; then
+    echo -e "\033[1;34m  Meister SUDO-SETUP — shared long-lived sudo ticket\033[0m"
+    echo ""
+    echo "  Problem: macOS often uses per-terminal sudo tickets (tty_tickets)."
+    echo "  Result: Touch ID again for every terminal / meister vs meisterSiri."
+    echo ""
+    echo "  This installs /etc/sudoers.d/zz-meister with:"
+    echo "    Defaults timestamp_timeout=120   # 2 hours"
+    echo "    Defaults !tty_tickets            # share across terminals"
+    echo ""
+    _dst="/etc/sudoers.d/zz-meister"
+    _tmp=$(mktemp)
+    cat > "$_tmp" << 'SUDOERS'
+# Managed by meister / meisterSiri — safe to delete to restore defaults
+# Share one sudo/Touch-ID auth across all terminals for 120 minutes.
+Defaults	timestamp_timeout=120
+Defaults	!tty_tickets
+SUDOERS
+    if ! visudo -cf "$_tmp" >/dev/null 2>&1; then
+        echo "  ERROR: sudoers syntax check failed — aborting"
+        rm -f "$_tmp"
+        exit 1
+    fi
+    echo "  Installing (one Touch ID / password)…"
+    if sudo install -m 0440 -o root -g wheel "$_tmp" "$_dst"; then
+        rm -f "$_tmp"
+        echo "  Installed: $_dst"
+        echo "  Validate:  sudo -n true   # should work after one auth"
+        echo "  Undo:      sudo rm $_dst"
+        # seed ticket now
+        sudo -v 2>/dev/null && echo "  Ticket seeded — meister and meisterSiri will reuse it."
+    else
+        rm -f "$_tmp"
+        echo "  Install failed"
+        exit 1
+    fi
+    exit 0
+fi
+
 if [ "${1:-}" = "touchid" ]; then
     echo -e "\033[1;34m  MEISTER TOUCHID — Touch ID for sudo\033[0m"
     echo ""
@@ -7492,7 +7613,7 @@ if [ "${1:-}" = "free" ]; then
     _ram_before=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
     echo "  RAM free before: ${_ram_before} MB"
     echo "  Running sudo purge (may take 10-30s)..."
-    if sudo -v && sudo purge; then
+    if ensure_sudo "free/purge" && sudo -n purge; then
         _ram_after=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
         echo "  RAM free after:  ${_ram_after} MB  (Δ +$((_ram_after - _ram_before)) MB)"
     else
@@ -7514,11 +7635,9 @@ if [ "${1:-}" = "heal" ]; then
     DRY_RUN=false
     [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
-    # Cache sudo upfront so system-bin fixes don't fail mid-run
+    # One sudo auth (or reuse ticket) — no mid-run prompts
     if ! $DRY_RUN && [ "$(id -u)" -ne 0 ]; then
-        if [ -t 0 ]; then
-            sudo -v 2>/dev/null || log WARN "sudo unavailable — some fixes will skip"
-        fi
+        ensure_sudo "heal" || log WARN "sudo unavailable — some fixes will skip"
     fi
     MODULE_TOTAL=1
     start_bw_monitor
@@ -7825,31 +7944,13 @@ log STEP "   Module: XCODE=$CLEAN_XCODE TRASH=$EMPTY_TRASH SUDO=$RUN_SUDO_TASKS 
 if $SHOW_HEALTH; then health_dashboard; release_lock; exit 0; fi
 if $INSTALL_LAUNCHAGENT; then install_launchagent; release_lock; exit 0; fi
 
-# Fix #145: Get sudo FIRST - before AI and all modules
-# Prevents password prompt mid-run (e.g. during brew cask upgrade)
+# Fix #145 / v6.4: ONE sudo/Touch-ID at start (or reuse existing ticket).
+# All modules use sudo -n only — no mid-run prompts.
 if ! $DRY_RUN && $NEEDS_SUDO; then
-    # Fix #161 (2026-05): seed sudo up-front via the CONTROLLING TERMINAL, not just stdin.
-    # When meister is launched with stdin redirected (pipe / wrapper / launchd), [ -t 0 ]
-    # is false, so the old code skipped the interactive `sudo -v` and never started
-    # keep_sudo. `brew upgrade --cask --greedy` then hit sudo, which prompts on /dev/tty,
-    # and blocked mid-run on "Password:". Prompt up-front whenever a tty is reachable.
-    if sudo -n true 2>/dev/null; then
-        keep_sudo
-        log INFO "   Sudo OK (cached)"
-    elif [ -t 0 ] || ( : < /dev/tty ) 2>/dev/null; then
-        log INFO "Requesting Sudo (once — everything else runs non-interactive)..."
-        if sudo -v < /dev/tty; then
-            keep_sudo
-            log INFO "   Sudo OK"
-        else
-            log WARN "Sudo denied or timeout - sudo tasks will be skipped (NO further prompts)"
-            log INFO "   Sudo not available"
-            NEEDS_SUDO=false
-        fi
+    if ensure_sudo "full maintenance run"; then
+        log INFO "   Sudo: ready (shared ticket — meister + meisterSiri reuse it)"
     else
-        log WARN "No TTY + no Sudo-Cache - sudo-Operationen skipped"
-        log INFO "   Sudo not available (non-interactive)"
-        NEEDS_SUDO=false
+        log INFO "   Sudo: not available — privileged modules skip"
     fi
 fi
 
