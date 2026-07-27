@@ -4,13 +4,18 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.2
-# Date: 2026-07-26
+# Version: 6.3
+# Date: 2026-07-27
 #
 # Twin of meister.sh: same maintenance modules, branded as MeisterSiri.
 # AI backend = on-device Apple FoundationModels (Apple Intelligence).
 # Shares config/state with meister: ~/.meister/
 
+# NEW in v6.3 — AI transparency at runtime:
+#  - Every Apple Intelligence call prints REQUEST (full prompt) + RESPONSE
+#  - AI-Heal / Learned-Fix / Known-Fix always visible (even in -q quiet mode)
+#  - Config: AI_TRACE=false in ~/.meister/config to silence (default: true)
+#
 # NEW in v6.2 — honesty + product polish + new commands:
 #  - Dry-run honesty: FIX/Freed never claim real mutations; WOULD-FIX + "Would free"
 #  - Full MeisterSiri branding on all tool banners
@@ -235,6 +240,7 @@ LARGE_FILE_SIZE_MB=1000
 FM_ENABLED=true
 FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
 FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
+AI_TRACE=true                           # always show AI REQUEST+RESPONSE at runtime
 NET_CHECK_HOSTS="google.com apple.com cloudflare.com"
 
 # Fix #78: Deep Clean Config-Gating (via ~/.meister/config steuerbar)
@@ -311,7 +317,7 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA "
+    _BOOL_KEYS=" CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
     _NUM_KEYS=" DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
     _STR_KEYS=" NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
@@ -747,10 +753,87 @@ fm_available() {
     "$FM_HELPER" --check 2>/dev/null
 }
 
-# Query the model. $1 = prompt. Prints the response (plain text, no JSON parse).
+# Always-visible AI runtime tracing (even under QUIET_MODE / -q).
+# AI_TRACE=false in ~/.meister/config disables the fancy boxes (log lines remain).
+ai_trace_box() {
+    # NEVER write to stdout — callers use $(fm_query …).
+    # Prefer /dev/tty (interactive); fall back to stderr (pipes / agents).
+    local title="$1"
+    shift
+    local body="$*"
+    local ts; ts=$(date +'%H:%M:%S')
+    _ai_emit() {
+        # $1 = file descriptor path or "stderr"
+        local dest="$1"
+        if [ "$dest" = "stderr" ]; then
+            echo "" >&2
+            echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}" >&2
+            if [ -n "$body" ]; then
+                while IFS= read -r line || [ -n "$line" ]; do
+                    echo -e "${MAGENTA}│${NC} ${line}" >&2
+                done <<< "$body"
+            fi
+            echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}" >&2
+        else
+            {
+                echo ""
+                echo -e "${MAGENTA}┌─ AI ${title} ── ${ts} ─────────────────────────────────${NC}"
+                if [ -n "$body" ]; then
+                    while IFS= read -r line || [ -n "$line" ]; do
+                        echo -e "${MAGENTA}│${NC} ${line}"
+                    done <<< "$body"
+                fi
+                echo -e "${MAGENTA}└────────────────────────────────────────────────────────${NC}"
+            } >"$dest"
+        fi
+    }
+    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
+        _ai_emit /dev/tty 2>/dev/null || _ai_emit stderr
+    else
+        _ai_emit stderr
+    fi
+    # Logfile (no ANSI)
+    {
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === ${title} ==="
+        if [ -n "$body" ]; then
+            printf '%s\n' "$body" | sed 's/^/  /'
+        fi
+        echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - === /${title} ==="
+    } >> "$LOGFILE" 2>/dev/null || true
+}
+
+ai_trace_line() {
+    local msg="$*"
+    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
+        echo -e "${MAGENTA}[AI]${NC} ${msg}" > /dev/tty 2>/dev/null \
+            || echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
+    else
+        echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
+    fi
+    echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - $msg" >> "$LOGFILE" 2>/dev/null || true
+}
+
+# Query the model. $1 = prompt. Optional $2 = label for tracing (default: query).
+# Prints the response (plain text, no JSON parse) on stdout for callers.
+# Side effect: always shows REQUEST + RESPONSE on the terminal (unless AI_TRACE=false).
 fm_query() {
     ensure_fm_helper || return 1
-    printf '%s' "$1" | "$FM_HELPER" 2>/dev/null
+    local prompt="$1"
+    local label="${2:-query}"
+    if [ "${AI_TRACE:-true}" = "true" ]; then
+        ai_trace_box "REQUEST → Apple Intelligence ($label)" "$prompt"
+        ai_trace_line "Warte auf Antwort (on-device)…"
+    fi
+    local resp
+    resp=$(printf '%s' "$prompt" | "$FM_HELPER" 2>/dev/null) || true
+    if [ "${AI_TRACE:-true}" = "true" ]; then
+        if [ -n "$resp" ]; then
+            ai_trace_box "RESPONSE ← Apple Intelligence ($label)" "$resp"
+        else
+            ai_trace_box "RESPONSE ← Apple Intelligence ($label)" "(leer / Fehler — Model offline oder Timeout)"
+        fi
+    fi
+    printf '%s' "$resp"
 }
 
 # AI-Heal allowlist executor. The model's output is EXECUTED, so safety must NOT
@@ -799,8 +882,14 @@ try_learned_fix() {
         mv "$learned.tmp" "$learned"
         return 1
     fi
+    ai_trace_line "LEARNED-FIX (gemerkt, kein neuer AI-Call): Modul=$module_name"
+    ai_trace_line "LEARNED-FIX Befehl: $cmd"
     log HEAL "Learned-Fix: trying remembered fix for $module_name: $cmd"
-    if $DRY_RUN; then log STEP "   [DRY-RUN] Would execute: $cmd"; return 0; fi
+    if $DRY_RUN; then
+        ai_trace_line "LEARNED-FIX [DRY-RUN] würde ausführen: $cmd"
+        log STEP "   [DRY-RUN] Would execute: $cmd"
+        return 0
+    fi
     read -ra _lf_argv <<< "$cmd"
     if timeout 30 "${_lf_argv[@]}" >/dev/null 2>&1; then
         log_heal_event "learned-fix" "$module_name" "applied" "$cmd"
@@ -837,7 +926,17 @@ ai_heal() {
     local error_output="$2"
     local prev_attempt="${3:-}"
 
-    if ! fm_available; then return 1; fi
+    if ! fm_available; then
+        ai_trace_line "AI-Heal übersprungen — Apple Intelligence nicht verfügbar"
+        return 1
+    fi
+
+    # Always-visible banner: AI fix is about to run
+    ai_trace_line "╔══ AI-FIX startet ══════════════════════════════════════"
+    ai_trace_line "║ Modul:  $module_name"
+    ai_trace_line "║ Fehler: $(printf '%s' "$error_output" | tr '\n' ' ' | cut -c1-200)"
+    [ -n "$prev_attempt" ] && ai_trace_line "║ Vorheriger Versuch (fehlgeschlagen): $prev_attempt"
+    ai_trace_line "╚════════════════════════════════════════════════════════"
 
     log HEAL "AI-Heal: Asking Apple Intelligence for fix for $module_name..."
     local retry_hint=""
@@ -850,14 +949,16 @@ Reply ONLY with a single shell command that fixes the problem. No explanation, n
 Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placeholders like /path/to or <file> — use only real absolute paths that appear in the error above. If no such fix is possible, reply with: NO_FIX"
 
     # On-device model returns plain text (no JSON envelope to parse).
+    # fm_query always prints REQUEST+RESPONSE; head -3 only for executable line.
     local ai_response
-    ai_response=$(fm_query "$prompt" | head -3)
+    ai_response=$(fm_query "$prompt" "AI-Heal:$module_name" | head -3)
 
     # Strip markdown fences/backticks (models wrap commands despite the prompt)
     ai_response=$(printf '%s\n' "$ai_response" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
 
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
+        ai_trace_line "AI-FIX ERGEBNIS: no-fix (Model sagt NO_FIX / leer)"
         log_heal_event "ai-heal" "$module_name" "no-fix" ""
         return 1
     fi
@@ -866,6 +967,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # `/path/to/check` before, which then really ran (see INSIGHTS 2026-07-04 #1).
     if echo "$ai_response" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'; then
         log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: rejected — Placeholder: $ai_response"
         log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
         return 1
     fi
@@ -877,6 +979,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # group; GNU/ugrep abort the WHOLE pattern with exit 2 → nothing gets blocked.
     if echo "$ai_response" | grep -qiE "rm -rf /[^a-z]|rm -rf?[[:space:]]+(/|~)[[:space:]]*(\||;|&|$)|sudo[[:space:]]+rm|rm -rf?[[:space:]][^;|&]*\*|mkfs|dd if=|:\(\)\{ :|> /dev/sd|shutdown|reboot|halt"; then
         log WARN "AI-Heal: Dangerous command blocked: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: blocked — dangerous: $ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked" "$ai_response"
         return 1
     fi
@@ -887,6 +990,7 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     if echo "$ai_response" | grep -qE "(chmod|chown|rm|mv|mkdir|touch|tee|>>?)[^|]*[[:space:]]+/(etc|System|Library|private|usr|bin|sbin|var)(/|[[:space:]]|$)" \
         && ! echo "$ai_response" | grep -qE "^[[:space:]]*sudo[[:space:]]"; then
         log WARN "AI-Heal: System-path mutation without sudo blocked: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: blocked-syspath: $ai_response"
         log_heal_event "ai-heal" "$module_name" "blocked-syspath" "$ai_response"
         return 1
     fi
@@ -896,16 +1000,22 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     # sudo/rm/chmod. This does not trust the prompt; see heal_command_allowed.
     if ! heal_command_allowed "$ai_response"; then
         log WARN "AI-Heal: Command not allowlisted — rejected: $ai_response"
+        ai_trace_line "AI-FIX ERGEBNIS: rejected-allowlist: $ai_response"
         log_heal_event "ai-heal" "$module_name" "rejected-allowlist" "$ai_response"
         return 1
     fi
 
     log HEAL "AI-Heal suggestion: $ai_response"
+    ai_trace_line "AI-FIX Vorschlag (nach Filter): $ai_response"
+    ai_trace_line "AI-FIX Status: allowlist OK — wird ausgeführt"
 
     if $DRY_RUN; then
+        ai_trace_line "AI-FIX [DRY-RUN] würde ausführen: $ai_response"
         log STEP "   [DRY-RUN] Would execute: $ai_response"
         return 0
     fi
+
+    ai_trace_line "AI-FIX führe aus: $ai_response"
 
     # Execute WITHOUT a shell (word-split into an argv). heal_command_allowed has
     # already guaranteed there are no metacharacters, so this cannot chain,
@@ -917,7 +1027,11 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
 
     if [ $ai_rc -eq 0 ]; then
         log FIX "AI-Heal: Command successful"
-        [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+        ai_trace_line "AI-FIX ERGEBNIS: success (exit 0) — Modul wird erneut getestet"
+        [ -n "$ai_fix_output" ] && {
+            log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+            ai_trace_line "AI-FIX stdout: $(echo "$ai_fix_output" | head -3 | tr '\n' ' ')"
+        }
         # NO report_add here — the command exiting 0 proves nothing; the caller
         # adds the FIX entry only after the module retest actually passes
         log_heal_event "ai-heal" "$module_name" "success" "$ai_response"
@@ -925,11 +1039,16 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
         return 0
     else
         log WARN "AI-Heal: Command failed (Exit: $ai_rc)"
+        ai_trace_line "AI-FIX ERGEBNIS: failed (exit $ai_rc)"
         log_heal_event "ai-heal" "$module_name" "failed" "$ai_response"
-        [ -n "$ai_fix_output" ] && log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+        [ -n "$ai_fix_output" ] && {
+            log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
+            ai_trace_line "AI-FIX stdout: $(echo "$ai_fix_output" | head -3 | tr '\n' ' ')"
+        }
         return 1
     fi
 }
+
 
 # Known-Fix Patterns: fast fixes without the AI model
 known_fix() {
@@ -6762,7 +6881,7 @@ if [ "${1:-}" = "explain" ]; then
 In 3 kurzen Absaetzen: (1) Was bedeutet das? (2) Ist es gefaehrlich/dringend? (3) Konkrete Handlung, mit Befehl falls sinnvoll. Keine Einleitung."
     echo "  Frage Apple Intelligence..."
     echo ""
-    fm_query "$_EX_PROMPT" | sed 's/^/  /'
+    fm_query "$_EX_PROMPT" "explain" | sed 's/^/  /'
     echo ""
     exit 0
 fi
@@ -6844,7 +6963,7 @@ if [ "${1:-}" = "today" ] || [ "${1:-}" = "brief" ]; then
         echo ""
         echo "  AI focus (1 sentence)..."
         _tp="Du bist MeisterSiri. In EINEM kurzen deutschen Satz: Was sollte der User heute als erstes am Mac tun? Fakten: Score ${_sc:-?}/100, Disk ${_disk}, Brew outdated f=${_bo:-?} c=${_bc:-?}. Keine Einleitung."
-        fm_query "$_tp" 2>/dev/null | sed 's/^/  → /' | head -3
+        fm_query "$_tp" "today" 2>/dev/null | sed 's/^/  → /' | head -3
     fi
     echo ""
     echo "  Next: meisterSiri doctor | meisterSiri -n | meisterSiri ai"
@@ -6963,7 +7082,7 @@ Antworte auf Deutsch in genau diesem Format:
 4) Risiko (niedrig/mittel/hoch)
 
 Kein Markdown-Codefence. Nichts ausfuehren — nur vorschlagen."
-    fm_query "$_sp" | sed 's/^/  /'
+    fm_query "$_sp" "suggest" | sed 's/^/  /'
     echo ""
     echo "  (Nichts wurde ausgefuehrt. Zum Anwenden: Befehl selbst pruefen.)"
     exit 0
@@ -7073,7 +7192,7 @@ ${_AI_FOCUS_LINE}
 Gib maximal 5 priorisierte Punkte: was ist das wichtigste Problem, was konkret tun (mit Befehl wo sinnvoll). Nur sichere Befehle vorschlagen (kein sudo rm -rf). Kurz und praezise, keine Einleitung."
     echo "  Frage Apple Intelligence..."
     echo ""
-    fm_query "$_AI_PROMPT" | sed 's/^/  /'
+    fm_query "$_AI_PROMPT" "ai-diagnose" | sed 's/^/  /'
     echo ""
     exit 0
 fi
@@ -7989,6 +8108,8 @@ DOTFILES SYNC:
   meisterSiri status       Check symlinks
 
 Config: ~/.meister/config
+  AI_TRACE=true   (default) — show full AI REQUEST+RESPONSE at runtime
+  AI_TRACE=false  — silence AI boxes (still logs to ~/.meister/meister.log)
 HELPEOF
        exit 0 ;;
     \?) log ERROR "Unknown option: -$OPTARG"; exit 1 ;;
@@ -8112,6 +8233,7 @@ echo -e "${NC}"
 
 start_bw_monitor
 log INFO "MeisterSiri v${MEISTER_VERSION} started ($(date))"
+[ "${AI_TRACE:-true}" = "true" ] && log STEP "   AI-Trace: ON (jeder AI-Call zeigt REQUEST+RESPONSE; AI_TRACE=false zum Abschalten)"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
