@@ -1,0 +1,29 @@
+# MeisterSiri Daily-Fast config — copy to ~/.meister/config (merge keys)
+# Full weekly run: meisterSiri --deep
+
+# Profiles (CLI overrides this): auto | quick | deep
+# RUN_PROFILE=auto
+
+# Homebrew: skip update if last run was within 12 hours (0 = always update)
+BREW_UPDATE_MAX_AGE_SEC=43200
+BREW_UPDATE_TIMEOUT_SEC=300
+BREW_UPGRADE_TIMEOUT_SEC=600
+FIND_TIMEOUT_SEC=60
+
+# Heavy modules off for daily (enable with --deep)
+UNIVERSAL_UPDATES=false
+ICLOUD_FIX_ENABLED=false
+ICLOUD_STUBS_SCAN=false
+DOCS_ORDER_DATALESS_SCAN=false
+SELFHEAL_ICLOUD_CONTAINERS=false
+SECURITY_PERSISTENCE_AUDIT=false
+SECURITY_TCC_AUDIT=false
+CLEAN_DOCKER=false
+SELFHEAL_GIT_AUTOCOMMIT=false
+GIT_AUTO_PUSH=false
+
+# AI transparency (false = less terminal noise)
+# AI_TRACE=true
+
+# Fleet (optional)
+# FLEET_HOSTS="mac-mini.local"

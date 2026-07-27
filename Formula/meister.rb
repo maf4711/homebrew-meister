@@ -11,6 +11,8 @@ class Meister < Formula
   def install
     bin.install "meister.sh" => "meister"
     bin.install "meisterSiri.sh" => "meisterSiri"
+    doc.install "config.fast.example" if File.exist?("config.fast.example")
+    doc.install "AGENTS.md" if File.exist?("AGENTS.md")
     (libexec/"tools").install Dir["tools/*"]
     # Symlink tools into bin with meister- prefix
     (libexec/"tools").children.each do |tool|

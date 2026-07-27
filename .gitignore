@@ -2,3 +2,8 @@
 *.log
 *.bak
 *.tmp
+
+# MeisterSiri.app build
+app/MeisterSiri/build/
+app/MeisterSiri/MeisterSiri.xcodeproj/
+app/MeisterSiri/dist/

@@ -39,3 +39,15 @@ Both share `~/.meister/` config and state.
 | `meisterSiri -n` | Dry-run: shows WOULD-FIX + "Would free", never FIXED/Freed |
 
 Dry-run honesty is implemented in `report_add` / report footer — do not reintroduce `report_add FIX` that bypasses it.
+
+## v6.6 Speed profiles
+
+| Command | Intent | Typical time |
+|---------|--------|--------------|
+| `meisterSiri` / `--auto` | Daily-fast defaults | 1–4 min |
+| `meisterSiri --quick` | Minimal (healer+brew+cleanup+security) | ~1–2 min |
+| `meisterSiri --deep` | Weekly full (iCloud, dev, docs, audits) | 5–15 min |
+| `meisterSiri -a` | Force all modules | longest |
+
+Brew: `~/.meister/brew_last_update` — delete to force `brew update`.
+Config template: `config.fast.example` → merge into `~/.meister/config`.
