@@ -4,7 +4,13 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.10
+# Version: 6.11
+# NEW in v6.11 — remove: full family + System Extensions + leftover-only:
+#  - When .app is already gone, still wipe leftovers by name (Malwarebytes case)
+#  - Bundle family prefix (com.malwarebytes.mbam.*) not only exact CFBundleIdentifier
+#  - Unloads ALL family launchd services; uninstalls matching System Extensions
+#  - Deep scan LaunchAgents/Daemons/Helpers/prefs under family + app name
+#
 # NEW in v6.10 — AI-HEAL visually unmistakable:
 #  - Distinct [AI-HEAL] prefix (bold yellow/black), full-width banners
 #  - Clear phases: START → MODEL → ALLOWLIST → EXECUTE → RESULT
@@ -6463,10 +6469,13 @@ fi
 # ── App Remover (meister remove <AppName>) ──
 # AppCleaner-style uninstall: find the .app bundle, read its bundle-id, collect
 # every leftover (Application Support, Caches, Preferences, Containers, Saved
-# State, Logs, LaunchAgents, ...) and move it all to Trash (reversible).
+# State, Logs, LaunchAgents/Daemons, PrivilegedHelpers, System Extensions, ...)
+# and move it all to Trash (reversible).
 #   --purge   permanent rm instead of Trash
 #   --dry-run show what would be removed, change nothing
 #   -y/--yes  skip the confirmation prompt
+# If the .app is already gone, still wipes leftovers by app name + family ids
+# (classic half-uninstall: e.g. Malwarebytes app deleted but daemons/sysext remain).
 if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
     shift
     REMOVE_DRY=false; REMOVE_PURGE=false; REMOVE_YES=false; REMOVE_NAME=""
@@ -6481,8 +6490,9 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
     done
     if [ -z "$REMOVE_NAME" ]; then
         echo "Usage: meister remove <AppName> [--dry-run] [--purge] [-y]"
-        echo "  Uninstall an app bundle + all its leftover files."
+        echo "  Uninstall an app bundle + ALL leftovers (family ids, LaunchDaemons, System Extensions)."
         echo "  Default: moves everything to Trash (reversible).  --purge: permanent rm."
+        echo "  Works even if the .app is already gone (leftover-only cleanup)."
         exit 1
     fi
 
@@ -6494,9 +6504,10 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
 
     _hkb() { awk -v k="${1:-0}" 'BEGIN{ if(k<1024) printf "%d KB",k; else if(k<1048576) printf "%.1f MB",k/1024; else printf "%.2f GB",k/1048576 }'; }
 
-    # ── 1. Locate the .app bundle ──
+    # ── 1. Locate the .app bundle (optional — leftover-only if missing) ──
     _name="${REMOVE_NAME%.app}"
     _app=""
+    _leftover_only=false
     if [ -d "$REMOVE_NAME" ] && [[ "$REMOVE_NAME" == *.app ]]; then _app="$REMOVE_NAME"; fi
     if [ -z "$_app" ]; then
         for _cand in "/Applications/$_name.app" "$HOME/Applications/$_name.app" "/Applications/Utilities/$_name.app"; do
@@ -6519,77 +6530,202 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         fi
     fi
     if [ -z "$_app" ]; then
-        log ERROR "No app named '$_name' found (checked /Applications, ~/Applications, Spotlight)."
+        _leftover_only=true
+        _base="$_name"
+        # Preserve user casing if known product names; else title-case first letter
+        case "$(printf '%s' "$_name" | tr '[:upper:]' '[:lower:]')" in
+            malwarebytes) _base="Malwarebytes" ;;
+            *)            _base="$(printf '%s' "$_name" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')" ;;
+        esac
+        log WARN "No .app named '$_name' — leftover-only mode (cleaning remnants by name/family)."
         if command -v brew >/dev/null 2>&1 && { brew list --cask "$_name" &>/dev/null || brew list --formula "$_name" &>/dev/null; }; then
-            echo "  Hint: '$_name' is a Homebrew package — use:  brew uninstall $_name"
+            echo "  Hint: '$_name' is still a Homebrew package — also run:  brew uninstall $_name"
         fi
-        exit 1
+        _bid=""
+    else
+        case "$_app" in /System/*) log ERROR "Refusing to remove a system app: $_app"; exit 1 ;; esac
+        # ── 2. Bundle identifier ──
+        _bid="$(defaults read "$_app/Contents/Info" CFBundleIdentifier 2>/dev/null)"
+        [ -z "$_bid" ] && _bid="$(mdls -name kMDItemCFBundleIdentifier -raw "$_app" 2>/dev/null)"
+        [ "$_bid" = "(null)" ] && _bid=""
+        _base="$(basename "$_app" .app)"
+        log INFO "App:       $_app"
+        if [ -n "$_bid" ]; then log INFO "Bundle-ID: $_bid"; else log WARN "No bundle-id — leftover match limited to app name."; fi
     fi
-    case "$_app" in /System/*) log ERROR "Refusing to remove a system app: $_app"; exit 1 ;; esac
 
-    # ── 2. Bundle identifier ──
-    _bid="$(defaults read "$_app/Contents/Info" CFBundleIdentifier 2>/dev/null)"
-    [ -z "$_bid" ] && _bid="$(mdls -name kMDItemCFBundleIdentifier -raw "$_app" 2>/dev/null)"
-    [ "$_bid" = "(null)" ] && _bid=""
-    _base="$(basename "$_app" .app)"
-    log INFO "App:       $_app"
-    if [ -n "$_bid" ]; then log INFO "Bundle-ID: $_bid"; else log WARN "No bundle-id — leftover match limited to app name."; fi
+    # ── 2b. Family prefix (siblings share product id; exact bid is often a helper) ──
+    # e.g. com.malwarebytes.mbam.frontend.application → family com.malwarebytes.mbam
+    # Only when bid has ≥4 reverse-DNS components (avoids wiping all of com.adobe.*).
+    _family=""
+    if [ -n "$_bid" ]; then
+        _ncomp=$(printf '%s' "$_bid" | awk -F. '{print NF}')
+        if [ "$_ncomp" -ge 4 ]; then
+            _family=$(printf '%s' "$_bid" | cut -d. -f1-3)
+        else
+            _family="$_bid"
+        fi
+        log INFO "Family:    ${_family}.*"
+    fi
 
-    # ── 3. Collect targets (app bundle + existing leftovers) ──
-    _targets=("$_app")
+    # ── 3. Collect targets ──
+    _targets=()
+    [ -n "$_app" ] && _targets+=("$_app")
     _add() { local p="$1" t; [ -e "$p" ] || return 0; for t in "${_targets[@]}"; do [ "$t" = "$p" ] && return 0; done; _targets+=("$p"); }
+
+    # Collect all paths matching a reverse-DNS id (exact + children id*)
+    _add_id_paths() {
+        local id="$1"
+        [ -n "$id" ] || return 0
+        local _p
+        for _p in \
+            "$HOME/Library/Application Support/$id" \
+            "$HOME/Library/Caches/$id" \
+            "$HOME/Library/Containers/$id" \
+            "$HOME/Library/HTTPStorages/$id" \
+            "$HOME/Library/HTTPStorages/$id.binarycookies" \
+            "$HOME/Library/WebKit/$id" \
+            "$HOME/Library/Cookies/$id.binarycookies" \
+            "$HOME/Library/Application Scripts/$id" \
+            "$HOME/Library/Saved Application State/$id.savedState" \
+            "$HOME/Library/Logs/$id" \
+            "$HOME/Library/Preferences/$id.plist" \
+            "/Library/Application Support/$id" \
+            "/Library/Caches/$id" \
+            "/Library/Preferences/$id.plist" \
+            "/Library/Logs/$id"; do
+            _add "$_p"
+        done
+        for _p in \
+            "$HOME/Library/Preferences/${id}"[._]*.plist \
+            "$HOME/Library/Preferences/ByHost/${id}".*.plist \
+            "$HOME/Library/LaunchAgents/${id}"*.plist \
+            "$HOME/Library/Group Containers/"*"${id}"* \
+            /Library/LaunchDaemons/"${id}"*.plist \
+            /Library/LaunchAgents/"${id}"*.plist \
+            /Library/PrivilegedHelperTools/"${id}"*; do
+            _add "$_p"
+        done
+        # Any Application Support / Caches / Containers whose basename is id or id.*
+        for _p in \
+            "$HOME/Library/Application Support/${id}"* \
+            "$HOME/Library/Caches/${id}"* \
+            "$HOME/Library/Containers/${id}"* \
+            "$HOME/Library/Logs/${id}"* \
+            "/Library/Application Support/${id}"* \
+            "/Library/Caches/${id}"*; do
+            _add "$_p"
+        done
+    }
+
     # name-based (specific base name — safe)
     for _p in \
         "$HOME/Library/Application Support/$_base" \
         "$HOME/Library/Caches/$_base" \
-        "$HOME/Library/Logs/$_base"; do
-        _add "$_p"
-    done
-    # bundle-id based (ONLY when a bundle-id exists — an empty id would turn globs catastrophic)
-    if [ -n "$_bid" ]; then
-        for _p in \
-            "$HOME/Library/Application Support/$_bid" \
-            "$HOME/Library/Caches/$_bid" \
-            "$HOME/Library/Containers/$_bid" \
-            "$HOME/Library/HTTPStorages/$_bid" \
-            "$HOME/Library/HTTPStorages/$_bid.binarycookies" \
-            "$HOME/Library/WebKit/$_bid" \
-            "$HOME/Library/Cookies/$_bid.binarycookies" \
-            "$HOME/Library/Application Scripts/$_bid" \
-            "$HOME/Library/Saved Application State/$_bid.savedState" \
-            "$HOME/Library/Logs/$_bid" \
-            "$HOME/Library/Preferences/$_bid.plist"; do
-            _add "$_p"
-        done
-        for _p in \
-            "$HOME/Library/Preferences/$_bid"[._]*.plist \
-            "$HOME/Library/Preferences/ByHost/$_bid".*.plist \
-            "$HOME/Library/LaunchAgents/$_bid"*.plist \
-            "$HOME/Library/Group Containers/"*"$_bid"*; do
-            _add "$_p"
-        done
-    fi
-    # system-level (root-owned) leftovers — the CleanMyMac-style deep scan.
-    # These are what a pkg installer drops outside ~/Library; the app-name and
-    # bundle-id are specific enough to be safe. Removed via elevation in step 7.
-    for _p in \
+        "$HOME/Library/Logs/$_base" \
         "/Library/Application Support/$_base" \
-        "/Library/Logs/$_base"; do
+        "/Library/Logs/$_base" \
+        "/Library/Caches/$_base"; do
         _add "$_p"
     done
-    if [ -n "$_bid" ]; then
-        for _p in \
-            "/Library/Application Support/$_bid" \
-            "/Library/Caches/$_bid" \
-            "/Library/Preferences/$_bid.plist"; do
-            _add "$_p"
+    # Case-insensitive name match for system Application Support (Malwarebytes, etc.)
+    _lbase="$(printf '%s' "$_base" | tr '[:upper:]' '[:lower:]')"
+    if [ "${#_lbase}" -ge 4 ]; then
+        for _p in "/Library/Application Support/"* "$HOME/Library/Application Support/"* \
+                  "/Library/Logs/"* "$HOME/Library/Logs/"* \
+                  "/Library/Caches/"* "$HOME/Library/Caches/"*; do
+            [ -e "$_p" ] || continue
+            _bn="$(basename "$_p" | tr '[:upper:]' '[:lower:]')"
+            [ "$_bn" = "$_lbase" ] && _add "$_p"
         done
-        for _p in \
-            /Library/LaunchDaemons/"$_bid"*.plist \
-            /Library/LaunchAgents/"$_bid"*.plist \
-            /Library/PrivilegedHelperTools/"$_bid"*; do
-            _add "$_p"
+        # LaunchAgents/Daemons whose label contains the product name (family siblings)
+        for _p in /Library/LaunchDaemons/*.plist /Library/LaunchAgents/*.plist \
+                  "$HOME/Library/LaunchAgents/"*.plist; do
+            [ -e "$_p" ] || continue
+            _bn="$(basename "$_p" .plist | tr '[:upper:]' '[:lower:]')"
+            case "$_bn" in
+                *"$_lbase"*) _add "$_p" ;;
+            esac
         done
+        # Privileged helpers with product name
+        for _p in /Library/PrivilegedHelperTools/*; do
+            [ -e "$_p" ] || continue
+            _bn="$(basename "$_p" | tr '[:upper:]' '[:lower:]')"
+            case "$_bn" in
+                *"$_lbase"*) _add "$_p" ;;
+            esac
+        done
+        # Infer family from launchd plists when app/bid unknown (leftover-only)
+        if [ -z "$_family" ]; then
+            for _p in /Library/LaunchDaemons/*.plist /Library/LaunchAgents/*.plist \
+                      "$HOME/Library/LaunchAgents/"*.plist; do
+                [ -e "$_p" ] || continue
+                _bn="$(basename "$_p" .plist | tr '[:upper:]' '[:lower:]')"
+                case "$_bn" in
+                    *"$_lbase"*)
+                        _guess=$(basename "$_p" .plist)
+                        _gc=$(printf '%s' "$_guess" | awk -F. '{print NF}')
+                        if [ "$_gc" -ge 4 ]; then
+                            _family=$(printf '%s' "$_guess" | cut -d. -f1-3)
+                        elif [ "$_gc" -ge 3 ]; then
+                            _family=$(printf '%s' "$_guess" | cut -d. -f1-3)
+                        fi
+                        [ -n "$_family" ] && break
+                        ;;
+                esac
+            done
+            # Also from System Extensions list
+            if [ -z "$_family" ]; then
+                while IFS= read -r _line; do
+                    case "$(printf '%s' "$_line" | tr '[:upper:]' '[:lower:]')" in
+                        *"$_lbase"*)
+                            _guess=$(printf '%s' "$_line" | grep -oE '[A-Za-z0-9]+(\.[A-Za-z0-9]+)+' | head -1)
+                            if [ -n "$_guess" ]; then
+                                _gc=$(printf '%s' "$_guess" | awk -F. '{print NF}')
+                                if [ "$_gc" -ge 4 ]; then
+                                    _family=$(printf '%s' "$_guess" | cut -d. -f1-3)
+                                else
+                                    _family="$_guess"
+                                fi
+                                [ -n "$_family" ] && log INFO "Family:    ${_family}.* (inferred)" && break
+                            fi
+                            ;;
+                    esac
+                done < <(systemextensionsctl list 2>/dev/null)
+            fi
+            [ -n "$_family" ] && [ -z "$_bid" ] && log INFO "Family:    ${_family}.* (from leftovers)"
+        fi
+    fi
+
+    # Exact bid + family paths (helpers/daemons that do not share the exact bid)
+    [ -n "$_bid" ] && _add_id_paths "$_bid"
+    [ -n "$_family" ] && _add_id_paths "$_family"
+
+    # System Extensions matching family or product name
+    _sysexts=()  # lines: teamID|bundleID
+    while IFS= read -r _sx_line; do
+        [ -z "$_sx_line" ] && continue
+        _sx_l=$(printf '%s' "$_sx_line" | tr '[:upper:]' '[:lower:]')
+        _match=false
+        if [ -n "$_family" ]; then
+            case "$_sx_l" in *"$(printf '%s' "$_family" | tr '[:upper:]' '[:lower:]')"*) _match=true ;; esac
+        fi
+        if [ -n "$_lbase" ] && [ "${#_lbase}" -ge 4 ]; then
+            case "$_sx_l" in *"$_lbase"*) _match=true ;; esac
+        fi
+        $_match || continue
+        _sx_team=$(printf '%s' "$_sx_line" | grep -oE '[A-Z0-9]{8,12}' | head -1)
+        _sx_bid=$(printf '%s' "$_sx_line" | grep -oE '[a-zA-Z0-9]+(\.[a-zA-Z0-9]+){2,}' | head -1)
+        [ -z "$_sx_bid" ] && continue
+        [ -z "$_sx_team" ] && _sx_team="-"
+        # de-dup
+        _dup=false
+        for _ex in "${_sysexts[@]}"; do [ "$_ex" = "${_sx_team}|${_sx_bid}" ] && _dup=true && break; done
+        $_dup || _sysexts+=("${_sx_team}|${_sx_bid}")
+    done < <(systemextensionsctl list 2>/dev/null)
+
+    if [ "${#_targets[@]}" -eq 0 ] && [ "${#_sysexts[@]}" -eq 0 ]; then
+        log ERROR "Nothing found for '$_name' (no app, no leftovers, no System Extensions)."
+        exit 1
     fi
 
     # ── 4. Size + preview ──
@@ -6601,18 +6737,46 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         _total_kb=$((_total_kb + _kb))
         printf '    %-10s %s\n' "$(_hkb "$_kb")" "${_t/#$HOME/~}"
     done
+    for _sx in "${_sysexts[@]}"; do
+        _sx_team="${_sx%%|*}"; _sx_bid="${_sx#*|}"
+        printf '    %-10s System Extension: %s (team %s)\n' "sysext" "$_sx_bid" "$_sx_team"
+    done
     echo "    ----------"
-    printf '    %s item(s), %s total\n' "${#_targets[@]}" "$(_hkb "$_total_kb")"
+    _nitems=$((${#_targets[@]} + ${#_sysexts[@]}))
+    printf '    %s item(s), %s total (files)\n' "$_nitems" "$(_hkb "$_total_kb")"
+    $_leftover_only && echo "    (leftover-only — .app already absent)"
     echo ""
 
-    # ── 5. Quit the app if running ──
-    if pgrep -f "$_app/Contents/MacOS/" >/dev/null 2>&1; then
-        log INFO "Quitting running app '$_base'..."
-        run_or_dry osascript -e "tell application \"$_base\" to quit" >/dev/null 2>&1 || true
-        if ! $DRY_RUN; then
-            _w=0
-            while [ $_w -lt 5 ] && pgrep -f "$_app/Contents/MacOS/" >/dev/null 2>&1; do sleep 1; _w=$((_w + 1)); done
-            pgrep -f "$_app/Contents/MacOS/" >/dev/null 2>&1 && run_or_dry pkill -f "$_app/Contents/MacOS/"
+    # ── 5. Quit the app / related processes if running ──
+    if [ -n "$_app" ] && [ -d "$_app/Contents/MacOS" ]; then
+        _mainbin=$(find "$_app/Contents/MacOS" -type f -perm +111 2>/dev/null | head -1)
+        if [ -n "$_mainbin" ] && pgrep -x "$(basename "$_mainbin")" >/dev/null 2>&1; then
+            log INFO "Quitting running app '$_base'..."
+            run_or_dry osascript -e "tell application \"$_base\" to quit" >/dev/null 2>&1 || true
+            if ! $DRY_RUN; then
+                _w=0
+                while [ $_w -lt 5 ] && pgrep -x "$(basename "$_mainbin")" >/dev/null 2>&1; do sleep 1; _w=$((_w + 1)); done
+                pgrep -x "$(basename "$_mainbin")" >/dev/null 2>&1 && run_or_dry killall "$_base" 2>/dev/null || true
+            fi
+        fi
+    fi
+    # Stop related helpers by exact known names from collected plists (no broad -f kill)
+    if ! $DRY_RUN; then
+        for _t in "${_targets[@]}"; do
+            case "$_t" in
+                *.plist)
+                    _prog=$(defaults read "${_t%.plist}" Program 2>/dev/null || true)
+                    if [ -n "$_prog" ] && [ -x "$_prog" ]; then
+                        killall "$(basename "$_prog")" 2>/dev/null || true
+                    fi
+                    ;;
+            esac
+        done
+        # Common Malwarebytes helper binary names
+        if [ "$_lbase" = "malwarebytes" ]; then
+            for _bin in FrontendAgent RTProtectionDaemon SettingsDaemon Malwarebytes; do
+                killall "$_bin" 2>/dev/null || true
+            done
         fi
     fi
 
@@ -6623,9 +6787,9 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
             exit 1
         fi
         if $REMOVE_PURGE; then
-            printf "  \033[1;31mPERMANENTLY delete\033[0m these %s item(s)? [y/N] " "${#_targets[@]}"
+            printf "  \033[1;31mPERMANENTLY delete\033[0m these %s item(s)? [y/N] " "$_nitems"
         else
-            printf "  Move these %s item(s) to Trash? [y/N] " "${#_targets[@]}"
+            printf "  Move these %s item(s) to Trash (System Extensions: uninstall)? [y/N] " "$_nitems"
         fi
         read -r _reply
         case "$_reply" in [yY]|[yY][eE][sS]) ;; *) echo "  Aborted."; exit 0 ;; esac
@@ -6648,22 +6812,67 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         return 1
     }
 
-    # Unload any launchd services the app registered (else they respawn / hold files open)
-    if [ -n "$_bid" ]; then
+    # Unload launchd services for exact bid AND full family (else daemons respawn)
+    _unload_prefix=""
+    [ -n "$_family" ] && _unload_prefix="$_family"
+    [ -z "$_unload_prefix" ] && [ -n "$_bid" ] && _unload_prefix="$_bid"
+    if [ -n "$_unload_prefix" ] || [ -n "$_lbase" ]; then
         while IFS= read -r _svc; do
             [ -z "$_svc" ] && continue
             if $DRY_RUN; then log STEP "   [DRY-RUN] launchctl bootout $_svc"; continue; fi
             launchctl bootout "gui/$(id -u)/$_svc" 2>/dev/null && { log FIX "Unloaded service: $_svc"; continue; }
-            _ensure_sudo && sudo launchctl bootout "system/$_svc" 2>/dev/null && log FIX "Unloaded service: $_svc"
-        done < <(launchctl list 2>/dev/null | awk -v b="$_bid" 'BEGIN{b=tolower(b)} NR>1 { s=tolower($3); if (index(s,b)==1) print $3 }')
+            launchctl bootout "gui/$(id -u)" "/Library/LaunchAgents/${_svc}.plist" 2>/dev/null || true
+            launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/${_svc}.plist" 2>/dev/null || true
+            _ensure_sudo && {
+                sudo launchctl bootout "system/$_svc" 2>/dev/null && log FIX "Unloaded service: $_svc"
+                sudo launchctl bootout system "/Library/LaunchDaemons/${_svc}.plist" 2>/dev/null || true
+                sudo launchctl bootout system "/Library/LaunchAgents/${_svc}.plist" 2>/dev/null || true
+            }
+        done < <(
+            launchctl list 2>/dev/null | awk -v p="$(printf '%s' "${_unload_prefix}" | tr '[:upper:]' '[:lower:]')" -v n="$(printf '%s' "${_lbase}" | tr '[:upper:]' '[:lower:]')" '
+                NR>1 {
+                    s=tolower($3)
+                    if (p != "" && index(s,p)==1) { print $3; next }
+                    if (n != "" && length(n)>=4 && index(s,n)>0) print $3
+                }'
+        )
+        # Bootout from plist paths we are about to delete
+        for _t in "${_targets[@]}"; do
+            case "$_t" in
+                *.plist)
+                    _lbl=$(basename "$_t" .plist)
+                    if $DRY_RUN; then log STEP "   [DRY-RUN] bootout plist $_lbl"; continue; fi
+                    launchctl bootout "gui/$(id -u)" "$_t" 2>/dev/null || true
+                    _ensure_sudo && sudo launchctl bootout system "$_t" 2>/dev/null || true
+                    ;;
+            esac
+        done
     fi
+
+    # Uninstall System Extensions (needs auth; may schedule removal on reboot)
+    for _sx in "${_sysexts[@]}"; do
+        _sx_team="${_sx%%|*}"; _sx_bid="${_sx#*|}"
+        if $DRY_RUN; then
+            log STEP "   [DRY-RUN] systemextensionsctl uninstall $_sx_team $_sx_bid"
+            continue
+        fi
+        if _ensure_sudo && sudo systemextensionsctl uninstall "$_sx_team" "$_sx_bid" 2>/dev/null; then
+            log FIX "System Extension uninstall requested: $_sx_bid (may need reboot)"
+        else
+            log WARN "System Extension uninstall failed (try System Settings → General → Login Items & Extensions): $_sx_bid"
+        fi
+    done
 
     _trash="$HOME/.Trash"
     _removed=0; _failed=0
     for _t in "${_targets[@]}"; do
         case "$_t" in
-            "" | "/" | "$HOME" | "$HOME/" | "/Applications" | "/Library" | "/Library/Application Support" | /System*)
+            "" | "/" | "$HOME" | "$HOME/" | "/Applications" | "/Library" | "/Library/Application Support" | /System/*)
                 log WARN "Skipping unsafe path: $_t"; _failed=$((_failed + 1)); continue ;;
+        esac
+        # Never touch browser Safe Browsing / unrelated "malware" stores
+        case "$_t" in
+            *Safe\ Browsing*|*UrlMalware*|*ChromeExtMalware*) log WARN "Skipping browser store: $_t"; continue ;;
         esac
         if $DRY_RUN; then log STEP "   [DRY-RUN] remove ${_t/#$HOME/~}"; _removed=$((_removed + 1)); continue; fi
         if $REMOVE_PURGE; then
@@ -6684,24 +6893,35 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         log WARN "Failed: $_t"; _failed=$((_failed + 1))
     done
 
-    # Forget package receipts so a reinstall starts clean (removes only the receipt record,
-    # touches no files). Tightly matched: same vendor prefix AND app name — never a stray pkg.
-    if [ -n "$_bid" ] && ! $DRY_RUN; then
-        _vendor="$(printf '%s' "$_bid" | cut -d. -f1,2)"
+    # Forget package receipts so a reinstall starts clean (receipt record only).
+    if ! $DRY_RUN; then
+        _vendor=""
+        [ -n "$_family" ] && _vendor="$_family"
+        [ -z "$_vendor" ] && [ -n "$_bid" ] && _vendor="$(printf '%s' "$_bid" | cut -d. -f1,2)"
         _lname="$(printf '%s' "$_base" | tr '[:upper:]' '[:lower:]')"
-        while IFS= read -r _rcpt; do
-            [ -z "$_rcpt" ] && continue
-            _ensure_sudo && sudo pkgutil --forget "$_rcpt" >/dev/null 2>&1 && log FIX "Forgot pkg receipt: $_rcpt"
-        done < <(pkgutil --pkgs 2>/dev/null | awk -v v="$_vendor" -v n="$_lname" 'index($0,v)==1 && index(tolower($0),n)')
+        if [ -n "$_vendor" ] || [ -n "$_lname" ]; then
+            while IFS= read -r _rcpt; do
+                [ -z "$_rcpt" ] && continue
+                _ensure_sudo && sudo pkgutil --forget "$_rcpt" >/dev/null 2>&1 && log FIX "Forgot pkg receipt: $_rcpt"
+            done < <(pkgutil --pkgs 2>/dev/null | awk -v v="$(printf '%s' "$_vendor" | tr '[:upper:]' '[:lower:]')" -v n="$_lname" '
+                {
+                    p=tolower($0)
+                    if (v != "" && index(p,v)==1) { print; next }
+                    if (n != "" && length(n)>=4 && index(p,n)>0) print
+                }')
+        fi
     fi
 
     echo ""
     if $DRY_RUN; then
-        log INFO "Dry-run complete — nothing changed. ($_removed item(s) would be removed)"
+        log INFO "Dry-run complete — nothing changed. ($_removed file item(s) + ${#_sysexts[@]} sysext would be removed)"
     elif $REMOVE_PURGE; then
-        log INFO "Permanently removed $_removed item(s). ($_failed failed/skipped)"
+        log INFO "Permanently removed $_removed item(s). ($_failed failed/skipped; ${#_sysexts[@]} sysext requested)"
     else
-        log INFO "Moved $_removed item(s) to Trash. ($_failed failed/skipped)  Restore from ~/.Trash if needed."
+        log INFO "Moved $_removed item(s) to Trash. ($_failed failed/skipped; ${#_sysexts[@]} sysext requested)  Restore from ~/.Trash if needed."
+    fi
+    if [ "${#_sysexts[@]}" -gt 0 ] && ! $DRY_RUN; then
+        log INFO "System Extensions may finish uninstall after reboot (state: terminated waiting for uninstall on reboot)."
     fi
     exit 0
 fi
