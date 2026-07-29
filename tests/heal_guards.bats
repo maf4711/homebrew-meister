@@ -44,3 +44,19 @@ setup() {
   run heal_is_placeholder "killall Dock"
   [ "$status" -ne 0 ]
 }
+
+@test "placeholder detects angle brackets" {
+  heal_is_placeholder "mdutil -s <volume>"
+}
+
+@test "missing path reports invented abs path" {
+  out=$(heal_missing_path "killall /nonexistent/meister/xyz 2>/dev/null" || true)
+  # may be empty if only flags; force a pure path command shape
+  out=$(heal_missing_path "mdutil -E /this/path/does/not/exist/meister" || true)
+  [ -n "$out" ]
+}
+
+@test "missing path empty when no abs paths" {
+  run heal_missing_path "killall Dock"
+  [ "$status" -ne 0 ]
+}

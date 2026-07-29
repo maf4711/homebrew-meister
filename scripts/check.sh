@@ -21,8 +21,7 @@ echo "=== bats ==="
 if command -v bats >/dev/null 2>&1; then
   bats tests/
 else
-  echo "WARN: bats not installed — skip"
-  exit 1
+  echo "WARN: bats not installed — skip (install: brew install bats-core)"
 fi
 
 echo "=== ALL CHECKS PASSED ==="

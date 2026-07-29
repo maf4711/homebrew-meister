@@ -4,7 +4,14 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.13
+# Version: 6.14
+# NEW in v6.14 — Slice-1 residual reliability (both twins):
+#  - Spotlight: prefix-whitelist /System/Volumes/Update/* + CoreSimulator/**
+#  - history.log: always emit HEAL: + AI: + SCORE: (stable parser schema)
+#  - heal_guards: stronger placeholders + reject absolute paths that don't exist
+#  - selftest twin-safe (meister + meisterSiri); explain uses AI_BACKEND_LABEL
+#  - Git: broader "no push rights" match (write access / 403 / auth failed)
+#
 # NEW in v6.13 — P1–P4: lib/core, bats, profiles contract, why/storage/contacts,
 #  report --diff/--json, doctor --json, last.json heald handshake, RUN_MAX_SEC,
 #  product/GUI docs, shellcheck gate:
@@ -1243,12 +1250,30 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
 
     # Reject placeholder commands — the model has answered with the literal
     # `/path/to/check` before, which then really ran (see INSIGHTS 2026-07-04 #1).
-    if echo "$ai_response" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'; then
+    # Prefer lib/core/heal_guards.sh helpers when sourced.
+    if command -v heal_is_placeholder >/dev/null 2>&1 && heal_is_placeholder "$ai_response"; then
         log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
         ai_heal_emit "ERGEBNIS: REJECTED — Placeholder im Model-Output: $ai_response"
         ai_usage_record "ai-heal" "heal-candidate" "rejected-placeholder" "module=$module_name"
         log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
         return 1
+    elif echo "$ai_response" | grep -qiE '/path/to|<[a-zA-Z0-9_.-]+>|your_|/example|example\.(com|txt)|placeholder'; then
+        log WARN "AI-Heal: Placeholder in response — rejected: $ai_response"
+        ai_heal_emit "ERGEBNIS: REJECTED — Placeholder im Model-Output: $ai_response"
+        ai_usage_record "ai-heal" "heal-candidate" "rejected-placeholder" "module=$module_name"
+        log_heal_event "ai-heal" "$module_name" "placeholder" "$ai_response"
+        return 1
+    fi
+    if command -v heal_missing_path >/dev/null 2>&1; then
+        local _path_miss
+        _path_miss=$(heal_missing_path "$ai_response" || true)
+        if [ -n "$_path_miss" ]; then
+            log WARN "AI-Heal: Non-existent path in response — rejected: $_path_miss"
+            ai_heal_emit "ERGEBNIS: REJECTED — Pfad existiert nicht: $_path_miss"
+            ai_usage_record "ai-heal" "heal-candidate" "rejected-missing-path" "module=$module_name path=$_path_miss"
+            log_heal_event "ai-heal" "$module_name" "missing-path" "$ai_response"
+            return 1
+        fi
     fi
 
     # Security check: block dangerous commands.
@@ -2363,8 +2388,8 @@ module_git_repos() {
                     repos_pushed=$((repos_pushed + 1))
                 elif [ $push_rc -eq 124 ]; then
                     log ERROR "     ${repo_name}: Push Timeout (>30s)"
-                elif echo "$push_output" | grep -qiE "permission denied \(publickey\)|denied to |403"; then
-                    log WARN "     ${repo_name}: no push rights — set .meister-nopush or fork"
+                elif echo "$push_output" | grep -qiE "permission denied|denied to |403|write access|not granted|protected branch|authentication failed|could not read Username|Repository not found"; then
+                    log WARN "     ${repo_name}: no push rights — set .meister-nopush or: git config meister.nopush true"
                 elif echo "$push_output" | grep -qiE "port 22|Could not resolve host|Connection (refused|timed out|reset)"; then
                     log WARN "     ${repo_name}: network/SSH unreachable (transient?) — hint: ssh.github.com:443 as fallback"
                 else
@@ -3415,15 +3440,20 @@ module_spotlight_fix() {
     local volumes_broken=0
     while IFS= read -r vol; do
         [ -z "$vol" ] && continue
-        # Skip internal APFS system volumes (no Spotlight expected)
+        # Skip internal APFS / simulator / recovery volumes (mdutil always errors
+        # or is meaningless). Match prefixes — INSIGHTS #3: Update/mnt1 + SFR/mnt1
+        # were permanent false ERRORs when only the exact path was whitelisted.
         case "$vol" in
-            /System/Volumes/VM|/System/Volumes/Preboot|/System/Volumes/Update)    continue ;;
-            /System/Volumes/xarts|/System/Volumes/iSCPreboot|/System/Volumes/Hardware) continue ;;
-            /System/Volumes/Data|/System/Volumes/Data/*)                          continue ;;
-            /Library/Developer/CoreSimulator/Volumes/*)                           continue ;;
-            # Recovery volumes always report mdutil errors (read-only) — reindexing
-            # them every run is pointless noise
-            /Volumes/Recovery|/System/Volumes/Recovery)                           continue ;;
+            /System/Volumes/VM|/System/Volumes/VM/*)                 continue ;;
+            /System/Volumes/Preboot|/System/Volumes/Preboot/*)       continue ;;
+            /System/Volumes/Update|/System/Volumes/Update/*)         continue ;;
+            /System/Volumes/xarts|/System/Volumes/xarts/*)           continue ;;
+            /System/Volumes/iSCPreboot|/System/Volumes/iSCPreboot/*) continue ;;
+            /System/Volumes/Hardware|/System/Volumes/Hardware/*)     continue ;;
+            /System/Volumes/Data|/System/Volumes/Data/*)             continue ;;
+            /Library/Developer/CoreSimulator|/Library/Developer/CoreSimulator/*) continue ;;
+            /Volumes/Recovery|/Volumes/Recovery/*)                  continue ;;
+            /System/Volumes/Recovery|/System/Volumes/Recovery/*)    continue ;;
         esac
         volumes_checked=$((volumes_checked + 1))
         local vol_status=$(mdutil -s "$vol" 2>/dev/null)
@@ -5488,9 +5518,10 @@ save_history() {
             awk -F'|' '$1 > 0 {m=int($1/60); s=$1%60; d=(m>0) ? m"m"s"s" : s"s";
                        printf "%s%s %s", (out++ ? ", " : ""), $2, d}')
     fi
-    # HEAL: field kept — older lines have it, dropping it broke parsers (INSIGHTS #5)
-    # SCORE: field appended v5.25 (trailing → old parsers unaffected)
-    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT} SCORE:${MAINT_SCORE}${top_modules:+ | top: $top_modules}" >> "$history_file"
+    # Stable schema (v6.14 / INSIGHTS #5): always emit HEAL: + AI: + SCORE:
+    # even when zero — parsers broke when fields were omitted on short runs.
+    local ai_n=${AI_CALLS_THIS_RUN:-0}
+    echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT:-0} AI:${ai_n} SCORE:${MAINT_SCORE}${top_modules:+ | top: $top_modules}" >> "$history_file"
     # v6.13 heald handshake
     if command -v write_last_json >/dev/null 2>&1; then
         write_last_json             "${MAINT_SCORE}"             "${#REPORT_SUCCESS[@]}"             "${#REPORT_FIXED[@]}"             "${#REPORT_WARNINGS[@]}"             "${#REPORT_ERRORS[@]}"             "${HEAL_COUNT:-0}"             "${total_secs}"             "${RUN_PROFILE:-auto}"             "${MEISTER_VERSION:-unknown}"
@@ -7732,7 +7763,7 @@ if [ "${1:-}" = "explain" ]; then
     _EX_PROMPT="Erklaere diese macOS-Wartungsmeldung einem technisch interessierten Laien auf Deutsch:
 \"$_EX_TEXT\"
 In 3 kurzen Absaetzen: (1) Was bedeutet das? (2) Ist es gefaehrlich/dringend? (3) Konkrete Handlung, mit Befehl falls sinnvoll. Keine Einleitung."
-    echo "  Frage Apple Intelligence..."
+    echo "  Frage ${AI_BACKEND_LABEL}..."
     echo ""
     fm_query "$_EX_PROMPT" "explain" | sed 's/^/  /'
     echo ""
@@ -7953,7 +7984,7 @@ if [ "${1:-}" = "suggest" ]; then
         exit 1
     fi
     echo "  Problem: $_q"
-    echo "  Frage Apple Intelligence..."
+    echo "  Frage ${AI_BACKEND_LABEL}..."
     echo ""
     _sp="Du bist MeisterSiri, macOS-Wartungsassistent. Problem des Users: ${_q}
 
@@ -7970,7 +8001,7 @@ Kein Markdown-Codefence. Nichts ausfuehren — nur vorschlagen."
     exit 0
 fi
 
-# ── selftest — smoke-test MeisterSiri CLI ──
+# ── selftest — smoke-test CLI (works for both twins) ──
 if [ "${1:-}" = "selftest" ]; then
     echo -e "\033[1;34m  MeisterSiri SELFTEST — smoke tests\033[0m"
     echo ""
@@ -7984,9 +8015,17 @@ if [ "${1:-}" = "selftest" ]; then
         fi
     }
     _SELF="$0"
-    _t "version string" bash -c "\"$_SELF\" --version | grep -q meisterSiri"
-    _t "help branding" bash -c "\"$_SELF\" -h 2>&1 | grep -q 'MeisterSiri'"
-    _t "help no bare meister cmds" bash -c "! \"$_SELF\" -h 2>&1 | grep -E '^  meister '"
+    _BIN=$(basename "$_SELF")
+    # sync-twins rewrites "meisterSiri"→"meister"; build OTHER via concat so it survives.
+    if [ "$_BIN" = "meister" ]; then
+        _FOREIGN='meister''Siri'
+    else
+        _FOREIGN='meister'
+    fi
+    _t "version string" bash -c "\"$_SELF\" --version | grep -qiE 'meister'"
+    _t "help branding" bash -c "\"$_SELF\" -h 2>&1 | head -5 | grep -qiE 'Meister'"
+    _t "help cmds match binary" bash -c "\"$_SELF\" -h 2>&1 | grep -qE \"^  ${_BIN} \""
+    _t "help no foreign twin cmds" bash -c "! \"$_SELF\" -h 2>&1 | grep -E \"^  ${_FOREIGN} \""
     _t "v6.12 AI_HEAL_EXECUTE default false" bash -c "grep -qE '^AI_HEAL_EXECUTE=false' \"$_SELF\""
     _t "v6.12 verify-after-heal helper" bash -c "grep -q 'heal_verify_module' \"$_SELF\""
     _t "v6.12 cleanup_find_delete helper" bash -c "grep -q 'cleanup_find_delete' \"$_SELF\""
@@ -8369,7 +8408,7 @@ Regeln:
   meisterSiri autofix | doctor | backup | orphans --dry-run | appupdates | --deep | free | privacy | sudo-setup
 - Kein sudo rm -rf. Keine erfundenen CLI-Flags.
 - Kurz, keine Einleitung."
-    echo "  Frage Apple Intelligence (nur Rest-Risiken)..."
+    echo "  Frage ${AI_BACKEND_LABEL} (nur Rest-Risiken)..."
     echo ""
     fm_query "$_AI_PROMPT" "ai-diagnose" | sed 's/^/  /'
     echo ""

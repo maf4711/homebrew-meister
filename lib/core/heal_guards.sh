@@ -21,5 +21,26 @@ heal_command_allowed() {
 # True if response looks like a model placeholder (INSIGHTS 2026-07-04 #1)
 heal_is_placeholder() {
     local s="$1"
-    echo "$s" | grep -qiE '/path/to|<[a-z_-]+>|your_|/example|example\.(com|txt)|placeholder'
+    echo "$s" | grep -qiE '/path/to|<[a-zA-Z0-9_.-]+>|\$\{?[A-Z_]+\b|your_|/example|example\.(com|txt)|placeholder|TODO|FIXME|changeme|xxx|dummy'
+}
+
+# First absolute path token in $1 that does not exist (empty = ok).
+# Another form of placeholder: model invents /Users/foo/bar that isn't real.
+heal_missing_path() {
+    local s="$1" tok
+    # shellcheck disable=SC2086
+    for tok in $s; do
+        case "$tok" in
+            -*|*[=:,]*|'') continue ;;
+            ~/*) tok="${tok/#\~/$HOME}" ;;
+            /*) ;;
+            *) continue ;;
+        esac
+        tok="${tok%%[;,)]*}"
+        if [ ! -e "$tok" ]; then
+            printf '%s' "$tok"
+            return 0
+        fi
+    done
+    return 1
 }
