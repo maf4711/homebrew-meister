@@ -30,9 +30,21 @@ Do not invest in feature-parity for two GUIs.
 
 Handshake file: `~/.meister/last.json` (`schema: meister.last/v1`).
 
+Fields for heald (`MeisterBridge` in heald ≥2.1):
+- `score`, `err`, `warn`, `ts`, `twin` (`meister` \| `meisterSiri`), `preferred_twin`
+- `~/.meister/preferred_twin` — set by `meisterSiri twins-bench`
+
 heald may:
-- read `last.json` for last score / err count
-- trigger `meisterSiri --quick -q` on disk pressure or stale score
+- read `last.json` every ~15 min
+- trigger preferred twin `--quick -q` if missing / stale (>24h) / err with age >1h
+- write `~/.heald/data/meister_bridge.json` for `heald doctor`
+
+Twin benchmark:
+```bash
+meisterSiri twins-bench           # full (incl. dry-run --quick)
+meisterSiri twins-bench --quick   # version/doctor/AI/lib only
+meisterSiri twins-bench --json
+```
 
 Meister does **not** replace heald’s always-on daemon.
 

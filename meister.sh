@@ -4,7 +4,11 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.15
+# Version: 6.16
+# NEW in v6.16 — twin benchmark + heald handshake fields:
+#  - meister twins-bench | bench-twins  (scripts/twin-benchmark.sh)
+#  - last.json: twin, ai_backend, preferred_twin for heald MeisterBridge
+#  - writes ~/.meister/preferred_twin for heald maintain CLI choice
 # NEW in v6.15 — brew symlink lib resolve fix:
 #  - Follow /opt/homebrew/bin → Cellar before probing ../lib
 #  - Only accept lib dirs that contain core/heal_guards.sh
@@ -9081,6 +9085,27 @@ EOF
     exit 0
 fi
 
+# ── twins-bench — meister vs meister (Ollama vs Apple Intelligence) ──
+if [ "${1:-}" = "twins-bench" ] || [ "${1:-}" = "bench-twins" ] || [ "${1:-}" = "twin-benchmark" ]; then
+    _TB=""
+    for _c in \
+        "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/scripts/twin-benchmark.sh" \
+        "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../libexec/scripts/twin-benchmark.sh" \
+        "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../scripts/twin-benchmark.sh" \
+        "${MEISTER_LIB_DIR:-}/../scripts/twin-benchmark.sh" \
+        "$HOME/Developer/homebrew-meister/scripts/twin-benchmark.sh"
+    do
+        [ -x "$_c" ] && _TB="$_c" && break
+        [ -f "$_c" ] && _TB="$_c" && break
+    done
+    if [ -z "$_TB" ]; then
+        echo "  twin-benchmark.sh not found (install homebrew-meister scripts)"
+        exit 1
+    fi
+    shift
+    exec bash "$_TB" "$@"
+fi
+
 # ── why / storage / contacts (v6.13 — lib/commands/extras.sh) ──
 if [ "${1:-}" = "why" ]; then
     echo -e "\033[1;34m  Meister WHY\033[0m"
@@ -9375,6 +9400,7 @@ TOOLS:
   meister today        Morning briefing (score, AI, disk, brew, top warns)
   meister doctor       Read-only system checklist (security, brew, TM, AI)
   meister doctor --json  Same signals as machine-readable JSON
+  meister twins-bench [--json] [--quick]  Benchmark meister vs meister
   meister suggest <x>  AI fix suggestion only — never executes
   meister privacy      Privacy grants / persistence quick audit
   meister selftest     Smoke-test this CLI

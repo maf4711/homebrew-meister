@@ -2,6 +2,8 @@
 
 ## MERKREGEL: Nach jedem Release IMMER lokal installieren
 
+**User (2026-07-29): „installiere immer danach direkt auf dem mac“.**
+
 Wenn du einen Release machst (`./release.sh` oder manuell tag + formula):
 
 1. GitHub Release + Formula-SHA pushen
@@ -9,14 +11,21 @@ Wenn du einen Release machst (`./release.sh` oder manuell tag + formula):
    ```bash
    brew update && brew reinstall maf4711/meister/meister
    meister --version
-   meisterSiri --version   # ab v6.1
+   meisterSiri --version
+   # Symlink-Pfad (nicht nur Cellar):
+   /opt/homebrew/bin/meisterSiri --version
    ```
+3. Release erst melden, wenn die installierte Version mit dem Tag übereinstimmt.
 
 `./release.sh` macht das automatisch in **Step 6**. Nie Step 6 skippen.
+Auch bei manuellem Release: denselben brew-reinstall selbst ausführen.
 
 Hintergrund: Repo (`~/Developer/homebrew-meister`) und Homebrew-Cellar
 (`/opt/homebrew/Cellar/meister`) driften sonst. Keine Repo-Symlinks auf PATH
 statt brew — brew muss Owner der Binaries sein.
+
+Cross-session: `~/.grok/rules/meister-always-install-local.md` +
+`~/.grok/memories/homebrew-meister-release.md`
 
 ## Binaries
 

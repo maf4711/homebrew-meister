@@ -9,12 +9,14 @@ setup() {
 }
 
 @test "write_last_json creates valid-ish JSON" {
-  write_last_json 87 10 3 2 0 1 120 quick 6.13
+  AI_BACKEND_KIND=apple
+  write_last_json 87 10 3 2 0 1 120 quick 6.16
   [ -f "$MEISTER_DIR/last.json" ]
   grep -q '"schema": "meister.last/v1"' "$MEISTER_DIR/last.json"
   grep -q '"score": 87' "$MEISTER_DIR/last.json"
   grep -q '"role": "batch-maintain"' "$MEISTER_DIR/last.json"
   grep -q '"ai_heal_mode": "suggest-only"' "$MEISTER_DIR/last.json"
+  grep -q '"twin": "meisterSiri"' "$MEISTER_DIR/last.json"
 }
 
 @test "write_last_json execute mode" {

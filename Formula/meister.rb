@@ -19,6 +19,9 @@ class Meister < Formula
     # v6.13: pure core + command helpers (heal guards, profiles, extras)
     (libexec/"lib").mkpath
     (libexec/"lib").install Dir["lib/*"] if Dir.exist?("lib")
+    # twin-benchmark and helpers
+    (libexec/"scripts").mkpath
+    (libexec/"scripts").install Dir["scripts/*"] if Dir.exist?("scripts")
     # Symlink tools into bin with meister- prefix
     if (libexec/"tools").directory?
       (libexec/"tools").children.each do |tool|
