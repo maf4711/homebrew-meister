@@ -19,14 +19,18 @@ cask "meister-mac" do
   ]
 
   caveats <<~EOS
-    Meister.app is the GUI companion to the #{Formatter.identifier("meister")} CLI.
+    LEGACY GUI: This cask installs Meister.app from the older meister-app
+    track. Canonical GUI is MeisterSiri.app in homebrew-meister/app/MeisterSiri
+    (see docs/GUI.md). Prefer:
 
-    On first launch, grant access to Contacts when prompted — required for
-    the AddressBook cleanup feature. All processing stays local.
+      brew install maf4711/meister/meister
+      # build GUI from homebrew-meister/app/MeisterSiri
+
+    On first launch of this legacy app, grant Contacts access if using
+    AddressBook cleanup. All processing stays local.
 
     v1.0.0 is signed with an Apple Development certificate rather than a
     Developer ID. If Gatekeeper blocks the app, right-click Meister.app
-    in Finder → Open → Open. The 1.0.1 build will be Developer-ID-signed
-    and notarized.
+    in Finder → Open → Open.
   EOS
 end

@@ -25,5 +25,16 @@ GIT_AUTO_PUSH=false
 # AI transparency (false = less terminal noise)
 # AI_TRACE=true
 
+# AI-Heal execute gate (v6.12) — default is suggest-only (safer)
+# When false: model may propose an allowlisted command; it is NOT run.
+# When true: allowlisted command may run, then module is retested (verify-after-heal).
+# CLI override: --ai-heal-execute / --ai-heal-suggest
+AI_HEAL_EXECUTE=false
+
+# v6.13 run budget (soft)
+# RUN_MAX_SEC=1200          # skip remaining modules after 20 min wall clock
+# MODULE_SLOW_SEC=300       # WARN if one module exceeds 5 min
+# MEISTER_NOTIFY=true       # notification after run (already default)
+
 # Fleet (optional)
 # FLEET_HOSTS="mac-mini.local"

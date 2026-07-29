@@ -33,6 +33,12 @@ if [ -x "$SCRIPT_DIR/scripts/sync-twins.sh" ]; then
     "$SCRIPT_DIR/scripts/sync-twins.sh"
 fi
 
+# P1 quality gate (shellcheck lib + bats + bash -n)
+if [ -x "$SCRIPT_DIR/scripts/check.sh" ]; then
+    echo "--- Quality gate (scripts/check.sh) ---"
+    "$SCRIPT_DIR/scripts/check.sh"
+fi
+
 echo "=== meister Release v${VERSION} ==="
 echo ""
 
@@ -40,7 +46,7 @@ echo ""
 echo "--- Step 1: Update repo ---"
 cd "$SCRIPT_DIR"
 git add meister.sh meisterSiri.sh tools/ Formula/ LICENSE .gitignore release.sh 2>/dev/null || true
-git add meister.sh meisterSiri.sh Formula/ release.sh scripts/sync-twins.sh 2>/dev/null || git add meister.sh meisterSiri.sh Formula/ release.sh
+git add meister.sh meisterSiri.sh Formula/ release.sh scripts/ lib/ tests/ docs/ config.fast.example AGENTS.md 2>/dev/null || true
 # tools/ LICENSE may not always change
 git add tools/ LICENSE .gitignore 2>/dev/null || true
 if git diff --cached --quiet; then

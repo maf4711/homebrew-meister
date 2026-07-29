@@ -4,7 +4,24 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.11
+# Version: 6.13
+# NEW in v6.13 — P1–P4: lib/core, bats, profiles contract, why/storage/contacts,
+#  report --diff/--json, doctor --json, last.json heald handshake, RUN_MAX_SEC,
+#  product/GUI docs, shellcheck gate:
+#  - lib/core/{heal_guards,cleanup_tally,profiles,last_json}.sh + lib/commands/extras.sh
+#  - bats tests/; scripts/check.sh; Formula installs libexec/lib
+#  - meister why | storage | contacts doctor | report --diff|--json | doctor --json
+#  - ~/.meister/last.json after each run (heald contract: batch-maintain)
+#  - RUN_MAX_SEC soft cap skips remaining modules; MEISTER_NOTIFY already used
+#
+# NEW in v6.12 — P0 trust: verify-after-heal, cleanup tallies, AI-Heal suggest-only:
+#  - AI_HEAL_EXECUTE=false by default: model suggests after allowlist, does NOT run.
+#    Opt-in: AI_HEAL_EXECUTE=true in ~/.meister/config or --ai-heal-execute
+#  - Verify-after-heal: known/learned/AI fixes only count as FIX after module retest
+#    passes; heal.log uses executed|verified|unverified|suggested (not premature success)
+#  - Cleanup tallies: .DS_Store (and similar) report found/removed/skipped_perm;
+#    permission noise never fails the module (INSIGHTS 2026-07-04 #1–#2)
+#
 # NEW in v6.11 — remove: full family + System Extensions + leftover-only:
 #  - When .app is already gone, still wipe leftovers by name (Malwarebytes case)
 #  - Bundle family prefix (com.malwarebytes.mbam.*) not only exact CFBundleIdentifier
@@ -261,6 +278,41 @@ MEISTER_DIR="$HOME/.meister"
 HEAL_LOG="$MEISTER_DIR/heal.log"
 mkdir -p "$MEISTER_DIR/patches" "$MEISTER_DIR/output" 2>/dev/null
 
+# ── v6.13: resolve + source lib (core + commands) ──
+_meister_resolve_lib() {
+    if [ -n "${MEISTER_LIB:-}" ] && [ -d "$MEISTER_LIB" ]; then
+        printf '%s\n' "$MEISTER_LIB"
+        return 0
+    fi
+    local d p
+    d="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    [ -d "$d/lib" ] && { printf '%s\n' "$d/lib"; return 0; }
+    [ -d "$d/../lib" ] && { printf '%s\n' "$(cd "$d/../lib" && pwd)"; return 0; }
+    [ -d "$d/../libexec/lib" ] && { printf '%s\n' "$(cd "$d/../libexec/lib" && pwd)"; return 0; }
+    if command -v brew >/dev/null 2>&1; then
+        p="$(brew --prefix meister 2>/dev/null)/libexec/lib"
+        [ -d "$p" ] && { printf '%s\n' "$p"; return 0; }
+    fi
+    return 1
+}
+MEISTER_LIB_DIR="$(_meister_resolve_lib || true)"
+if [ -n "${MEISTER_LIB_DIR:-}" ]; then
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/heal_guards.sh" ] && . "$MEISTER_LIB_DIR/core/heal_guards.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/cleanup_tally.sh" ] && . "$MEISTER_LIB_DIR/core/cleanup_tally.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/profiles.sh" ] && . "$MEISTER_LIB_DIR/core/profiles.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/last_json.sh" ] && . "$MEISTER_LIB_DIR/core/last_json.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
+    MEISTER_LIB_LOADED=true
+else
+    MEISTER_LIB_LOADED=false
+fi
+
+
 # v5.25: undo journal — reversible FIX actions as "RUN_ID<TAB>epoch<TAB>desc<TAB>src<TAB>dst".
 # RUN_ID groups a run's actions so `meister undo` targets the latest run.
 # NB: restore is ALWAYS a plain `cp -- src dst` executed WITHOUT a shell — the
@@ -293,6 +345,12 @@ MEISTER_OLLAMA_MODEL="${MEISTER_OLLAMA_MODEL:-qwen3-coder:30b}"
 FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
 FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
 AI_TRACE=true                           # always show AI REQUEST+RESPONSE at runtime
+# AI-Heal execute gate (v6.12): default suggest-only. Model may propose an
+# allowlisted command; it runs only when AI_HEAL_EXECUTE=true (config or CLI).
+AI_HEAL_EXECUTE=false
+RUN_MAX_SEC=0                 # 0=off; e.g. 1200 soft-skip remaining modules after N seconds
+MODULE_SLOW_SEC=300           # WARN if a single module exceeds this (soft)
+MEISTER_NOTIFY=true           # macOS notification after run
 AI_USAGE_LOG="$MEISTER_DIR/ai_usage.log" # structured audit of every model call
 AI_CALLS_THIS_RUN=0
 AI_HEAL_CALLS_THIS_RUN=0
@@ -373,7 +431,7 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA  AI_TRACE"
+    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE "
     _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
     _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
@@ -1018,12 +1076,9 @@ fm_query() {
 }
 # ===== /TWIN:AI-BACKEND =====
 
-# AI-Heal allowlist executor. The model's output is EXECUTED, so safety must NOT
-# depend on the prompt — "never sudo" is unreliable (the on-device model emitted
-# `sudo chmod -R +w /System/Volumes/Data` in testing). A command runs ONLY if it
-# is a single, simple invocation: no shell metacharacters (; & | < > $ ` \), no
-# sudo/rm/chmod/chown/dd/mkfs, and its verb is on the allowlist. Anything else is
-# rejected → no-op (AI-Heal then just reports the failure, as it did pre-AI).
+# AI-Heal allowlist — preferred implementation: lib/core/heal_guards.sh (v6.13)
+# Fallback inline if lib not loaded (brew partial install / missing tree).
+if ! command -v heal_command_allowed >/dev/null 2>&1; then
 FM_HEAL_ALLOW=" killall pkill qlmanage mdutil mdimport dscacheutil atsutil defaults launchctl lsregister tccutil purge fc-cache dot_clean "
 heal_command_allowed() {
     local cmd="$1"
@@ -1036,6 +1091,7 @@ heal_command_allowed() {
     local verb="${cmd%%[[:space:]]*}"; verb="${verb##*/}"
     case "$FM_HEAL_ALLOW" in *" $verb "*) return 0 ;; *) return 1 ;; esac
 }
+fi
 
 # Heal telemetry: append to ~/.meister/heal.log
 log_heal_event() {
@@ -1067,15 +1123,28 @@ try_learned_fix() {
     ai_trace_line "LEARNED-FIX (gemerkt, KEIN ${AI_BACKEND_LABEL}-Call): Modul=$module_name"
     ai_usage_record "learned-fix" "heal-candidate" "no-model" "module=$module_name (cached, not AI)"
     ai_trace_line "LEARNED-FIX Befehl: $cmd"
-    log HEAL "Learned-Fix: trying remembered fix for $module_name: $cmd"
+    log HEAL "Learned-Fix: remembered fix for $module_name: $cmd"
+    AI_LAST_CMD="$cmd"
+
+    # Same execute gate as AI-Heal (learned fixes originated from the model)
+    if [ "${AI_HEAL_EXECUTE:-false}" != "true" ]; then
+        log HEAL "Learned-Fix SUGGEST-ONLY (AI_HEAL_EXECUTE=false): $cmd"
+        log STEP "   Enable with AI_HEAL_EXECUTE=true or --ai-heal-execute"
+        log_heal_event "learned-fix" "$module_name" "suggested" "$cmd"
+        report_add WARN "Learned-Fix suggestion (not executed): $module_name → $cmd"
+        return 1
+    fi
+
     if $DRY_RUN; then
         ai_trace_line "LEARNED-FIX [DRY-RUN] würde ausführen: $cmd"
         log STEP "   [DRY-RUN] Would execute: $cmd"
+        log_heal_event "learned-fix" "$module_name" "suggested" "$cmd"
         return 0
     fi
     read -ra _lf_argv <<< "$cmd"
     if timeout 30 "${_lf_argv[@]}" >/dev/null 2>&1; then
-        log_heal_event "learned-fix" "$module_name" "applied" "$cmd"
+        # "executed" only — caller must verify via module retest
+        log_heal_event "learned-fix" "$module_name" "executed" "$cmd"
         return 0
     fi
     # stopped working → forget it, fall through to AI-Heal.
@@ -1084,7 +1153,8 @@ try_learned_fix() {
     # skipped the mv and kept the stale fix forever.
     grep -v "^${module_name}$(printf '\t')" "$learned" > "$learned.tmp" 2>/dev/null
     mv "$learned.tmp" "$learned"
-    log HEAL "Learned-Fix failed — forgotten, asking Apple Intelligence fresh"
+    log HEAL "Learned-Fix failed — forgotten, asking ${AI_BACKEND_LABEL:-AI} fresh"
+    log_heal_event "learned-fix" "$module_name" "failed" "$cmd"
     return 1
 }
 
@@ -1199,11 +1269,29 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     log HEAL "★★★ AI-HEAL Vorschlag (Allowlist OK): $ai_response"
     ai_heal_emit "PHASE 2/3 ALLOWLIST: OK"
     ai_heal_box "PHASE 2/3  FREIGEGEBENER BEFEHL" "$ai_response"
+    AI_LAST_CMD="$ai_response"
+
+    # v6.12: default suggest-only — show allowlisted command, do not run it
+    if [ "${AI_HEAL_EXECUTE:-false}" != "true" ]; then
+        ai_heal_emit "PHASE 3/3 SUGGEST-ONLY (AI_HEAL_EXECUTE=false) — kein Execute"
+        ai_heal_emit "############################################################"
+        ai_heal_emit "###  AI-HEAL ERGEBNIS: SUGGESTED (not executed)          ###"
+        ai_heal_emit "###  Opt-in: AI_HEAL_EXECUTE=true  or  --ai-heal-execute ###"
+        ai_heal_emit "############################################################"
+        log HEAL "AI-Heal SUGGEST-ONLY: $ai_response"
+        log STEP "   To apply automatically: AI_HEAL_EXECUTE=true or --ai-heal-execute"
+        ai_usage_record "ai-heal" "heal-candidate" "suggested" "module=$module_name cmd=$ai_response"
+        log_heal_event "ai-heal" "$module_name" "suggested" "$ai_response"
+        report_add WARN "AI-Heal suggestion (not executed): $module_name → $ai_response"
+        return 1
+    fi
+
     ai_heal_emit "PHASE 3/3 EXECUTE: starte Befehl jetzt…"
 
     if $DRY_RUN; then
         ai_heal_emit "[DRY-RUN] würde ausführen: $ai_response"
         log STEP "   [DRY-RUN] Would execute: $ai_response"
+        log_heal_event "ai-heal" "$module_name" "suggested" "$ai_response"
         return 0
     fi
 
@@ -1218,19 +1306,17 @@ Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placehold
     ai_rc=$?
 
     if [ $ai_rc -eq 0 ]; then
-        log FIX "★★★ AI-HEAL: Command successful"
+        # Exit 0 of the heal command proves nothing — only module retest does.
+        log HEAL "★★★ AI-HEAL: command exit 0 — pending module verify"
         ai_heal_emit "############################################################"
-        ai_heal_emit "###  AI-HEAL ERGEBNIS: SUCCESS (exit 0) — Modul-Retry  ###"
+        ai_heal_emit "###  AI-HEAL: EXECUTED (exit 0) — Modul-Verify folgt   ###"
         ai_heal_emit "############################################################"
         ai_usage_record "ai-heal" "heal-candidate" "executed-ok" "module=$module_name cmd=$ai_response"
         [ -n "$ai_fix_output" ] && {
             log STEP "   Output: $(echo "$ai_fix_output" | head -3)"
             ai_trace_line "AI-FIX stdout: $(echo "$ai_fix_output" | head -3 | tr '\n' ' ')"
         }
-        # NO report_add here — the command exiting 0 proves nothing; the caller
-        # adds the FIX entry only after the module retest actually passes
-        log_heal_event "ai-heal" "$module_name" "success" "$ai_response"
-        AI_LAST_CMD="$ai_response"
+        log_heal_event "ai-heal" "$module_name" "executed" "$ai_response"
         return 0
     else
         log WARN "★★★ AI-HEAL: Command failed (Exit: $ai_rc)"
@@ -1303,6 +1389,35 @@ known_fix() {
     return 1
 }
 
+# v6.12: re-run module after a heal attempt. FIX / remember only if retest passes.
+# heal.log results: verified | unverified
+# Returns 0 if module is healthy after heal, else 1.
+heal_verify_module() {
+    local module_name="$1"
+    local module_func="$2"
+    local heal_type="$3"   # known-fix | learned-fix | ai-heal
+    local detail="${4:-}"
+
+    log HEAL "Verify-after-heal: retesting $module_name after $heal_type..."
+    ai_heal_emit "VERIFY: Modul-Retry nach $heal_type…"
+    sleep 1
+    $module_func
+    local re_rc=$?
+    if [ $re_rc -eq 0 ]; then
+        log FIX "Verify-after-heal: $module_name OK after $heal_type"
+        log_heal_event "$heal_type" "$module_name" "verified" "$detail"
+        if ! $DRY_RUN; then
+            report_add FIX "$module_name via $heal_type repaired (verified)"
+        else
+            report_add WOULD "$module_name via $heal_type (dry-run verify ok)"
+        fi
+        return 0
+    fi
+    log WARN "Verify-after-heal: $module_name still failing after $heal_type (exit $re_rc)"
+    log_heal_event "$heal_type" "$module_name" "unverified" "$detail"
+    return 1
+}
+
 # Fix #6: Logfile diff instead of empty stderr
 run_module_safe() {
     local module_name="$1"
@@ -1326,26 +1441,35 @@ run_module_safe() {
     log ERROR "$module_name failed (Exit: $rc)"
     local module_output=$(tail -n +$((log_lines_before + 1)) "$LOGFILE" 2>/dev/null | head -"$LOG_CAPTURE_LINES")
 
-    # Try known-fix + 1x retry
+    # Known-fix + verify-after-heal (never trust "fix applied" without retest)
     if known_fix "$module_name" "Exit: $rc. $module_output"; then
-        log HEAL "Known-Fix applied, retrying..."
-        sleep 1
-        $module_func
-        rc=$?
-        [ $rc -eq 0 ] && report_add FIX "$module_name via Known-Fix repaired"
+        log HEAL "Known-Fix applied — verifying module..."
+        if heal_verify_module "$module_name" "$module_func" "known-fix" "pattern-match"; then
+            rc=0
+        else
+            rc=1
+        fi
     fi
 
-    # v5.24: Learned-Fix — a remembered AI fix that worked before, no model call
+    # Learned-Fix (AI-originated cache) + verify; suggest-only returns 1
     if [ $rc -ne 0 ] && try_learned_fix "$module_name"; then
-        log HEAL "Learned-Fix applied, retrying..."
-        sleep 1
-        $module_func
-        rc=$?
-        [ $rc -eq 0 ] && report_add FIX "$module_name via Learned-Fix repaired"
+        log HEAL "Learned-Fix executed — verifying module..."
+        if heal_verify_module "$module_name" "$module_func" "learned-fix" "${AI_LAST_CMD:-}"; then
+            rc=0
+        else
+            # executed but did not fix — drop stale learned entry
+            local _learned="$MEISTER_DIR/learned_fixes"
+            if [ -f "$_learned" ] && [ -n "${AI_LAST_CMD:-}" ]; then
+                grep -v "^${module_name}$(printf '\t')" "$_learned" > "$_learned.tmp" 2>/dev/null
+                mv "$_learned.tmp" "$_learned"
+                log HEAL "Learned-Fix unverified — forgotten for $module_name"
+            fi
+            rc=1
+        fi
     fi
 
-    # AI-Heal Fallback: up to 2 rounds — round 2 tells the model what round 1
-    # tried, so it takes a different approach instead of repeating itself.
+    # AI-Heal Fallback: up to 2 rounds when execute is enabled.
+    # Suggest-only mode: ai_heal returns 1 after logging suggestion — loop exits.
     local ai_round=1 last_ai_cmd=""
     while [ $rc -ne 0 ] && $FM_ENABLED && [ $ai_round -le 2 ]; do
         # LATEST lines of the module window (tail, not head) — round 2 must see
@@ -1353,17 +1477,17 @@ run_module_safe() {
         module_output=$(tail -n +$((log_lines_before + 1)) "$LOGFILE" 2>/dev/null | tail -"$LOG_CAPTURE_LINES")
         if ai_heal "$module_name" "Exit: $rc. $module_output" "$last_ai_cmd"; then
             last_ai_cmd="$AI_LAST_CMD"
-            log HEAL "★★★ AI-HEAL applied (round $ai_round) — retry Modul..."
-            ai_heal_emit "Modul-Retry nach AI-HEAL (Runde $ai_round)…"
-            sleep 1
-            $module_func
-            rc=$?
-            if [ $rc -eq 0 ] && [ -n "$last_ai_cmd" ] && ! $DRY_RUN; then
-                # FIX entry + remembering only after the retest confirms the fix
-                report_add FIX "$module_name via AI-Heal repaired"
-                remember_fix "$module_name" "$last_ai_cmd"
-                log HEAL "★★★ AI-HEAL learned: Fix für $module_name gemerkt"
-                ai_heal_emit "Learned-Fix gespeichert für nächstes Mal: $module_name"
+            log HEAL "★★★ AI-HEAL executed (round $ai_round) — verifying module..."
+            if heal_verify_module "$module_name" "$module_func" "ai-heal" "$last_ai_cmd"; then
+                rc=0
+                if [ -n "$last_ai_cmd" ] && ! $DRY_RUN; then
+                    remember_fix "$module_name" "$last_ai_cmd"
+                    log HEAL "★★★ AI-HEAL learned (verified): Fix für $module_name gemerkt"
+                    ai_heal_emit "Learned-Fix gespeichert (verified): $module_name"
+                fi
+            else
+                rc=1
+                # keep last_ai_cmd so round 2 can ask for a different approach
             fi
         else
             break
@@ -1380,6 +1504,42 @@ run_module_safe() {
 #############################
 # 4. INFRASTRUCTURE
 #############################
+
+# v6.12/v6.13: count-based cleanup (lib/core/cleanup_tally.sh preferred)
+if ! command -v cleanup_find_delete >/dev/null 2>&1; then
+# v6.12: count-based cleanup — never fail a module on find/TCC permission noise.
+# Sets CLEANUP_FOUND / CLEANUP_REMOVED / CLEANUP_SKIPPED (global for caller report).
+# $1 = basename pattern (e.g. .DS_Store); remaining args = root directories.
+cleanup_find_delete() {
+    local name="$1"
+    shift
+    CLEANUP_FOUND=0
+    CLEANUP_REMOVED=0
+    CLEANUP_SKIPPED=0
+    local dir f
+    for dir in "$@"; do
+        [ -d "$dir" ] || continue
+        # Prune TCC-hot / iCloud churn paths; ignore find exit codes (perm denied).
+        while IFS= read -r -d '' f; do
+            CLEANUP_FOUND=$((CLEANUP_FOUND + 1))
+            if $DRY_RUN; then
+                continue
+            fi
+            if rm -f "$f" 2>/dev/null; then
+                CLEANUP_REMOVED=$((CLEANUP_REMOVED + 1))
+            else
+                CLEANUP_SKIPPED=$((CLEANUP_SKIPPED + 1))
+            fi
+        done < <(
+            timeout "${FIND_TIMEOUT_SEC:-60}" find "$dir" \
+                \( -path "*/Library/*" -o -path "*/.Trash/*" \
+                   -o -path "*/Mobile Documents/*" -o -path "*/.Trash" \) -prune \
+                -o -name "$name" -type f -print0 2>/dev/null || true
+        )
+    done
+    return 0
+}
+fi
 
 # Fix #11: Moreere Endpunkte
 check_net() {
@@ -2791,6 +2951,7 @@ module_cleanup() {
     else
         log STEP "   Large files: not needed (Disk < ${DISK_USAGE_THRESHOLD}%)"
     fi
+    return 0
 }
 
 #############################
@@ -4236,26 +4397,28 @@ module_healer() {
     # 1. Broken symlinks in PATH dirs (system bins need sudo)
     bw_phase "Healer: scanning symlinks"
     local sym_dirs=("$HOME/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin")
-    local needs_sudo=0
+    local needs_sudo=0 sym_found=0 sym_removed=0
     for dir in "${sym_dirs[@]}"; do
         [ -d "$dir" ] || continue
         while IFS= read -r link; do
             [ -z "$link" ] && continue
+            sym_found=$((sym_found + 1))
             bw_phase "Healer: rm $(basename "$link")"
             log HEAL "   broken symlink: $link"
-            fixed=$((fixed + 1))
             $DRY_RUN && continue
             if rm -f "$link" 2>/dev/null; then
-                :
+                fixed=$((fixed + 1))
+                sym_removed=$((sym_removed + 1))
             elif sudo -n rm -f "$link" 2>/dev/null; then
-                :
+                fixed=$((fixed + 1))
+                sym_removed=$((sym_removed + 1))
             else
                 log WARN "     needs sudo — skipped (run: sudo rm -f '$link')"
                 needs_sudo=$((needs_sudo + 1))
-                fixed=$((fixed - 1))
             fi
-        done < <(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null)
+        done < <(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null || true)
     done
+    log STEP "   symlinks tally: found=${sym_found} removed=${sym_removed} skipped_perm=${needs_sudo}"
     [ "$needs_sudo" -gt 0 ] && report_add WARN "Healer: ${needs_sudo} symlink(s) need sudo"
 
     # 2. Orphan LaunchAgents (plist points to missing binary) → quarantine
@@ -4584,18 +4747,22 @@ module_ssh_audit() {
 module_broken_symlinks() {
     log INFO "Checking broken symlinks..."
     local dirs=("$HOME/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin")
-    local total=0
+    local total=0 scanned=0
     for dir in "${dirs[@]}"; do
         [ -d "$dir" ] || continue
+        scanned=$((scanned + 1))
         local broken
-        broken=$(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | wc -l | tr -d ' ')
+        # find may exit 1 on permission noise — never fail the module on that
+        broken=$(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | wc -l | tr -d ' ' || true)
+        broken=${broken:-0}
         if [ "$broken" -gt 0 ]; then
             log WARN "   ${broken} broken in $dir"
             total=$((total + broken))
         fi
     done
+    log STEP "   symlinks: scanned_dirs=${scanned} broken=${total}"
     [ "$total" -eq 0 ] && log STEP "   No broken symlinks"
-    [ "$total" -gt 0 ] && report_add WARN "${total} broken symlinks"
+    [ "$total" -gt 0 ] && report_add WARN "${total} broken symlinks (healer may remove)"
     return 0
 }
 
@@ -4887,19 +5054,26 @@ module_dsstore_cleanup() {
     log INFO "Cleaning .DS_Store files..."
     bw_phase "DS_Store: scanning"
     local dirs=("$HOME/Developer" "$HOME/Documents" "$HOME/Desktop")
-    local total=0
-    for dir in "${dirs[@]}"; do
-        [ -d "$dir" ] || continue
-        local count; count=$(timeout "${FIND_TIMEOUT_SEC:-60}" find "$dir" -name .DS_Store 2>/dev/null | wc -l | tr -d ' ')
-        if [ "${count:-0}" -gt 0 ]; then
-            bw_phase "DS_Store: rm $dir ($count)"
-            log STEP "   $dir: ${count} files"
-            $DRY_RUN || timeout "${FIND_TIMEOUT_SEC:-60}" find "$dir" -name .DS_Store -delete 2>/dev/null || true
-            total=$((total + count))
-        fi
-    done
-    [ "$total" -gt 0 ] && { log FIX "   ${total} .DS_Store removed"; report_add FIX "${total} .DS_Store files"; }
-    [ "$total" -eq 0 ] && log STEP "   None found"
+    cleanup_find_delete ".DS_Store" "${dirs[@]}"
+    log STEP "   .DS_Store tally: found=${CLEANUP_FOUND} removed=${CLEANUP_REMOVED} skipped_perm=${CLEANUP_SKIPPED}"
+    if [ "${CLEANUP_FOUND:-0}" -eq 0 ]; then
+        log STEP "   None found"
+        return 0
+    fi
+    if $DRY_RUN; then
+        log STEP "   [DRY-RUN] would remove ${CLEANUP_FOUND} .DS_Store"
+        report_add WOULD "${CLEANUP_FOUND} .DS_Store files"
+        return 0
+    fi
+    if [ "${CLEANUP_REMOVED:-0}" -gt 0 ]; then
+        log FIX "   ${CLEANUP_REMOVED}/${CLEANUP_FOUND} .DS_Store removed"
+        report_add FIX "${CLEANUP_REMOVED}/${CLEANUP_FOUND} .DS_Store removed"
+    fi
+    if [ "${CLEANUP_SKIPPED:-0}" -gt 0 ]; then
+        log WARN "   ${CLEANUP_SKIPPED} .DS_Store not removable (TCC/perm) — not a module failure"
+        report_add WARN "${CLEANUP_SKIPPED} .DS_Store skipped (perm)"
+    fi
+    # Permission noise is never a hard module failure
     return 0
 }
 
@@ -5296,6 +5470,10 @@ save_history() {
     # HEAL: field kept — older lines have it, dropping it broke parsers (INSIGHTS #5)
     # SCORE: field appended v5.25 (trailing → old parsers unaffected)
     echo "$ts | ${total_mins}m${total_secs_rem}s | OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]} HEAL:${HEAL_COUNT} SCORE:${MAINT_SCORE}${top_modules:+ | top: $top_modules}" >> "$history_file"
+    # v6.13 heald handshake
+    if command -v write_last_json >/dev/null 2>&1; then
+        write_last_json             "${MAINT_SCORE}"             "${#REPORT_SUCCESS[@]}"             "${#REPORT_FIXED[@]}"             "${#REPORT_WARNINGS[@]}"             "${#REPORT_ERRORS[@]}"             "${HEAL_COUNT:-0}"             "${total_secs}"             "${RUN_PROFILE:-auto}"             "${MEISTER_VERSION:-unknown}"
+    fi
 }
 
 print_report() {
@@ -5411,6 +5589,11 @@ print_report() {
         echo -e "\n${YELLOW}--- AI diese Session (${AI_BACKEND_LABEL:-AI}) ---${NC}"
         echo "  Backend:     ${AI_BACKEND_LABEL:-?} [${AI_BACKEND_KIND:-?}]"
         echo "  Calls:       ${AI_CALLS_THIS_RUN:-0} total  ·  nur-lesen: ${AI_READONLY_CALLS_THIS_RUN:-0}"
+        if [ "${AI_HEAL_EXECUTE:-false}" = "true" ]; then
+            echo "  AI-Heal:     EXECUTE on (verify-after-heal)"
+        else
+            echo "  AI-Heal:     SUGGEST-ONLY (default; --ai-heal-execute to run)"
+        fi
         if [ "${AI_HEAL_CALLS_THIS_RUN:-0}" -gt 0 ]; then
             echo -e "  ${AIHEAL_FG}★★★ AI-HEAL Calls: ${AI_HEAL_CALLS_THIS_RUN}  (Modul-Fails → Model → Allowlist)${NC}"
             echo -e "  ${AIHEAL_FG}    Log: grep AI-HEAL ~/.meister/meister.log | tail${NC}"
@@ -7553,19 +7736,29 @@ if [ "${1:-}" = "fleet" ]; then
     _F_LOCAL_DATE=$(echo "$_F_LOCAL_LINE" | cut -d'|' -f1 | xargs)
     printf "  %-22s %-8s %-8s %s\n" "$(scutil --get LocalHostName 2>/dev/null || echo local)" "${_F_LOCAL_SCORE:-?}/100" "lokal" "${_F_LOCAL_DATE:-nie}"
     for _fh in $FLEET_HOSTS; do
+        # Prefer last.json handshake (v6.13); fall back to history.log
+        _F_JSON=$(timeout 15 ssh -o ConnectTimeout=8 -o BatchMode=yes "$_fh" \
+            'cat ~/.meister/last.json 2>/dev/null' 2>/dev/null)
         _F_LINE=$(timeout 15 ssh -o ConnectTimeout=8 -o BatchMode=yes "$_fh" \
             'tail -1 ~/.meister/history.log 2>/dev/null' 2>/dev/null)
-        if [ -z "$_F_LINE" ]; then
+        if [ -z "$_F_LINE" ] && [ -z "$_F_JSON" ]; then
             printf "  %-22s %-8s %-8s %s\n" "$_fh" "?" "offline" "nicht erreichbar"
             continue
         fi
-        _F_SCORE=$(echo "$_F_LINE" | grep -oE 'SCORE:[0-9]+' | cut -d: -f2)
-        _F_ERR=$(echo "$_F_LINE" | grep -oE 'ERR:[0-9]+' | cut -d: -f2)
-        _F_DATE=$(echo "$_F_LINE" | cut -d'|' -f1 | xargs)
+        if [ -n "$_F_JSON" ]; then
+            _F_SCORE=$(echo "$_F_JSON" | grep -oE '"score": *[0-9]+' | head -1 | grep -oE '[0-9]+')
+            _F_ERR=$(echo "$_F_JSON" | grep -oE '"err": *[0-9]+' | head -1 | grep -oE '[0-9]+')
+            _F_DATE=$(echo "$_F_JSON" | grep -oE '"ts": *"[^"]+"' | head -1 | cut -d'"' -f4)
+        else
+            _F_SCORE=$(echo "$_F_LINE" | grep -oE 'SCORE:[0-9]+' | cut -d: -f2)
+            _F_ERR=$(echo "$_F_LINE" | grep -oE 'ERR:[0-9]+' | cut -d: -f2)
+            _F_DATE=$(echo "$_F_LINE" | cut -d'|' -f1 | xargs)
+        fi
         _F_ST="ok"; [ "${_F_ERR:-0}" -gt 0 ] 2>/dev/null && _F_ST="ERR:$_F_ERR"
         printf "  %-22s %-8s %-8s %s\n" "$_fh" "${_F_SCORE:-?}/100" "$_F_ST" "${_F_DATE:-?}"
     done
     echo ""
+    echo "  Handshake: each host should have ~/.meister/last.json after a maintenance run"
     exit 0
 fi
 
@@ -7621,6 +7814,15 @@ fi
 
 # ── doctor — read-only system checklist ──
 if [ "${1:-}" = "doctor" ]; then
+    if [ "${2:-}" = "--json" ]; then
+        if command -v cmd_doctor_json >/dev/null 2>&1; then
+            cmd_doctor_json
+        else
+            echo '{"error":"lib not loaded"}'
+            exit 1
+        fi
+        exit 0
+    fi
     echo -e "\033[1;34m  Meister DOCTOR — Read-only checklist\033[0m"
     echo ""
     _pass=0; _fail=0; _warn=0
@@ -7764,6 +7966,29 @@ if [ "${1:-}" = "selftest" ]; then
     _t "version string" bash -c "\"$_SELF\" --version | grep -q meister"
     _t "help branding" bash -c "\"$_SELF\" -h 2>&1 | grep -q 'Meister'"
     _t "help no bare meister cmds" bash -c "! \"$_SELF\" -h 2>&1 | grep -E '^  meister '"
+    _t "v6.12 AI_HEAL_EXECUTE default false" bash -c "grep -qE '^AI_HEAL_EXECUTE=false' \"$_SELF\""
+    _t "v6.12 verify-after-heal helper" bash -c "grep -q 'heal_verify_module' \"$_SELF\""
+    _t "v6.12 cleanup_find_delete helper" bash -c "grep -q 'cleanup_find_delete' \"$_SELF\""
+    _t "v6.12 --ai-heal-execute flag" bash -c "\"$_SELF\" -h 2>&1 | grep -q 'ai-heal-execute'"
+    _t "v6.13 lib resolve present" bash -c "grep -q '_meister_resolve_lib' \"$_SELF\""
+    _t "v6.13 why in help" bash -c "\"$_SELF\" -h 2>&1 | grep -q 'why'"
+    _t "v6.13 why profile" "$_SELF" why profile
+    _t "v6.13 storage" "$_SELF" storage
+    _t "v6.13 contacts doctor" "$_SELF" contacts doctor
+    _t "v6.13 doctor --json" bash -c "\"$_SELF\" doctor --json | grep -q schema"
+    _t "v6.13 report --json" bash -c "\"$_SELF\" report --json 2 | head -1 | grep -qE '^\\[|\\[\\]'"
+    # bash -c assigns the next arg to $0 (shell name), not $1
+    _t "heal_command_allowed rejects sudo" bash -c '
+        src=$(sed -n "/^heal_command_allowed()/,/^}/p" "$0")
+        eval "$src"
+        ! heal_command_allowed "sudo rm -rf /tmp/x"
+    ' "$_SELF"
+    _t "heal_command_allowed allows killall" bash -c '
+        src=$(sed -n "/^heal_command_allowed()/,/^}/p" "$0")
+        FM_HEAL_ALLOW=" killall pkill qlmanage mdutil mdimport dscacheutil atsutil defaults launchctl lsregister tccutil purge fc-cache dot_clean "
+        eval "$src"
+        heal_command_allowed "killall Dock"
+    ' "$_SELF"
     _t "fm_available function" bash -c "source /dev/null; true"  # placeholder
     # AI backend probe (soft)
     if fm_available; then
@@ -8791,10 +9016,77 @@ EOF
     exit 0
 fi
 
+# ── why / storage / contacts (v6.13 — lib/commands/extras.sh) ──
+if [ "${1:-}" = "why" ]; then
+    echo -e "\033[1;34m  Meister WHY\033[0m"
+    echo ""
+    if command -v cmd_why >/dev/null 2>&1; then
+        shift
+        cmd_why "${1:-}" || exit 1
+    else
+        echo "  lib/commands/extras.sh not loaded (MEISTER_LIB missing)"
+        exit 1
+    fi
+    exit 0
+fi
+
+if [ "${1:-}" = "storage" ]; then
+    echo -e "\033[1;34m  Meister STORAGE — safe-to-delete candidates\033[0m"
+    echo ""
+    if command -v cmd_storage >/dev/null 2>&1; then
+        cmd_storage
+    else
+        echo "  lib not loaded"
+        exit 1
+    fi
+    exit 0
+fi
+
+if [ "${1:-}" = "contacts" ]; then
+    echo -e "\033[1;34m  Meister CONTACTS\033[0m"
+    echo ""
+    case "${2:-doctor}" in
+        doctor|health|status|"")
+            if command -v cmd_contacts_doctor >/dev/null 2>&1; then
+                cmd_contacts_doctor
+            else
+                echo "  lib not loaded"
+                exit 1
+            fi
+            ;;
+        *)
+            echo "Usage: meister contacts doctor"
+            exit 1
+            ;;
+    esac
+    exit 0
+fi
+
 # ── Run-History Report (meister report) ──
 if [ "${1:-}" = "report" ]; then
     _N="${2:-10}"
-    case "$_N" in *[!0-9]*) echo "Usage: meister report [N]"; exit 1 ;; esac
+    if [ "$_N" = "--diff" ] || [ "${2:-}" = "--diff" ]; then
+        echo -e "\033[1;34m  Meister REPORT --diff\033[0m"
+        echo ""
+        if command -v cmd_report_diff >/dev/null 2>&1; then
+            cmd_report_diff
+        else
+            echo "  lib not loaded"
+            exit 1
+        fi
+        exit 0
+    fi
+    if [ "$_N" = "--json" ] || [ "${2:-}" = "--json" ]; then
+        _jn="${3:-10}"
+        case "$_jn" in --json) _jn=10 ;; *[!0-9]*) _jn=10 ;; esac
+        if command -v cmd_report_json >/dev/null 2>&1; then
+            cmd_report_json "$_jn"
+        else
+            echo "[]"
+        fi
+        exit 0
+    fi
+    case "$_N" in *[!0-9]*) echo "Usage: meister report [N|--diff|--json [N]]"; exit 1 ;; esac
     _hist="$MEISTER_DIR/history.log"
     [ -f "$_hist" ] || { echo "  No history yet ($_hist)"; exit 0; }
     echo -e "\033[1;34m  Meister REPORT — last ${_N} runs\033[0m"
@@ -8939,6 +9231,8 @@ for arg in "$@"; do
         --quick)   RUN_PROFILE=quick ;;
         --deep)    RUN_PROFILE=deep ;;
         --auto)    RUN_PROFILE=auto ;;
+        --ai-heal-execute) AI_HEAL_EXECUTE=true ;;
+        --ai-heal-suggest) AI_HEAL_EXECUTE=false ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
         *)         _NEW_ARGS+=("$arg") ;;
     esac
@@ -8979,6 +9273,9 @@ MAINTENANCE:
   meister -q           Quiet (warnings/fixes only)
   meister -H           Health dashboard
   meister -I           Install LaunchAgent
+  meister --ai-heal-execute  Allow AI-Heal / Learned-Fix to RUN commands
+                                 (default: suggest-only; safer)
+  meister --ai-heal-suggest  Force suggest-only (overrides config)
 
   OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
               -L Large files  -P Performance  -G Git
@@ -9001,12 +9298,18 @@ TOOLS:
   meister thermal [N]  Live temperature & fan monitor (default: 2s)
   meister speed        Download/upload speed test
   meister report [N]   Run-history report from history.log (default: last 10)
+  meister report --diff  Delta between last two runs (OK/FIX/WARN/ERR/SCORE)
+  meister report --json [N]  History as JSON array
+  meister why <x>      Why a module runs/skips, or explain a warn (profile|Homebrew|…)
+  meister storage      Safe-to-delete size candidates (DerivedData, caches, …)
+  meister contacts doctor  AddressBook size / bloat risk (read-only)
   meister score        Maintenance score 0-100 + trend history
   meister diff         What changed since the last run (apps/autostart/brew)
   meister undo [--do]  Revert the last run's reversible actions (--list)
   meister explain <x>  Apple Intelligence explains a warning in plain language
   meister today        Morning briefing (score, AI, disk, brew, top warns)
   meister doctor       Read-only system checklist (security, brew, TM, AI)
+  meister doctor --json  Same signals as machine-readable JSON
   meister suggest <x>  AI fix suggestion only — never executes
   meister privacy      Privacy grants / persistence quick audit
   meister selftest     Smoke-test this CLI
@@ -9056,6 +9359,13 @@ DOTFILES SYNC:
   meister status       Check symlinks
 
 Config: ~/.meister/config  (see config.fast.example)
+  AI_HEAL_EXECUTE=false    # default: AI-Heal only suggests (v6.12)
+  AI_HEAL_EXECUTE=true     # opt-in: allowlisted commands may run + verify
+  RUN_MAX_SEC=0            # soft wall-clock: skip remaining modules after N seconds
+  MODULE_SLOW_SEC=300      # WARN if one module exceeds N seconds
+  MEISTER_NOTIFY=true      # notification after run
+Handshake: ~/.meister/last.json  (heald contract — batch-maintain)
+Docs: docs/PRODUCT.md  docs/GUI.md
   RUN_PROFILE=auto|quick|deep
   BREW_UPDATE_MAX_AGE_SEC=43200   # skip brew update if fresher (0=always)
   BREW_UPDATE_TIMEOUT_SEC=300
@@ -9190,6 +9500,11 @@ echo -e "${NC}"
 start_bw_monitor
 log INFO "Meister v${MEISTER_VERSION} started ($(date))"
 [ "${AI_TRACE:-true}" = "true" ] && log STEP "   AI-Trace: ON (jeder AI-Call zeigt REQUEST+RESPONSE; AI_TRACE=false zum Abschalten)"
+if [ "${AI_HEAL_EXECUTE:-false}" = "true" ]; then
+    log STEP "   AI-Heal: EXECUTE on (allowlisted cmds may run + verify-after-heal)"
+else
+    log STEP "   AI-Heal: SUGGEST-ONLY (default) — enable with --ai-heal-execute or AI_HEAL_EXECUTE=true"
+fi
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
@@ -9279,7 +9594,8 @@ apply_run_profile() {
     esac
 }
 
-# Which modules run for the current profile?
+# Which modules run for the current profile? (lib/core/profiles.sh preferred)
+if ! command -v module_in_profile >/dev/null 2>&1; then
 module_in_profile() {
     local name="$1"
     case "${RUN_PROFILE:-auto}" in
@@ -9313,10 +9629,31 @@ module_in_profile() {
     esac
 }
 
+fi
+
 run_module_if() {
     local name="$1" func="$2"
+    # v6.13: soft wall-clock budget for the whole run
+    if [ "${RUN_MAX_SEC:-0}" -gt 0 ] 2>/dev/null; then
+        local _elapsed=$(( $(date +%s) - SCRIPT_START_TIME ))
+        if [ "$_elapsed" -ge "${RUN_MAX_SEC}" ]; then
+            log WARN "RUN_MAX_SEC=${RUN_MAX_SEC}s exceeded — skip remaining: $name"
+            report_add WARN "Skipped $name (RUN_MAX_SEC)"
+            return 0
+        fi
+    fi
+    if $INTERRUPTED; then
+        log WARN "Interrupted — skip: $name"
+        return 0
+    fi
     if module_in_profile "$name"; then
+        local _t0=$(date +%s)
         run_module_safe "$name" "$func"
+        local _dt=$(( $(date +%s) - _t0 ))
+        if [ "${MODULE_SLOW_SEC:-300}" -gt 0 ] && [ "$_dt" -ge "${MODULE_SLOW_SEC}" ] 2>/dev/null; then
+            log WARN "Slow module: $name took ${_dt}s (threshold ${MODULE_SLOW_SEC}s)"
+            report_add WARN "Slow: $name ${_dt}s"
+        fi
     else
         log STEP "   skip: $name (profile=${RUN_PROFILE:-auto})"
     fi

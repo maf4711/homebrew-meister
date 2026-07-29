@@ -80,6 +80,33 @@ meister ai / meister autofix   # gleich (nach Sync)
 Fixes: alte brew bottles, orphan LaunchDaemons, git push (clean), Firewall on,
 Time Machine Settings öffnen, _Inbox Archive (>N Tage).
 
+## v6.13 lib layout + quality gate
+
+```
+lib/core/          heal_guards, cleanup_tally, profiles, last_json  (bats-tested)
+lib/commands/      extras.sh — why, storage, contacts, report diff/json, doctor json
+lib/modules/       extraction track (README only until modules move)
+tests/             bats
+scripts/check.sh   shellcheck + bats + bash -n  (also run by release.sh)
+docs/PRODUCT.md    brand + heald contract
+docs/GUI.md        single GUI decision
+```
+
+Handshake: every full run writes `~/.meister/last.json` for heald.
+
+New commands: `why`, `storage`, `contacts doctor`, `report --diff|--json`, `doctor --json`.
+
+## v6.12 Trust defaults (AI-Heal + verify)
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `AI_HEAL_EXECUTE` | **false** | AI-Heal / Learned-Fix only **suggest** after allowlist |
+| `--ai-heal-execute` | CLI | Opt-in: allowlisted commands may **run** |
+| verify-after-heal | always | FIX only if module retest passes; heal.log: `executed`/`verified`/`unverified`/`suggested` |
+| cleanup tallies | always | found/removed/skipped_perm — perm noise ≠ module failure |
+
+Config: `AI_HEAL_EXECUTE=true` in `~/.meister/config` or flag on the run.
+
 ## v6.8 Keep-current architecture
 
 | Twin | AI backend | Use |
@@ -89,7 +116,7 @@ Time Machine Settings öffnen, _Inbox Archive (>N Tage).
 
 Shared: modules, autofix catalog, profiles, `~/.meister/`.
 
-Every run: **Autofix first**, then Healer, then modules (AI-Heal on failures).
+Every run: **Autofix first**, then Healer, then modules (AI-Heal on failures; default suggest-only since v6.12).
 
 LaunchAgents (install: `meisterSiri -I`):
 - Daily 09:15 `meisterSiri --quick -q`

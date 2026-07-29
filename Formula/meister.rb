@@ -13,10 +13,18 @@ class Meister < Formula
     bin.install "meisterSiri.sh" => "meisterSiri"
     doc.install "config.fast.example" if File.exist?("config.fast.example")
     doc.install "AGENTS.md" if File.exist?("AGENTS.md")
-    (libexec/"tools").install Dir["tools/*"]
+    doc.install "docs/PRODUCT.md" if File.exist?("docs/PRODUCT.md")
+    doc.install "docs/GUI.md" if File.exist?("docs/GUI.md")
+    (libexec/"tools").install Dir["tools/*"] if Dir.exist?("tools")
+    # v6.13: pure core + command helpers (heal guards, profiles, extras)
+    (libexec/"lib").mkpath
+    (libexec/"lib").install Dir["lib/*"] if Dir.exist?("lib")
     # Symlink tools into bin with meister- prefix
-    (libexec/"tools").children.each do |tool|
-      bin.install_symlink tool => "meister-#{tool.basename(".sh")}"
+    if (libexec/"tools").directory?
+      (libexec/"tools").children.each do |tool|
+        next if tool.directory?
+        bin.install_symlink tool => "meister-#{tool.basename(".sh")}"
+      end
     end
   end
 
@@ -42,11 +50,18 @@ class Meister < Formula
         meister pull     Pull + symlink
         meister setup    First-time clone (auto-detects repo)
         meister bootstrap Full machine setup
+
+      v6.13+:
+        meisterSiri why profile | storage | contacts doctor
+        meisterSiri report --diff | doctor --json
+        Handshake file: ~/.meister/last.json (for heald)
+        GUI: build app/MeisterSiri (canonical); cask meister-mac is legacy
     EOS
   end
 
   test do
     assert_match "meister", shell_output("#{bin}/meister -h 2>&1", 0)
     assert_match "meisterSiri", shell_output("#{bin}/meisterSiri --version 2>&1", 0)
+    assert_match "6.", shell_output("#{bin}/meisterSiri --version 2>&1", 0)
   end
 end
