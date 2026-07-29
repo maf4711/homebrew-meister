@@ -4,7 +4,12 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.14
+# Version: 6.15
+# NEW in v6.15 — brew symlink lib resolve fix:
+#  - Follow /opt/homebrew/bin → Cellar before probing ../lib
+#  - Only accept lib dirs that contain core/heal_guards.sh
+#    (prevents false hit on Homebrew's own /opt/homebrew/lib)
+#  - MEISTER_LIB_LOADED=true only when heal_guards actually sourced
 # NEW in v6.14 — Slice-1 residual reliability (both twins):
 #  - Spotlight: prefix-whitelist /System/Volumes/Update/* + CoreSimulator/**
 #  - history.log: always emit HEAL: + AI: + SCORE: (stable parser schema)
@@ -285,27 +290,50 @@ MEISTER_DIR="$HOME/.meister"
 HEAL_LOG="$MEISTER_DIR/heal.log"
 mkdir -p "$MEISTER_DIR/patches" "$MEISTER_DIR/output" 2>/dev/null
 
-# ── v6.13: resolve + source lib (core + commands) ──
+# ── v6.13/v6.15: resolve + source lib (core + commands) ──
+# Must resolve brew symlinks (/opt/homebrew/bin/meisterSiri → Cellar/...).
+# Never accept bare /opt/homebrew/lib — only dirs that contain core/heal_guards.sh.
+_meister_lib_ok() {
+    [ -n "$1" ] && [ -f "$1/core/heal_guards.sh" ]
+}
 _meister_resolve_lib() {
-    if [ -n "${MEISTER_LIB:-}" ] && [ -d "$MEISTER_LIB" ]; then
+    if _meister_lib_ok "${MEISTER_LIB:-}"; then
         printf '%s\n' "$MEISTER_LIB"
         return 0
     fi
-    local d p
-    d="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-    [ -d "$d/lib" ] && { printf '%s\n' "$d/lib"; return 0; }
-    [ -d "$d/../lib" ] && { printf '%s\n' "$(cd "$d/../lib" && pwd)"; return 0; }
-    [ -d "$d/../libexec/lib" ] && { printf '%s\n' "$(cd "$d/../libexec/lib" && pwd)"; return 0; }
-    if command -v brew >/dev/null 2>&1; then
-        p="$(brew --prefix meister 2>/dev/null)/libexec/lib"
-        [ -d "$p" ] && { printf '%s\n' "$p"; return 0; }
+    local self d p cand
+    self="${BASH_SOURCE[0]}"
+    # Follow symlinks to Cellar (macOS: readlink -f may be missing)
+    if command -v realpath >/dev/null 2>&1; then
+        self=$(realpath "$self" 2>/dev/null || printf '%s' "$self")
+    else
+        local _guard=0
+        while [ -L "$self" ] && [ "$_guard" -lt 10 ]; do
+            local link
+            link=$(readlink "$self" 2>/dev/null) || break
+            case "$link" in
+                /*) self="$link" ;;
+                *)  self="$(cd "$(dirname "$self")" && pwd)/$link" ;;
+            esac
+            _guard=$((_guard + 1))
+        done
     fi
+    d="$(cd "$(dirname "$self")" 2>/dev/null && pwd)"
+    for cand in         "$d/lib"         "$d/../lib"         "$d/../libexec/lib"         "$(command -v brew >/dev/null 2>&1 && brew --prefix meister 2>/dev/null)/libexec/lib"
+    do
+        [ -n "$cand" ] || continue
+        if [ -d "$cand" ] && _meister_lib_ok "$(cd "$cand" 2>/dev/null && pwd)"; then
+            printf '%s\n' "$(cd "$cand" && pwd)"
+            return 0
+        fi
+    done
     return 1
 }
 MEISTER_LIB_DIR="$(_meister_resolve_lib || true)"
-if [ -n "${MEISTER_LIB_DIR:-}" ]; then
+MEISTER_LIB_LOADED=false
+if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
-    [ -f "$MEISTER_LIB_DIR/core/heal_guards.sh" ] && . "$MEISTER_LIB_DIR/core/heal_guards.sh"
+    . "$MEISTER_LIB_DIR/core/heal_guards.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/cleanup_tally.sh" ] && . "$MEISTER_LIB_DIR/core/cleanup_tally.sh"
     # shellcheck source=/dev/null
@@ -315,8 +343,6 @@ if [ -n "${MEISTER_LIB_DIR:-}" ]; then
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
     MEISTER_LIB_LOADED=true
-else
-    MEISTER_LIB_LOADED=false
 fi
 
 
