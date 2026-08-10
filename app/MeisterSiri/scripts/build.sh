@@ -4,6 +4,23 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Prefer full Xcode; fall back to Xcode-beta (common on macOS betas).
+# Without this, xcodebuild fails when only Command Line Tools are selected.
+if [ -z "${DEVELOPER_DIR:-}" ]; then
+  if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+  elif [ -d "/Applications/Xcode-beta.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode-beta.app/Contents/Developer"
+  fi
+fi
+if [ -n "${DEVELOPER_DIR:-}" ]; then
+  echo "==> DEVELOPER_DIR=$DEVELOPER_DIR"
+else
+  echo "ERROR: No Xcode found. Install Xcode (or Xcode-beta) from the App Store / developer.apple.com."
+  echo "       Command Line Tools alone are not enough for this app build."
+  exit 1
+fi
+
 echo "==> xcodegen"
 xcodegen generate
 
@@ -39,6 +56,7 @@ if [ "${1:-}" = "--install" ]; then
   echo "==> Installing to /Applications"
   rm -rf /Applications/MeisterSiri.app
   cp -R "$OUT/MeisterSiri.app" /Applications/
+  xattr -dr com.apple.quarantine /Applications/MeisterSiri.app 2>/dev/null || true
   echo "    open -a MeisterSiri"
 fi
 
