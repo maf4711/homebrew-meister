@@ -36,5 +36,9 @@ AI_HEAL_EXECUTE=false
 # MODULE_SLOW_SEC=300       # WARN if one module exceeds 5 min
 # MEISTER_NOTIFY=true       # notification after run (already default)
 
+# v6.17 Touch ID for sudo (default true — auto pam_tid in /etc/pam.d/sudo_local)
+# One password once to enable; afterwards fingerprint. Opt-out:
+# TOUCHID_SUDO=false
+
 # Fleet (optional)
 # FLEET_HOSTS="mac-mini.local"

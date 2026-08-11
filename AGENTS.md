@@ -78,6 +78,18 @@ Nach **jeder** Feature-Änderung an der CLI:
 Niemals Features nur in `meister.sh` bauen — die gehen beim nächsten Sync verloren.
 Beide teilen `~/.meister/` und dasselbe Autofix/Profile/Sudo-Verhalten.
 
+## v6.17 Touch ID for sudo (always-on)
+
+Default: `TOUCHID_SUDO=true` — `ensure_sudo` schreibt `pam_tid` nach `/etc/pam.d/sudo_local`
+wenn fehlt. Einmal Passwort, danach Fingerprint. Opt-out: `TOUCHID_SUDO=false` in
+`~/.meister/config` oder `meisterSiri touchid --off`.
+
+```bash
+meisterSiri touchid          # force enable / status message
+meisterSiri touchid status   # enabled? sensor? auto flag?
+meisterSiri touchid --off    # disable (set TOUCHID_SUDO=false to stop re-enable)
+```
+
 ### Autofix (v6.7+)
 
 ```bash

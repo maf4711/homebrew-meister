@@ -4,7 +4,13 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.16
+# Version: 6.17
+# NEW in v6.17 — Touch ID for sudo always-on (both twins):
+#  - TOUCHID_SUDO=true by default: auto-writes pam_tid into /etc/pam.d/sudo_local
+#  - ensure_sudo installs Touch ID before first interactive sudo when missing
+#  - One password max (to enable pam); afterwards fingerprint, not password
+#  - Opt-out: TOUCHID_SUDO=false in ~/.meister/config or meisterSiri touchid --off
+#
 # NEW in v6.16 — twin benchmark + heald handshake fields:
 #  - meisterSiri twins-bench | bench-twins  (scripts/twin-benchmark.sh)
 #  - last.json: twin, ai_backend, preferred_twin for heald MeisterBridge
@@ -455,6 +461,9 @@ SECURITY_TCC_AUDIT=false               # --deep
 CLEAN_DOCKER=false                     # --deep
 LAUNCHAGENT_SCHEDULE="daily"           # daily/weekly/monthly (plus weekly deep agent)
 
+# v6.17: Touch ID for sudo (pam_tid). Default ON — config may set TOUCHID_SUDO=false
+TOUCHID_SUDO=true
+
 AUTO_DETECT=true                       # Auto-detection enabled
 AUTO_XCODE_THRESHOLD_MB=500            # Delete DerivedData above this size
 AUTO_TRASH_THRESHOLD_ITEMS=50          # Empty trash above X items
@@ -466,7 +475,7 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE "
+    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO "
     _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
     _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
 
@@ -5388,13 +5397,93 @@ module_receipts_audit() {
 
 # ── Sudo / Touch ID: once per session, shared system ticket ──────────────
 # macOS default often uses tty_tickets → each terminal re-prompts.
-# We: (1) auth once via ensure_sudo, (2) refresh ticket every 30s,
-# (3) optional sudoers drop-in: long timeout + !tty_tickets so meister
-# and meisterSiri share the same credential across terminals.
+# We: (1) ensure pam_tid (Touch ID) when TOUCHID_SUDO=true, (2) auth once via
+# ensure_sudo, (3) refresh ticket every 30s, (4) optional sudoers drop-in:
+# long timeout + !tty_tickets so meister and meisterSiri share credentials.
 SUDO_AUTHED=false
 
 sudo_has_ticket() {
     sudo -n true 2>/dev/null
+}
+
+# True when /etc/pam.d/sudo_local has an active (uncommented) pam_tid line.
+touchid_sudo_enabled() {
+    [ -f /etc/pam.d/sudo_local ] \
+        && grep -qE '^[[:space:]]*auth[[:space:]].*pam_tid' /etc/pam.d/sudo_local 2>/dev/null
+}
+
+# Build body for /etc/pam.d/sudo_local (from Apple template when present).
+_touchid_pam_body() {
+    local _t="/etc/pam.d/sudo_local.template"
+    if [ -f "$_t" ]; then
+        sed 's/^#auth/auth/' "$_t"
+    else
+        printf '%s\n' \
+            '# sudo_local: survives system update; included by /etc/pam.d/sudo' \
+            'auth       sufficient     pam_tid.so'
+    fi
+}
+
+# Write pam body via macOS admin dialog (often Touch ID even when sudo wants password).
+_touchid_write_via_gui() {
+    local body="$1" _pam="${2:-/etc/pam.d/sudo_local}"
+    local tmp
+    tmp=$(mktemp /tmp/meister-sudo-local.XXXXXX) || return 1
+    printf '%s\n' "$body" > "$tmp" || { rm -f "$tmp"; return 1; }
+    # osascript quoted form — safe path; GUI supports Touch ID for admin
+    if osascript -e "do shell script \"cp \" & quoted form of \"$tmp\" & \" $_pam && chmod 644 $_pam && chown root:wheel $_pam\" with administrator privileges" >/dev/null 2>&1; then
+        rm -f "$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+# Install pam_tid into /etc/pam.d/sudo_local when missing.
+# Default ON (TOUCHID_SUDO=true). Prefers: live ticket → TTY sudo → GUI admin
+# (Touch ID). After enable, every sudo uses fingerprint (password fallback if no sensor).
+# Returns 0 if Touch ID sudo is active (or already was).
+ensure_touchid_sudo() {
+    [ "${TOUCHID_SUDO:-true}" = "true" ] || return 1
+    if touchid_sudo_enabled; then
+        return 0
+    fi
+    [ "${DRY_RUN:-false}" = "true" ] && return 1
+
+    local body
+    body=$(_touchid_pam_body)
+    local _pam="/etc/pam.d/sudo_local"
+
+    # Silent path: reuse existing ticket
+    if sudo_has_ticket; then
+        if printf '%s\n' "$body" | sudo -n tee "$_pam" >/dev/null 2>&1 \
+            && touchid_sudo_enabled; then
+            log FIX "Touch ID for sudo enabled ($_pam)"
+            return 0
+        fi
+    fi
+
+    log INFO "Touch ID for sudo not configured — one-time auth enables permanent fingerprint…"
+
+    # TTY sudo (password once if pam not yet active)
+    if { [ -t 0 ] || ( : < /dev/tty ) 2>/dev/null; }; then
+        if { printf '%s\n' "$body" | sudo tee "$_pam" >/dev/null 2>&1; } \
+            || { printf '%s\n' "$body" | sudo tee "$_pam" < /dev/tty >/dev/null 2>&1; }; then
+            if touchid_sudo_enabled; then
+                log FIX "Touch ID for sudo ENABLED — future prompts use fingerprint"
+                return 0
+            fi
+        fi
+    fi
+
+    # GUI admin dialog — usually accepts Touch ID already (Authorization Services)
+    if _touchid_write_via_gui "$body" "$_pam" && touchid_sudo_enabled; then
+        log FIX "Touch ID for sudo ENABLED via system dialog — future sudo uses fingerprint"
+        return 0
+    fi
+
+    log WARN "Could not enable Touch ID for sudo (manual: meisterSiri touchid)"
+    return 1
 }
 
 stop_sudo_keepalive() {
@@ -5432,11 +5521,18 @@ keep_sudo() {
     fi
 }
 
-# One interactive auth max. If a valid ticket already exists (from earlier
-# meister / meisterSiri / manual sudo in this user session), reuse it.
+# One interactive auth max. Prefer Touch ID (auto-enable pam_tid). If a valid
+# ticket already exists (earlier meister / meisterSiri / manual sudo), reuse it.
 # Returns 0 if sudo works non-interactively afterwards.
 ensure_sudo() {
     local reason="${1:-maintenance}"
+
+    # Always-on Touch ID: install pam_tid before first prompt when configured.
+    # enable write may create the ticket itself → no second prompt.
+    if [ "${TOUCHID_SUDO:-true}" = "true" ] && ! touchid_sudo_enabled; then
+        ensure_touchid_sudo || true
+    fi
+
     if sudo_has_ticket; then
         SUDO_AUTHED=true
         NEEDS_SUDO=true
@@ -5455,12 +5551,20 @@ ensure_sudo() {
         NEEDS_SUDO=false
         return 1
     fi
-    log INFO "Sudo once for $reason (Touch ID / password) — then cached for this session…"
+    if touchid_sudo_enabled; then
+        log INFO "Sudo once for $reason (Touch ID) — then cached for this session…"
+    else
+        log INFO "Sudo once for $reason (password — Touch ID off) — then cached…"
+    fi
     # Prompt on controlling terminal so pipes/launchd wrappers still work
     if sudo -v < /dev/tty 2>/dev/null || sudo -v 2>/dev/null; then
         SUDO_AUTHED=true
         NEEDS_SUDO=true
         keep_sudo
+        # Late enable: if we got a ticket via password and Touch ID still off, fix now
+        if [ "${TOUCHID_SUDO:-true}" = "true" ] && ! touchid_sudo_enabled; then
+            ensure_touchid_sudo || true
+        fi
         log INFO "   Sudo OK — ticket live; no more prompts this run"
         return 0
     fi
@@ -7943,11 +8047,13 @@ if [ "${1:-}" = "doctor" ]; then
     # Time Machine
     if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then _check ok "Time Machine" "destination set"
     else _check warn "Time Machine" "not configured (single copy!)"; fi
-    # Touch ID sudo
-    if [ -f /etc/pam.d/sudo_local ] && grep -q pam_tid /etc/pam.d/sudo_local 2>/dev/null; then
-        _check ok "Touch ID sudo" "enabled"
+    # Touch ID sudo (v6.17: auto-enable on next ensure_sudo when TOUCHID_SUDO=true)
+    if touchid_sudo_enabled 2>/dev/null || { [ -f /etc/pam.d/sudo_local ] && grep -qE '^[[:space:]]*auth[[:space:]].*pam_tid' /etc/pam.d/sudo_local 2>/dev/null; }; then
+        _check ok "Touch ID sudo" "enabled (pam_tid)"
+    elif [ "${TOUCHID_SUDO:-true}" = "true" ]; then
+        _check warn "Touch ID sudo" "off — auto-enable on next sudo (or: meisterSiri touchid)"
     else
-        _check warn "Touch ID sudo" "off — meisterSiri touchid"
+        _check warn "Touch ID sudo" "off (TOUCHID_SUDO=false) — meisterSiri touchid"
     fi
     if [ -f /etc/sudoers.d/zz-meister ]; then
         _check ok "Sudo share" "zz-meister (2h, !tty_tickets)"
@@ -8986,26 +9092,43 @@ KEYSEOF
 fi
 
 # ── Touch ID for sudo (meister touchid) ──
-# Writes pam_tid.so into /etc/pam.d/sudo_local (Sonoma+: survives macOS updates,
-# unlike editing /etc/pam.d/sudo directly). One sudo password — then fingerprint.
+# Writes pam_tid.so into /etc/pam.d/sudo_local (Sonoma+: survives macOS updates).
+# v6.17+: also auto-run from ensure_sudo when TOUCHID_SUDO=true (default).
+# Manual command still useful for status / --off / force re-write.
 if [ "${1:-}" = "touchid" ]; then
     echo -e "\033[1;34m  MeisterSiri TOUCHID — Touch ID for sudo\033[0m"
     echo ""
     _PAM_LOCAL="/etc/pam.d/sudo_local"
-    _PAM_TEMPLATE="/etc/pam.d/sudo_local.template"
 
     if [ "${2:-}" = "--off" ]; then
         if [ -f "$_PAM_LOCAL" ] && grep -q pam_tid "$_PAM_LOCAL" 2>/dev/null; then
             sudo sed -i '' '/pam_tid/d' "$_PAM_LOCAL" && echo "  Touch ID for sudo DISABLED"
+            echo "  Tip: set TOUCHID_SUDO=false in ~/.meister/config to stop auto-reenable"
         else
             echo "  Touch ID for sudo was not enabled"
         fi
         exit 0
     fi
 
-    if grep -qE '^auth.*pam_tid' "$_PAM_LOCAL" 2>/dev/null; then
+    if [ "${2:-}" = "--status" ] || [ "${2:-}" = "status" ]; then
+        if touchid_sudo_enabled 2>/dev/null || grep -qE '^[[:space:]]*auth[[:space:]].*pam_tid' "$_PAM_LOCAL" 2>/dev/null; then
+            echo "  Status: ENABLED ($_PAM_LOCAL)"
+        else
+            echo "  Status: DISABLED"
+        fi
+        echo "  Auto:   TOUCHID_SUDO=${TOUCHID_SUDO:-true}"
+        if bioutil -rs 2>/dev/null | grep -qiE 'functionality: 1'; then
+            echo "  Sensor: present"
+        else
+            echo "  Sensor: not detected (password fallback)"
+        fi
+        exit 0
+    fi
+
+    if touchid_sudo_enabled 2>/dev/null || grep -qE '^[[:space:]]*auth[[:space:]].*pam_tid' "$_PAM_LOCAL" 2>/dev/null; then
         echo "  Already enabled ($_PAM_LOCAL)"
         echo "  Test: sudo -k && sudo true   → Touch ID prompt instead of password"
+        echo "  Undo: meisterSiri touchid --off"
         exit 0
     fi
 
@@ -9017,16 +9140,19 @@ if [ "${1:-}" = "touchid" ]; then
     fi
 
     echo "  Writing $_PAM_LOCAL (needs sudo once)..."
-    if [ -f "$_PAM_TEMPLATE" ]; then
-        sed 's/^#auth/auth/' "$_PAM_TEMPLATE" | sudo tee "$_PAM_LOCAL" >/dev/null
-    else
-        printf 'auth       sufficient     pam_tid.so\n' | sudo tee "$_PAM_LOCAL" >/dev/null
+    TOUCHID_SUDO=true
+    if ensure_touchid_sudo 2>/dev/null || {
+        body=$(_touchid_pam_body)
+        printf '%s\n' "$body" | sudo tee "$_PAM_LOCAL" >/dev/null
+    }; then
+        :
     fi
 
-    if grep -qE '^auth.*pam_tid' "$_PAM_LOCAL" 2>/dev/null; then
+    if touchid_sudo_enabled 2>/dev/null || grep -qE '^[[:space:]]*auth[[:space:]].*pam_tid' "$_PAM_LOCAL" 2>/dev/null; then
         echo "  Touch ID for sudo ENABLED ($_PAM_LOCAL — survives macOS updates)"
+        echo "  Default: every meisterSiri/meister run keeps this on (TOUCHID_SUDO=true)"
         echo "  Test: sudo -k && sudo true"
-        echo "  Undo: meister touchid --off"
+        echo "  Undo: meisterSiri touchid --off"
     else
         echo "  [ERROR] Write failed — check $_PAM_LOCAL manually"
         exit 1
@@ -9426,7 +9552,7 @@ TOOLS:
   meisterSiri privacy      Privacy grants / persistence quick audit
   meisterSiri selftest     Smoke-test this CLI
   meisterSiri fleet        Score/status of all Macs (FLEET_HOSTS in config)
-  meisterSiri touchid [--off]  Touch ID for sudo (pam_tid in /etc/pam.d/sudo_local)
+  meisterSiri touchid [--off|status]  Touch ID for sudo (auto-on; pam_tid in sudo_local)
   meisterSiri sudo-setup       Long shared sudo ticket (2h, all terminals)
   meisterSiri backup [--now]   Time Machine status; set up destination if none
   meisterSiri dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
@@ -9485,7 +9611,7 @@ Docs: docs/PRODUCT.md  docs/GUI.md
   FIND_TIMEOUT_SEC=60
   UNIVERSAL_UPDATES=false
   AI_TRACE=true|false
-  Tip: meisterSiri sudo-setup  — one Touch ID for hours, shared with meister
+  Tip: Touch ID for sudo is ON by default (TOUCHID_SUDO=true). sudo-setup shares ticket 2h
   Tip: meisterSiri --quick daily · meisterSiri --deep weekly
 HELPEOF
        exit 0 ;;
