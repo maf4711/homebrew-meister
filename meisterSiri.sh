@@ -4,7 +4,12 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.17
+# Version: 6.18
+# NEW in v6.18 — bloatware remover (catalog scan + quarantine kill):
+#  - meisterSiri bloatware | kill-bloat | bloat  (lib/commands/bloatware.sh)
+#  - scan apps / LaunchAgents / brew casks / support leftovers / login items
+#  - P0/P1 severity + KEEP list (Apple, meradOS, dev tools)
+#  - kill --p0 [--p1] [--dry-run] [-y] → ~/.meister/bloatware-quarantine/
 # NEW in v6.17 — Touch ID for sudo always-on (both twins):
 #  - TOUCHID_SUDO=true by default: auto-writes pam_tid into /etc/pam.d/sudo_local
 #  - ensure_sudo installs Touch ID before first interactive sudo when missing
@@ -352,9 +357,27 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/last_json.sh" ] && . "$MEISTER_LIB_DIR/core/last_json.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
     MEISTER_LIB_LOADED=true
 fi
 
+# ── bloatware / kill-bloat (v6.18) — MUST run before getopts / --* reject ──
+# Isolated: never fall through into auto-detect (bash 3.2 set -e + functions).
+if [ "${1:-}" = "bloatware" ] || [ "${1:-}" = "kill-bloat" ] || [ "${1:-}" = "bloat" ]; then
+    echo -e "\033[1;34m  MeisterSiri BLOATWARE — catalog scan / quarantine kill\033[0m"
+    echo ""
+    if ! command -v cmd_bloatware >/dev/null 2>&1; then
+        echo "  lib/commands/bloatware.sh not loaded (MEISTER_LIB missing)"
+        echo "  Expected: $MEISTER_LIB_DIR/commands/bloatware.sh"
+        exit 1
+    fi
+    shift
+    set +e
+    cmd_bloatware "$@"
+    _bloat_rc=$?
+    exit "$_bloat_rc"
+fi
 
 # v5.25: undo journal — reversible FIX actions as "RUN_ID<TAB>epoch<TAB>desc<TAB>src<TAB>dst".
 # RUN_ID groups a run's actions so `meister undo` targets the latest run.
@@ -6101,6 +6124,7 @@ BANNER
         "DNS Leak Test|dns"
         "Battery Health|battery"
         "Startup Audit|startup"
+        "Bloatware Scan|bloatware"
         "Wi-Fi Diagnostics|wifi"
         "Process Monitor|top"
         "SSL Certificates|certs"
@@ -6184,6 +6208,7 @@ BANNER
             dns)       exec bash "$self" dns ;;
             battery)   exec bash "$self" battery ;;
             startup)   exec bash "$self" startup ;;
+            bloatware) exec bash "$self" bloatware ;;
             wifi)      exec bash "$self" wifi ;;
             top)       exec bash "$self" top ;;
             certs)     exec bash "$self" certs ;;
@@ -9457,7 +9482,13 @@ if [ "${1:-}" = "speed" ]; then
 fi
 
 # Fix #117: Long-Options before getopts abfangen (getopts kann only Short-Options)
-# Collect long options that must coexist with short flags
+# Collect long options that must coexist with short flags.
+# First positional = subcommand → remaining unknown --flags pass through
+# (bloatware --p0, remove --purge, report --json, …).
+_FIRST_POS=""
+for _a in "$@"; do
+    case "$_a" in --*) ;; *) _FIRST_POS="$_a"; break ;; esac
+done
 _NEW_ARGS=()
 for arg in "$@"; do
     case "$arg" in
@@ -9470,7 +9501,16 @@ for arg in "$@"; do
         --auto)    RUN_PROFILE=auto ;;
         --ai-heal-execute) AI_HEAL_EXECUTE=true ;;
         --ai-heal-suggest) AI_HEAL_EXECUTE=false ;;
-        --*)       echo "[ERROR] Unknown option: $arg (see meisterSiri -h)"; exit 1 ;;
+        --p0|--p1|--json|--tsv|--yes|--purge)
+            _NEW_ARGS+=("$arg") ;;
+        --*)
+            case "$_FIRST_POS" in
+                bloatware|kill-bloat|bloat|remove|uninstall|orphans|report|doctor|watch|clip|keys|ai|heal|free)
+                    _NEW_ARGS+=("$arg") ;;
+                *)
+                    echo "[ERROR] Unknown option: $arg (see meisterSiri -h)"; exit 1 ;;
+            esac
+            ;;
         *)         _NEW_ARGS+=("$arg") ;;
     esac
 done
@@ -9585,6 +9625,10 @@ APP MANAGEMENT:
   meisterSiri orphans [--dry-run] [--purge] [-y]
                        Scan ~/Library + /Library for leftovers of apps that are no
                        longer installed; pick which to remove. Default: Trash.
+  meisterSiri bloatware [scan|kill] [--p0|--p1] [--dry-run] [-y] [--json|--tsv]
+                       Catalog bloat scan (CleanMyMac-class, orphans, noisy updaters).
+                       kill --p0 quarantines to ~/.meister/bloatware-quarantine/.
+                       Aliases: kill-bloat, bloat
 
 DOTFILES SYNC:
   meisterSiri push         Collect configs, commit, push

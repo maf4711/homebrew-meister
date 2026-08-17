@@ -48,6 +48,24 @@ struct CleaningView: View {
                             if app.dryRunDefault { args.append("--dry-run") }
                             app.runCommand(args)
                         }
+                        ActionCard(
+                            title: "Bloatware scannen",
+                            detail: "CleanMyMac-Klasse, Orphans, laute Updater (P0/P1)",
+                            systemImage: "exclamationmark.shield.fill",
+                            accent: .orange
+                        ) {
+                            app.runCommand(["bloatware", "scan"])
+                        }
+                        ActionCard(
+                            title: "Bloatware P0 killen",
+                            detail: "Nur P0 → Quarantine (~/.meister/bloatware-quarantine)",
+                            systemImage: "trash.slash.fill",
+                            accent: .red
+                        ) {
+                            var args = ["bloatware", "kill", "--p0"]
+                            if app.dryRunDefault { args.append("--dry-run") }
+                            app.runCommand(args)
+                        }
                         ActionCard(title: "App-Updates", detail: "brew + App Store + Sparkle", systemImage: "arrow.down.app") {
                             app.runCommand(["appupdates"])
                         }
