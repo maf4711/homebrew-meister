@@ -8,6 +8,11 @@
 BREW_UPDATE_MAX_AGE_SEC=43200
 BREW_UPDATE_TIMEOUT_SEC=300
 BREW_UPGRADE_TIMEOUT_SEC=600
+# Cask upgrade: not --greedy on daily auto (Word/WhatsApp hang). --deep enables greedy.
+# BREW_CASK_GREEDY=false
+# BREW_CASK_TIMEOUT_SEC=180
+# BREW_PKG_TIMEOUT_SEC=180        # per-formula timeout; live [i/n] START/DONE
+# BREW_CASK_SKIP="whatsapp microsoft-word"
 FIND_TIMEOUT_SEC=60
 
 # Heavy modules off for daily (enable with --deep)

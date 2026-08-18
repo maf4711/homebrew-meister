@@ -4,7 +4,14 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.18
+# Version: 6.19
+# NEW in v6.19 — brew upgrade no longer looks frozen / hangs on GUI casks:
+#  - brew upgrade --formula only (bare `brew upgrade` also upgrades casks)
+#  - one package at a time with [i/n] START/DONE + 8s heartbeat (never a dead line)
+#  - brew gets a TTY (script -qF) so download progress is not pipe-buffered
+#  - --cask --greedy only on --deep (or BREW_CASK_GREEDY=true)
+#  - skip hang-prone casks (whatsapp livecheck, microsoft-word pkg installer)
+#  - per-package timeout (BREW_PKG_TIMEOUT_SEC, default 180s)
 # NEW in v6.18 — bloatware remover (catalog scan + quarantine kill):
 #  - meisterSiri bloatware | kill-bloat | bloat  (lib/commands/bloatware.sh)
 #  - scan apps / LaunchAgents / brew casks / support leftovers / login items
@@ -272,7 +279,7 @@
 # Older versions: see git log
 #   10. Dry-run mode (-n flag)
 #   11. Network check with multiple endpoints
-#   12. brew --greedy instead of --force
+#   12. brew --greedy only on --deep (daily: no Word/WhatsApp hang)
 #   13. Config file (~/.meister/config)
 #   14. Logfile moved to ~/.meister/meister.log
 #   15. ClamAV: better exclude patterns
@@ -355,6 +362,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/profiles.sh" ] && . "$MEISTER_LIB_DIR/core/profiles.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/last_json.sh" ] && . "$MEISTER_LIB_DIR/core/last_json.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/brew_upgrade.sh" ] && . "$MEISTER_LIB_DIR/core/brew_upgrade.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
     # shellcheck source=/dev/null
@@ -498,9 +507,9 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO "
-    _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
-    _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS "
+    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
+    _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
+    _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
@@ -723,6 +732,116 @@ run_verbose() {
     done < "$tmpout"
     rm -f "$tmpout"
     return $rc
+}
+
+# Live brew: TTY so Homebrew is not pipe-buffered, plus an 8s heartbeat.
+# Sets RUN_VERBOSE_OUT to the capture file; caller removes it.
+# RUN_VERBOSE_LABEL is shown on heartbeats (e.g. "formula 2/9 ruby").
+run_verbose_live() {
+    if $DRY_RUN; then
+        log STEP "   [DRY-RUN] $*"
+        RUN_VERBOSE_OUT=""
+        return 0
+    fi
+    local tmpout hb_pid rc label
+    tmpout=$(mktemp)
+    RUN_VERBOSE_OUT="$tmpout"
+    label="${RUN_VERBOSE_LABEL:-brew}"
+    : > "${tmpout}.running"
+    (
+        local waited=0 last=""
+        while [ -f "${tmpout}.running" ]; do
+            sleep 8
+            [ -f "${tmpout}.running" ] || break
+            waited=$((waited + 8))
+            last=$(tr '\r' '\n' < "$tmpout" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-90)
+            if [ -n "$last" ]; then
+                log INFO "   … ${label} still running ${waited}s · last: ${last}"
+            else
+                log INFO "   … ${label} still running ${waited}s · waiting for first brew line (not stuck)"
+            fi
+        done
+    ) &
+    hb_pid=$!
+    # Prefer a real TTY so brew shows download progress instead of block-buffering.
+    if [ -t 1 ] && command -v script >/dev/null 2>&1; then
+        script -qF "$tmpout" "$@"
+        rc=$?
+    elif command -v stdbuf >/dev/null 2>&1; then
+        stdbuf -oL -eL "$@" 2>&1 | tee "$tmpout" | while IFS= read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] && log STEP "   $line"
+        done
+        rc=${PIPESTATUS[0]}
+    else
+        "$@" 2>&1 | tee "$tmpout" | while IFS= read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] && log STEP "   $line"
+        done
+        rc=${PIPESTATUS[0]}
+    fi
+    rm -f "${tmpout}.running"
+    kill "$hb_pid" 2>/dev/null || true
+    wait "$hb_pid" 2>/dev/null || true
+    return "$rc"
+}
+
+# Upgrade each formula/cask separately so the user always sees which package
+# is running. Combined capture stays in RUN_VERBOSE_OUT.
+# Usage: brew_upgrade_each formula|cask <timeout_sec> name [name...]
+brew_upgrade_each() {
+    local kind="$1"
+    local to="$2"
+    shift 2
+    local combined i n name start elapsed rc all_rc
+    combined=$(mktemp)
+    if [ "$#" -eq 0 ]; then
+        log INFO "   no ${kind}s to upgrade"
+        RUN_VERBOSE_OUT="$combined"
+        return 0
+    fi
+    n=$#
+    i=1
+    all_rc=0
+    log INFO "   ${n} ${kind}(s) — one by one. [i/n] START/DONE on every package. Heartbeat every 8s."
+    for name in "$@"; do
+        start=$(date +%s)
+        RUN_VERBOSE_LABEL="${kind} ${i}/${n} ${name}"
+        log INFO "   [${i}/${n}] START ${name}  (timeout ${to}s — brew output is live below)"
+        if [ "$kind" = formula ]; then
+            if command_exists timeout; then
+                run_verbose_live timeout "$to" brew upgrade --formula "$name"
+            else
+                run_verbose_live brew upgrade --formula "$name"
+            fi
+        elif [ "${BREW_UPGRADE_GREEDY:-false}" = true ]; then
+            if command_exists timeout; then
+                run_verbose_live timeout "$to" brew upgrade --cask --greedy "$name"
+            else
+                run_verbose_live brew upgrade --cask --greedy "$name"
+            fi
+        else
+            if command_exists timeout; then
+                run_verbose_live timeout "$to" brew upgrade --cask "$name"
+            else
+                run_verbose_live brew upgrade --cask "$name"
+            fi
+        fi
+        rc=$?
+        elapsed=$(( $(date +%s) - start ))
+        if [ -n "${RUN_VERBOSE_OUT:-}" ] && [ -f "$RUN_VERBOSE_OUT" ]; then
+            cat "$RUN_VERBOSE_OUT" >> "$combined" 2>/dev/null || true
+            rm -f "$RUN_VERBOSE_OUT"
+        fi
+        case "$rc" in
+            0)   log INFO "   [${i}/${n}] DONE  ${name}  (${elapsed}s)" ;;
+            124) log WARN "   [${i}/${n}] TIMEOUT ${name} after ${elapsed}s — continuing"
+                 all_rc=124 ;;
+            *)   log WARN "   [${i}/${n}] FAIL  ${name}  (${elapsed}s, exit ${rc}) — continuing"
+                 [ "$all_rc" -eq 0 ] && all_rc=$rc ;;
+        esac
+        i=$((i + 1))
+    done
+    RUN_VERBOSE_OUT="$combined"
+    return "$all_rc"
 }
 
 # Einfacher Dry-Run-Wrapper ohne Output-Streaming
@@ -1844,23 +1963,25 @@ module_homebrew() {
         log STEP "   ${pin_count} gepinnte formulae (bewusst skipped)"
     fi
 
-    # brew upgrade mit korrektem Exit-Code (capture to catch deprecated warnings)
-    log INFO "   brew upgrade..."
-    local formula_out; formula_out=$(mktemp)
+    # Formulae only, one by one — never a silent `brew upgrade` with no name.
+    local -a formula_names=()
+    if [ -n "$outdated_formulae" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && formula_names+=("${line%% *}")
+        done <<< "$outdated_formulae"
+    fi
+    local formula_out=""
     local rc=0
+    local pkg_to="${BREW_PKG_TIMEOUT_SEC:-180}"
     if $DRY_RUN; then
-        log STEP "   [DRY-RUN] brew upgrade"
+        log STEP "   [DRY-RUN] brew upgrade --formula ${formula_names[*]}"
+        formula_out=$(mktemp)
         : > "$formula_out"
     else
-        if command_exists timeout; then
-            timeout "${BREW_UPGRADE_TIMEOUT_SEC:-600}" brew upgrade > "$formula_out" 2>&1
-            rc=$?
-            [ $rc -eq 124 ] && log WARN "brew upgrade timed out after ${BREW_UPGRADE_TIMEOUT_SEC:-600}s"
-        else
-            brew upgrade > "$formula_out" 2>&1
-            rc=$?
-        fi
-        while IFS= read -r l; do [ -n "$l" ] && log STEP "   $l"; done < "$formula_out"
+        brew_upgrade_each formula "$pkg_to" "${formula_names[@]}"
+        rc=$?
+        formula_out="${RUN_VERBOSE_OUT:-}"
+        [ -z "$formula_out" ] && formula_out=$(mktemp)
     fi
     if [ $rc -eq 0 ]; then
         report_add SUCCESS "Homebrew formulae upgraded"
@@ -1893,7 +2014,7 @@ module_homebrew() {
             local pkg_name=$(echo "$pkg" | awk '{print $1}')
             log STEP "     Retry: $pkg_name..."
             local upgrade_out
-            upgrade_out=$(brew upgrade "$pkg_name" 2>&1)
+            upgrade_out=$(brew upgrade --formula "$pkg_name" 2>&1)
             if [ $? -eq 0 ]; then
                 log FIX "     $pkg_name successful updated"
                 report_add FIX "brew upgrade (Retry): $pkg_name"
@@ -1907,29 +2028,74 @@ module_homebrew() {
         done
     fi
 
-    # Outdated casks
+    # Outdated casks — greedy only on --deep (Word/WhatsApp hang unattended)
+    local greedy=false
+    if command -v brew_cask_greedy_wanted >/dev/null 2>&1 && brew_cask_greedy_wanted "${RUN_PROFILE:-auto}"; then
+        greedy=true
+    fi
     log INFO "   Checking outdated casks..."
-    local outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
+    local outdated_casks
+    if $greedy; then
+        outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
+    else
+        outdated_casks=$(brew outdated --cask 2>/dev/null)
+        log STEP "   greedy off (profile=${RUN_PROFILE:-auto}; use --deep or BREW_CASK_GREEDY=true)"
+    fi
+    local filtered_casks=""
     if [ -n "$outdated_casks" ]; then
-        local cask_count=$(( $(echo "$outdated_casks" | wc -l) ))
+        if command -v brew_filter_skipped_casks >/dev/null 2>&1; then
+            filtered_casks=$(printf '%s\n' "$outdated_casks" | brew_filter_skipped_casks)
+        else
+            filtered_casks=$(printf '%s\n' "$outdated_casks" | grep -vE '^(whatsapp|microsoft-word)([[:space:]]|$)')
+        fi
+        local cask_count=$(( $(printf '%s\n' "$outdated_casks" | grep -c . ) ))
         log INFO "   ${cask_count} outdated casks:"
-        echo "$outdated_casks" | while IFS= read -r line; do
-            log STEP "     - $line"
+        printf '%s\n' "$outdated_casks" | while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            cname="${line%% *}"
+            if command -v brew_cask_is_skipped >/dev/null 2>&1 && brew_cask_is_skipped "$cname"; then
+                log STEP "     - $line (skip: hang-prone; BREW_CASK_SKIP)"
+            else
+                log STEP "     - $line"
+            fi
         done
     else
         log INFO "   All casks current"
     fi
 
-    # Fix #12: --greedy instead of --force
-    log INFO "   Upgrading casks (--greedy)..."
-    local cask_out; cask_out=$(mktemp)
+    local cask_timeout="${BREW_CASK_TIMEOUT_SEC:-${BREW_PKG_TIMEOUT_SEC:-180}}"
+    local cask_out=""
+    local -a cask_names=()
+    if [ -n "$filtered_casks" ]; then
+        if command -v brew_cask_tokens >/dev/null 2>&1; then
+            while IFS= read -r tok; do
+                [ -n "$tok" ] && cask_names+=("$tok")
+            done <<< "$(printf '%s\n' "$filtered_casks" | brew_cask_tokens)"
+        else
+            while IFS= read -r line; do
+                [ -n "$line" ] && cask_names+=("${line%% *}")
+            done <<< "$filtered_casks"
+        fi
+    fi
+    if $greedy; then
+        log INFO "   Casks (--greedy, ${cask_timeout}s each)..."
+        BREW_UPGRADE_GREEDY=true
+    else
+        log INFO "   Casks (${cask_timeout}s each, greedy off)..."
+        BREW_UPGRADE_GREEDY=false
+    fi
     if $DRY_RUN; then
-        log STEP "   [DRY-RUN] brew upgrade --cask --greedy"
+        log STEP "   [DRY-RUN] brew upgrade --cask ${greedy:+--greedy} ${cask_names[*]}"
+        cask_out=$(mktemp)
         : > "$cask_out"
     else
-        brew upgrade --cask --greedy > "$cask_out" 2>&1
-        while IFS= read -r l; do [ -n "$l" ] && log STEP "   $l"; done < "$cask_out"
+        brew_upgrade_each cask "$cask_timeout" "${cask_names[@]}"
+        local cask_rc=$?
+        [ "$cask_rc" -eq 124 ] && log WARN "one or more casks timed out after ${cask_timeout}s"
+        cask_out="${RUN_VERBOSE_OUT:-}"
+        [ -z "$cask_out" ] && cask_out=$(mktemp)
     fi
+    BREW_UPGRADE_GREEDY=false
 
     # Fix #150: Auto-heal cask errors that block batch upgrade
     local missing_src stale_src
@@ -1957,7 +2123,12 @@ module_homebrew() {
     rm -f "$cask_out"
 
     # Fix #142: Post-Upgrade Cask-Verifikation — split deprecated/disabled from auto-update
-    local still_outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
+    local still_outdated_casks
+    if $greedy; then
+        still_outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
+    else
+        still_outdated_casks=$(brew outdated --cask 2>/dev/null)
+    fi
     if [ -n "$still_outdated_casks" ]; then
         local dead_casks="" live_casks=""
         while IFS= read -r line; do
@@ -9652,6 +9823,10 @@ Docs: docs/PRODUCT.md  docs/GUI.md
   BREW_UPDATE_MAX_AGE_SEC=43200   # skip brew update if fresher (0=always)
   BREW_UPDATE_TIMEOUT_SEC=300
   BREW_UPGRADE_TIMEOUT_SEC=600
+  BREW_CASK_TIMEOUT_SEC=180       # per-cask timeout
+  BREW_PKG_TIMEOUT_SEC=180        # per-formula timeout
+  BREW_CASK_GREEDY=false          # true = force --greedy on auto/quick
+  BREW_CASK_SKIP="whatsapp microsoft-word"
   FIND_TIMEOUT_SEC=60
   UNIVERSAL_UPDATES=false
   AI_TRACE=true|false
