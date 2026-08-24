@@ -140,7 +140,8 @@ Shared: modules, autofix catalog, profiles, `~/.meister/`.
 Every run: **Autofix first**, then Healer, then modules (AI-Heal on failures; default suggest-only since v6.12).
 
 LaunchAgents (install: `meisterSiri -I`):
-- Daily 09:15 `meisterSiri --quick -q`
+- Daily 09:15 `meisterSiri --auto -q`
 - Sunday 10:30 `meisterSiri --deep -q`
+- Retires legacy `com.meister.maintenance` (old meister2026.sh)
 
 Ollama model override: `MEISTER_OLLAMA_MODEL=...` in `~/.meister/config`.

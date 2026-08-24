@@ -4,7 +4,13 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.19
+# Version: 6.20
+# NEW in v6.20 — close daily-runner loops (MeisterSiri is the product):
+#  - Git: GIT_AUTO_PUSH=false stops Autofix push (not only the Git module);
+#    .meister-nopush / git config meister.nopush honored in Autofix
+#  - AufRaum: _Inbox WARN runs apply --dry (live only if AUFRAUM_APPLY=true)
+#  - LaunchAgent -I: daily meisterSiri --auto -q + weekly --deep -q;
+#    retires legacy com.meister.maintenance (meister2026.sh)
 # NEW in v6.19 — brew upgrade no longer looks frozen / hangs on GUI casks:
 #  - brew upgrade --formula only (bare `brew upgrade` also upgrades casks)
 #  - one package at a time with [i/n] START/DONE + 8s heartbeat (never a dead line)
@@ -365,6 +371,12 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/brew_upgrade.sh" ] && . "$MEISTER_LIB_DIR/core/brew_upgrade.sh"
     # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/git_push_policy.sh" ] && . "$MEISTER_LIB_DIR/core/git_push_policy.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/aufraum_hook.sh" ] && . "$MEISTER_LIB_DIR/core/aufraum_hook.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/launchagent_keepcurrent.sh" ] && . "$MEISTER_LIB_DIR/core/launchagent_keepcurrent.sh"
+    # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
@@ -471,6 +483,8 @@ SELFHEAL_PERF_AUTO=true            # Auto-apply performance optimizations
 
 # Git Repo Management (via -G Flag enabled)
 GIT_AUTO_PUSH=false                         # enable in config if wanted
+AUTOFIX_GIT_PUSH=true                       # Autofix push still requires GIT_AUTO_PUSH=true
+AUFRAUM_APPLY=false                         # Inbox: dry-run only unless true
 GIT_REPO_SEARCH_PATHS="$HOME/Documents $HOME/Developer"  # Search paths for repos
 GIT_REPO_MAXDEPTH=5                         # Max depth for repo search
 # GIT_BACKUP_DIR/RETENTION/EXCLUDE removed (v0.09) - GitHub is the backup
@@ -507,9 +521,9 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
+    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH AUFRAUM_APPLY DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
     _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
-    _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP "
+    _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP AUFRAUM_OPERATOR "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
@@ -5422,6 +5436,9 @@ module_docs_order() {
         unsorted=$(find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' ')
         if [ "${unsorted:-0}" -gt 0 ]; then
             log WARN "   _Inbox: ${unsorted} unsorted files"
+            if command -v aufraum_hook_inbox >/dev/null 2>&1; then
+                aufraum_hook_inbox "$inbox" "$unsorted"
+            fi
             if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
                 local days="${AUTOFIX_INBOX_DAYS:-14}"
                 local arch="$inbox/_Archive/$(date +%Y-%m)"
@@ -6179,13 +6196,15 @@ install_launchagent() {
       <key>Minute</key><integer>${minute}</integer>
     </dict>"
         fi
-        # args_line is space-separated extra args after script
-        local args_xml="<string>${script_path}</string>"
-        for a in $args_line; do
-            args_xml="${args_xml}
+        if command -v keepcurrent_plist_xml >/dev/null 2>&1; then
+            keepcurrent_plist_xml "$label" "$script_path" "$args_line" "$hour" "$minute" "$weekday" > "$plist_path"
+        else
+            local args_xml="<string>${script_path}</string>"
+            for a in $args_line; do
+                args_xml="${args_xml}
         <string>${a}</string>"
-        done
-        cat > "$plist_path" << PLISTEOF
+            done
+            cat > "$plist_path" << PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -6208,6 +6227,7 @@ install_launchagent() {
 </dict>
 </plist>
 PLISTEOF
+        fi
         launchctl bootstrap "gui/$(id -u)" "$plist_path" 2>/dev/null             || launchctl load "$plist_path" 2>/dev/null || true
         if launchctl list 2>/dev/null | grep -q "$label"; then
             log FIX "LaunchAgent $label loaded"
@@ -6217,19 +6237,39 @@ PLISTEOF
         return 1
     }
 
-    log INFO "Installing keep-current LaunchAgents (daily quick + weekly deep)..."
+    # Retire legacy weekly meister2026.sh agent
+    if command -v keepcurrent_legacy_labels >/dev/null 2>&1; then
+        local _uid _leg _lp
+        _uid=$(id -u)
+        while IFS= read -r _leg; do
+            [ -n "$_leg" ] || continue
+            launchctl bootout "gui/${_uid}/${_leg}" 2>/dev/null || true
+            _lp="$HOME/Library/LaunchAgents/${_leg}.plist"
+            if [ -e "$_lp" ] || [ -L "$_lp" ]; then
+                mv "$_lp" "${_lp}.retired-$(date +%Y%m%d)" 2>/dev/null || true
+                log STEP "   Retired legacy agent $_leg"
+            fi
+        done < <(keepcurrent_legacy_labels)
+    fi
+
+    log INFO "Installing keep-current LaunchAgents (daily auto + weekly deep)..."
     log STEP "   Script: $script_path"
     local ok=0
-    # Daily 09:15 local — quick upkeep + autofix
-    _install_one_agent "com.meister.keepcurrent.daily" "--quick -q" 9 15 "" && ok=$((ok+1))
+    local daily_label weekly_label daily_args weekly_args
+    daily_label=$(keepcurrent_daily_label 2>/dev/null || echo "com.meister.keepcurrent.daily")
+    weekly_label=$(keepcurrent_weekly_label 2>/dev/null || echo "com.meister.keepcurrent.weekly")
+    daily_args=$(keepcurrent_daily_args 2>/dev/null || echo "--auto -q")
+    weekly_args=$(keepcurrent_weekly_args 2>/dev/null || echo "--deep -q")
+    # Daily 09:15 local — auto profile
+    _install_one_agent "$daily_label" "$daily_args" 9 15 "" && ok=$((ok+1))
     # Sunday 10:30 — deep weekly
-    _install_one_agent "com.meister.keepcurrent.weekly" "--deep -q" 10 30 0 && ok=$((ok+1))
+    _install_one_agent "$weekly_label" "$weekly_args" 10 30 0 && ok=$((ok+1))
 
     echo ""
     if [ "$ok" -ge 1 ]; then
         echo -e "${GREEN}Keep-current agents installed (${ok}/2)${NC}"
-        echo "  Daily:  09:15  --quick -q   (autofix + lean modules)"
-        echo "  Weekly: Sun 10:30 --deep -q (full optimize)"
+        echo "  Daily:  09:15  ${daily_args}   (meisterSiri auto)"
+        echo "  Weekly: Sun 10:30 ${weekly_args} (full optimize)"
         echo "  Logs:   $MEISTER_DIR/launchagent.log"
         echo "  Remove: launchctl bootout gui/\$(id -u)/com.meister.keepcurrent.daily"
         echo "          launchctl bootout gui/\$(id -u)/com.meister.keepcurrent.weekly"
@@ -8517,8 +8557,8 @@ autofix_known_issues() {
         [ "$o" -eq 0 ] && log STEP "   No orphan LaunchDaemons"
     fi
 
-    # 4) Unpushed git (clean trees only)
-    if [ "${AUTOFIX_GIT_PUSH:-true}" = "true" ]; then
+    # 4) Unpushed git (clean trees only) — GIT_AUTO_PUSH is the master switch
+    if command -v git_push_enabled >/dev/null 2>&1 && git_push_enabled; then
         log HEAL "Git: push unpushed commits (clean repos only)..."
         local repo_cache="$MEISTER_DIR/git_repos.cache"
         local pushed=0 dirty_skip=0
@@ -8549,6 +8589,10 @@ autofix_known_issues() {
             local ahead
             ahead=$(timeout 5 git -C "$repo_dir" rev-list --count "@{u}..HEAD" 2>/dev/null) || ahead=0
             [ "${ahead:-0}" -gt 0 ] 2>/dev/null || continue
+            if command -v git_repo_may_push >/dev/null 2>&1 && ! git_repo_may_push "$repo_dir"; then
+                log STEP "   skip nopush: $repo_name"
+                continue
+            fi
             if $DRY_RUN; then
                 log STEP "   [DRY-RUN] would push $repo_name ($ahead commits)"
                 continue
@@ -8564,6 +8608,8 @@ autofix_known_issues() {
         done < "$list"
         rm -f "$list"
         log STEP "   git: pushed=$pushed dirty_skipped=$dirty_skip"
+    else
+        log STEP "   Git push skipped (GIT_AUTO_PUSH=${GIT_AUTO_PUSH:-false})"
     fi
 
     # 5) Time Machine — cannot invent a disk; open Settings

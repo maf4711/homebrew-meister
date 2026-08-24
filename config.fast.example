@@ -26,6 +26,11 @@ SECURITY_TCC_AUDIT=false
 CLEAN_DOCKER=false
 SELFHEAL_GIT_AUTOCOMMIT=false
 GIT_AUTO_PUSH=false
+# Autofix git push is also gated by GIT_AUTO_PUSH (both must be true).
+# AUTOFIX_GIT_PUSH=true
+# AufRaum: _Inbox dry-run during docs-order. Live sort only if:
+# AUFRAUM_APPLY=false
+# AUFRAUM_OPERATOR=$HOME/.grok/skills/aufraum/scripts/aufraum.py
 
 # AI transparency (false = less terminal noise)
 # AI_TRACE=true
