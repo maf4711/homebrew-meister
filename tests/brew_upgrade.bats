@@ -74,3 +74,23 @@ EOF
   grep -q 'DONE  \${name}' "$src"
   grep -q 'still running' "$src"
 }
+
+@test "Fix #151: sudo is pre-authed before cask upgrade so root-owned apps don't hard-fail" {
+  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  # ensure_sudo call must appear before brew_upgrade_each cask, not after
+  before_line=$(grep -n 'ensure_sudo "brew cask upgrade"' "$src" | head -1 | cut -d: -f1)
+  each_line=$(grep -n 'brew_upgrade_each cask' "$src" | head -1 | cut -d: -f1)
+  [ -n "$before_line" ]
+  [ -n "$each_line" ]
+  [ "$before_line" -lt "$each_line" ]
+}
+
+@test "Fix #151: cask reinstall retry (auto-heal) also pre-auths sudo" {
+  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  grep -q 'ensure_sudo "cask reinstall: \$name"' "$src"
+}
+
+@test "Fix #151: missing sudo ticket does not abort the run (warn + continue)" {
+  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  grep -q 'No sudo ticket — casks needing admin rights' "$src"
+}
