@@ -4,7 +4,14 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.20
+# Version: 6.21
+# NEW in v6.21 — sudo pre-auth for root-owned cask upgrades:
+#  - Fix #151: brew's internal `sudo touch` for root-owned casks (Claude,
+#    WhatsApp, Tailscale, ...) failed hard ("a terminal is required to read
+#    the password") because no ticket was cached before the cask loop ran.
+#    ensure_sudo (Touch ID when available) now pre-auths once before cask
+#    upgrades and again before the Fix #150 auto-heal reinstall retry.
+#    No TTY (LaunchAgent runs) → clean WARN + skip, no raw brew/sudo dump.
 # NEW in v6.20 — close daily-runner loops (Meister is the product):
 #  - Git: GIT_AUTO_PUSH=false stops Autofix push (not only the Git module);
 #    .meister-nopush / git config meister.nopush honored in Autofix
@@ -2082,6 +2089,15 @@ module_homebrew() {
         cask_out=$(mktemp)
         : > "$cask_out"
     else
+        # Fix #151: root-owned casks (Claude, WhatsApp, Tailscale, ...) make brew
+        # shell out to `sudo touch` internally. Without a live ticket that dies
+        # with "a terminal is required to read the password" — pre-auth once
+        # (Touch ID when available) so the upgrade proceeds silently. No-op when
+        # there's no TTY (LaunchAgent runs); those casks are picked up next
+        # interactive run instead of dumping raw brew/sudo errors into the log.
+        if [ "${#cask_names[@]}" -gt 0 ] && command -v ensure_sudo >/dev/null 2>&1; then
+            ensure_sudo "brew cask upgrade" 2>/dev/null || log WARN "   No sudo ticket — casks needing admin rights (root-owned apps) will be skipped this run"
+        fi
         brew_upgrade_each cask "$cask_timeout" "${cask_names[@]}"
         local cask_rc=$?
         [ "$cask_rc" -eq 124 ] && log WARN "one or more casks timed out after ${cask_timeout}s"
@@ -2107,8 +2123,11 @@ module_homebrew() {
         done
         for name in $missing_src $stale_src; do
             log STEP "     $name: brew reinstall --cask --force"
-            if ! $DRY_RUN && brew reinstall --cask --force "$name" >/dev/null 2>&1; then
-                healed=$((healed + 1))
+            if ! $DRY_RUN; then
+                command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null
+                if brew reinstall --cask --force "$name" >/dev/null 2>&1; then
+                    healed=$((healed + 1))
+                fi
             fi
         done
         [ "$healed" -gt 0 ] && report_add FIX "Auto-healed ${healed} broken cask(s)"
