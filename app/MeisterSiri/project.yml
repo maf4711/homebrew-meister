@@ -1,6 +1,7 @@
 name: MeisterSiri
 options:
   bundleIdPrefix: com.maf4711
+  developmentLanguage: de
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -44,6 +45,18 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
         NSSupportsAutomaticGraphicsSwitching: true
+  MeisterSiriTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: MeisterSiri
+    settings:
+      base:
+        PRODUCT_NAME: MeisterSiriTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.maf4711.meistersiri.tests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   MeisterSiri:
     build:
@@ -51,3 +64,10 @@ schemes:
         MeisterSiri: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - name: MeisterSiriTests
+          parallelizable: false
+      environmentVariables:
+        MEISTER_DISABLE_STARTUP_CHECKS: '1'

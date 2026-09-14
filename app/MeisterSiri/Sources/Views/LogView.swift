@@ -9,7 +9,7 @@ struct LogView: View {
                 PageHeader(
                     title: "Protokoll",
                     subtitle: app.runner.isRunning
-                        ? "Lauf aktiv — Ausgabe live"
+                        ? (app.runner.isCancelling ? "Abbruch läuft — warte auf Prozessende" : "Lauf aktiv — Ausgabe live")
                         : "Letzte meisterSiri-Ausgabe",
                     systemImage: "doc.text.fill"
                 )
@@ -27,6 +27,7 @@ struct LogView: View {
                         .background(Capsule().fill(code == 0 ? Color.green.opacity(0.2) : Color.orange.opacity(0.25)))
                 }
                 Spacer()
+                Button("Ergebnisse") { app.selection = .dashboard }
                 Button("Leeren") { app.runner.liveOutput = "" }
                     .disabled(app.runner.isRunning)
                 Button("Kopieren") {
@@ -35,6 +36,7 @@ struct LogView: View {
                 }
                 if app.runner.isRunning {
                     Button("Stop", role: .destructive) { app.runner.cancel() }
+                        .disabled(app.runner.isCancelling)
                 }
             }
             .padding(.horizontal, 24)

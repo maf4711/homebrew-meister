@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 struct StatusRow: Identifiable {
-    let id = UUID()
+    var id: String { label }
     let label: String
     let value: String
     let ok: Bool?
@@ -10,97 +10,101 @@ struct StatusRow: Identifiable {
 
 @MainActor
 final class SystemStatus: ObservableObject {
+    typealias Probe = @Sendable (String, [String]) async -> ExecutionResult
     @Published var rows: [StatusRow] = []
-    @Published var score: String = "—"
-    @Published var cliVersion: String = "—"
-    @Published var cliPath: String = "—"
-    @Published var disk: String = "—"
+    @Published var score = "—"
+    @Published var cliVersion = "—"
+    @Published var cliPath = "—"
+    @Published var disk = "—"
     @Published var lastRefresh = Date()
+    @Published private(set) var isRefreshing = false
+
+    private var refreshTask: Task<Void, Never>?
+    private let probe: Probe
+    private let historyPath: String
+
+    init(historyPath: String = NSHomeDirectory() + "/.meister/history.log",
+         probe: @escaping Probe = { executable, args in
+             await ProcessExecution().run(executable: executable, arguments: args, timeout: 5)
+         }) {
+        self.historyPath = historyPath
+        self.probe = probe
+    }
 
     func refresh(using runner: CLIRunner) {
-        cliPath = runner.cliPath ?? "nicht gefunden"
-        if let cli = runner.cliPath {
-            let v = runner.runSync(arguments: ["--version"], timeout: 5)
-            cliVersion = v.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            _ = cli
+        guard refreshTask == nil else { return }
+        isRefreshing = true
+        let path = runner.cliPath
+        let probe = self.probe, historyPath = self.historyPath
+        refreshTask = Task { [weak self] in
+            async let df = probe("/bin/df", ["-h", "/"])
+            async let sip = probe("/usr/bin/csrutil", ["status"])
+            async let fv = probe("/usr/bin/fdesetup", ["status"])
+            // -N checks the ticket without extending its lifetime.
+            async let sudo = probe("/usr/bin/sudo", ["-n", "-N", "-v"])
+            let files = Task.detached { Self.readStatusFiles(cliPath: path, historyPath: historyPath) }
+            let values = await (df, sip, fv, sudo, files.value)
+            guard let self else { return }
+            self.cliPath = path ?? "nicht gefunden"
+            self.cliVersion = values.4.version
+            self.score = values.4.score
+            self.disk = Self.diskDescription(values.0)
+            let sipOn = values.1.code == 0 ? values.1.output.lowercased().contains("enabled") : nil
+            let fvOn = values.2.code == 0 ? values.2.output.lowercased().contains("filevault is on") : nil
+            self.rows = [
+                StatusRow(label: "CLI", value: self.cliVersion, ok: path != nil),
+                StatusRow(label: "Pfad", value: self.cliPath, ok: path != nil),
+                StatusRow(label: "Score", value: self.score, ok: nil),
+                StatusRow(label: "Disk", value: self.disk, ok: nil),
+                StatusRow(label: "SIP", value: Self.statusText(values.1), ok: sipOn),
+                StatusRow(label: "FileVault", value: Self.statusText(values.2), ok: fvOn),
+                StatusRow(label: "Sudo-Ticket", value: values.3.code == 0 ? "live" : "nicht verfügbar", ok: values.3.code == 0),
+                StatusRow(label: "Sudo share", value: values.4.sudoShare ? "zz-meister (2h)" : "default tty", ok: values.4.sudoShare),
+            ]
+            self.lastRefresh = Date()
+            self.isRefreshing = false
+            self.refreshTask = nil
         }
+    }
 
-        // Score from history
-        let hist = (NSHomeDirectory() as NSString).appendingPathComponent(".meister/history.log")
-        if let data = try? String(contentsOfFile: hist, encoding: .utf8),
-           let last = data.split(separator: "\n").last {
-            if let range = last.range(of: "SCORE:") {
-                let rest = last[range.upperBound...]
-                score = String(rest.prefix(while: { $0.isNumber })) + "/100"
-            }
-        }
+    private nonisolated static func statusText(_ result: ExecutionResult) -> String {
+        if result.timedOut { return "Zeitlimit erreicht" }
+        let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return output.isEmpty ? "Nicht verfügbar (Exit \(result.code))" : output
+    }
 
-        // Disk
-        let df = Process()
-        df.executableURL = URL(fileURLWithPath: "/bin/df")
-        df.arguments = ["-h", "/"]
-        let pipe = Pipe()
-        df.standardOutput = pipe
-        try? df.run()
-        df.waitUntilExit()
-        if let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) {
-            let lines = out.split(separator: "\n")
-            if lines.count >= 2 {
-                let parts = lines[1].split(separator: " ", omittingEmptySubsequences: true)
-                if parts.count >= 5 {
-                    disk = "\(parts[4]) used · \(parts[3]) free"
+    private nonisolated static func diskDescription(_ result: ExecutionResult) -> String {
+        guard result.code == 0 else { return "Nicht verfügbar" }
+        let lines = result.output.split(separator: "\n")
+        guard lines.count >= 2 else { return "Nicht verfügbar" }
+        let parts = lines[1].split(whereSeparator: { $0.isWhitespace })
+        guard parts.count >= 5 else { return "Nicht verfügbar" }
+        return "\(parts[4]) belegt · \(parts[3]) frei"
+    }
+
+    private nonisolated static func readStatusFiles(cliPath: String?, historyPath: String) -> (version: String, score: String, sudoShare: Bool) {
+        var score = "—"
+        if let file = FileHandle(forReadingAtPath: historyPath) {
+            defer { try? file.close() }
+            if let size = try? file.seekToEnd() {
+                try? file.seek(toOffset: size > 65_536 ? size - 65_536 : 0)
+                if let data = try? file.readToEnd(), let history = String(data: data, encoding: .utf8),
+                   let last = history.split(separator: "\n").last, let range = last.range(of: "SCORE:") {
+                    let digits = last[range.upperBound...].prefix(while: { $0.isNumber })
+                    if !digits.isEmpty { score = String(digits) + "/100" }
                 }
             }
         }
-
-        var r: [StatusRow] = []
-        r.append(StatusRow(label: "CLI", value: cliVersion, ok: cliVersion.contains("meisterSiri") || cliVersion.contains("meister")))
-        r.append(StatusRow(label: "Pfad", value: cliPath, ok: cliPath != "nicht gefunden"))
-        r.append(StatusRow(label: "Score", value: score, ok: nil))
-        r.append(StatusRow(label: "Disk", value: disk, ok: nil))
-
-        // SIP
-        let sip = shell("/usr/bin/csrutil", ["status"])
-        let sipOn = sip.lowercased().contains("enabled")
-        r.append(StatusRow(label: "SIP", value: sipOn ? "enabled" : sip.trimmingCharacters(in: .whitespacesAndNewlines), ok: sipOn))
-
-        // FileVault
-        let fv = shell("/usr/bin/fdesetup", ["status"])
-        let fvOn = fv.lowercased().contains("on")
-        r.append(StatusRow(label: "FileVault", value: fvOn ? "On" : "Off", ok: fvOn))
-
-        // Sudo ticket
-        let sudoOk = shell("/usr/bin/sudo", ["-n", "true"]).isEmpty && shellExit("/usr/bin/sudo", ["-n", "true"]) == 0
-        r.append(StatusRow(label: "Sudo-Ticket", value: sudoOk ? "live" : "abgelaufen", ok: sudoOk))
-
-        // zz-meister
-        let share = FileManager.default.fileExists(atPath: "/etc/sudoers.d/zz-meister")
-        r.append(StatusRow(label: "Sudo share", value: share ? "zz-meister (2h)" : "default tty", ok: share))
-
-        rows = r
-        lastRefresh = Date()
-    }
-
-    private func shell(_ path: String, _ args: [String]) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = args
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        p.standardError = pipe
-        try? p.run()
-        p.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    }
-
-    private func shellExit(_ path: String, _ args: [String]) -> Int32 {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = args
-        p.standardOutput = Pipe()
-        p.standardError = Pipe()
-        try? p.run()
-        p.waitUntilExit()
-        return p.terminationStatus
+        // Read the script constant: launching older CLIs for --version can run EXIT cleanup.
+        var version = cliPath == nil ? "nicht gefunden" : "Version nicht verfügbar"
+        if let cliPath, let file = FileHandle(forReadingAtPath: cliPath) {
+            defer { try? file.close() }
+            if let data = try? file.read(upToCount: 65_536), let script = String(data: data, encoding: .utf8),
+               let line = script.split(separator: "\n").first(where: { $0.hasPrefix("# Version:") }) {
+                let number = line.dropFirst(10).trimmingCharacters(in: .whitespaces)
+                version = "meisterSiri \(number)"
+            }
+        }
+        return (version, score, FileManager.default.fileExists(atPath: "/etc/sudoers.d/zz-meister"))
     }
 }

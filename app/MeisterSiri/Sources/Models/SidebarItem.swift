@@ -1,6 +1,7 @@
 import SwiftUI
 
 enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
+    case dashboard = "Ergebnisse"
     case maintenance = "Wartung"
     case cleaning = "Reinigung"
     case parameters = "Parameter"
@@ -13,6 +14,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
 
     var systemImage: String {
         switch self {
+        case .dashboard: return "chart.bar.doc.horizontal"
         case .maintenance: return "wrench.and.screwdriver.fill"
         case .cleaning: return "trash.fill"
         case .parameters: return "slider.horizontal.3"
@@ -25,6 +27,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
 
     var subtitle: String {
         switch self {
+        case .dashboard: return "Letzter Lauf & Veränderungen"
         case .maintenance: return "Quick / Deep / Profile"
         case .cleaning: return "Caches, Trash, RAM"
         case .parameters: return "OnyX-Style Tweaks"
