@@ -6,7 +6,13 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.21
+# Version: 6.22
+# NEW in v6.22 — verified results and safe desktop execution:
+#  - Persistent global GUI preview policy; full-profile previews are module plans.
+#  - Atomic run reports, archive, dashboard and read-only native Siri actions.
+#  - Async process output, cancellation, CLI compatibility checks and safe locks.
+#  - Learned repairs require matching failure/OS context and verified outcomes.
+#  - CLI behavioral gates plus native macOS tests and universal Release builds.
 # NEW in v6.21 — sudo pre-auth for root-owned cask upgrades:
 #  - Fix #151: brew's internal `sudo touch` for root-owned casks (Claude,
 #    WhatsApp, Tailscale, ...) failed hard ("a terminal is required to read

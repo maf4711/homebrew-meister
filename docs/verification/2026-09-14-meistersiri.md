@@ -1,9 +1,11 @@
 # MeisterSiri implementation verification — 2026-09-14
 
 All six approved improvements are implemented in the isolated branch
-`codex/meister-improvements-20260914`, based on `380b1af`. The source remains
-uncommitted for review. No release, remote workflow dispatch, installation into
-Applications/Homebrew, or real maintenance run was performed.
+`codex/meister-improvements-20260914`, based on `380b1af`. At the end of the
+implementation gate the source was uncommitted for review. That gate performed
+no release, remote workflow dispatch, installation into Applications/Homebrew,
+or real maintenance run. The subsequent user request `cprt` separately authorized
+commit, integration, publication, local installation and TestFlight distribution.
 
 ## Delivered behavior
 
