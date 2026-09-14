@@ -99,8 +99,9 @@ final class ExecutionRunnerTests: XCTestCase {
     }
 
     func testEscapedDescendantCannotHoldOutputDrainForever() async throws {
-        let start = Date()
-        let result = await ProcessExecution().run(executable: "/usr/bin/python3", arguments: ["-c", """
+        let ready = expectation(description: "escaped child holds the output pipe")
+        let run = Task {
+            await ProcessExecution().run(executable: "/usr/bin/python3", arguments: ["-c", """
         import os, time
         child = os.fork()
         if child == 0:
@@ -109,7 +110,15 @@ final class ExecutionRunnerTests: XCTestCase {
             time.sleep(30)
             os._exit(0)
         time.sleep(0.1)
-        """], timeout: 5)
+        """], timeout: 15) { text in
+                if text.contains("ESCAPED:") { ready.fulfill() }
+            }
+        }
+        // Measure the bounded drain after the child exists. A cold Python/Xcode
+        // launcher on CI is setup time, not time spent waiting for pipe EOF.
+        await fulfillment(of: [ready], timeout: 10)
+        let start = Date()
+        let result = await run.value
         let line = try XCTUnwrap(result.output.split(separator: "\n").first { $0.hasPrefix("ESCAPED:") })
         let child = try XCTUnwrap(Int32(line.dropFirst(8)))
         defer { kill(child, SIGKILL) }
