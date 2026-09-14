@@ -26,7 +26,10 @@ setup() {
 }
 
 @test "JSON escapes strings and archives identical atomic reports" {
-  REPORT_FIXED=($'fixed "name"\\path\nnext\tline\001')
+  # Bash 3.2 duplicates a trailing octal escape in an ANSI-C array literal.
+  # Build the scalar first so the fixture has the same bytes on every shell.
+  local fixed_text=$'fixed "name"\\path\nnext\tline\001'
+  REPORT_FIXED=("$fixed_text")
   REPORT_WARNINGS=($'warning\rline')
   REPORT_ERRORS=()
   REPORT_WOULD_FIX=()
@@ -37,7 +40,7 @@ setup() {
   python3 - "$MEISTER_DIR" <<'PY'
 import json, pathlib, sys
 p=pathlib.Path(sys.argv[1]); r=json.loads((p/'last.json').read_text())
-assert r['fixes']==['fixed "name"\\path\nnext\tline\x01']
+assert r['fixes']==['fixed "name"\\path\nnext\tline\x01'], repr(r['fixes'])
 assert r['warnings']==['warning\rline']
 assert r['profile']=='quick"\nprofile'
 assert r['verified_repair_count']==1
@@ -95,4 +98,32 @@ import json,sys
 assert json.load(open(sys.argv[1]))['status']==sys.argv[2]
 PY
   done
+}
+
+@test "report serialization round-trips control characters on available Bash versions" {
+  python3 - "$BATS_TEST_DIRNAME/../lib/core/last_json.sh" "$BATS_TEST_TMPDIR" <<'PYCODE'
+import json, os, pathlib, shutil, subprocess, sys
+library=pathlib.Path(sys.argv[1]).resolve()
+shells=[]
+for candidate in ['/bin/bash',shutil.which('bash'),'/opt/homebrew/bin/bash','/usr/local/bin/bash']:
+    if candidate and pathlib.Path(candidate).is_file():
+        resolved=str(pathlib.Path(candidate).resolve())
+        if resolved not in shells:
+            shells.append(resolved)
+payload=''.join(chr(code) for code in range(1,32))+' "quote" \\path & Straße 🍏'
+script='''source "$1"
+REPORT_FIXED=("$2")
+REPORT_WARNINGS=("$3")
+write_last_json 90 1 1 1 0 0 1 quick test
+'''
+for index,shell in enumerate(shells):
+    state=pathlib.Path(sys.argv[2])/f'shell-{index}'
+    process=subprocess.run([shell,'-c',script,'fixture',str(library),payload,'warning\rline'],
+        env={**os.environ,'MEISTER_DIR':str(state)},capture_output=True,text=True,timeout=15)
+    assert process.returncode==0,(shell,process.stderr)
+    report=json.loads((state/'last.json').read_text())
+    assert report['fixes']==[payload],(shell,repr(report['fixes']))
+    assert report['warnings']==['warning\rline'],(shell,repr(report['warnings']))
+    assert (state/'runs'/f"{report['run_id']}.json").read_bytes()==(state/'last.json').read_bytes()
+PYCODE
 }

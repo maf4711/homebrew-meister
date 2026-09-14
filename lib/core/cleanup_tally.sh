@@ -26,7 +26,7 @@ cleanup_find_delete() {
             if [ "${DRY_RUN:-false}" = "true" ]; then
                 continue
             fi
-            metadata=$(stat -f '%b %l' "$f" 2>/dev/null) || metadata=$(stat -c '%b %h' "$f" 2>/dev/null) || metadata=''
+            metadata=$(stat -c '%b %h' "$f" 2>/dev/null) || metadata=$(stat -f '%b %l' "$f" 2>/dev/null) || metadata=''
             read -r blocks links <<< "$metadata"
             if [ -f "$f" ] && rm -f "$f" 2>/dev/null && [ ! -e "$f" ]; then
                 CLEANUP_REMOVED=$((CLEANUP_REMOVED + 1))

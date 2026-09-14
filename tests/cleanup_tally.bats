@@ -9,7 +9,9 @@ setup() {
 
 @test "measures allocated bytes only after successful single-link deletion" {
   printf 'data to allocate a block\n' > "$dir/delete.me"
-  blocks=$(stat -f %b "$dir/delete.me" 2>/dev/null || stat -c %b "$dir/delete.me")
+  # Failed GNU `stat -f` still prints filesystem data; keep fallback output
+  # separate from the successful byte-count command substitution.
+  blocks=$(stat -c %b "$dir/delete.me" 2>/dev/null) || blocks=$(stat -f %b "$dir/delete.me")
   cleanup_find_delete '*.me' "$dir"
   [ "$CLEANUP_FOUND" = 1 ] && [ "$CLEANUP_REMOVED" = 1 ]
   [ "$FREED_BYTES" = "$((blocks * 512))" ]
