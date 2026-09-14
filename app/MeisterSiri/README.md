@@ -81,7 +81,9 @@ bash scripts/check.sh      # ShellCheck, Syntax, Twin-Abgleich, Bats
 bash scripts/check-app.sh  # macOS-Unit-Tests und Release-Build
 ```
 
-Die App-Tests verwenden temporäre Berichte und harmlose Prozess-Fixtures.
+Die App-Tests benötigen außerdem GNU coreutils (`brew install coreutils`) für
+den Abbruchtest mit untergeordneten Prozessen. Sie verwenden temporäre Berichte
+und harmlose Prozess-Fixtures.
 Im Test-Host deaktiviert `MEISTER_DISABLE_STARTUP_CHECKS=1` automatische
 Systemabfragen. Der App-Check verwendet ausschließlich das macOS-Ziel.
 

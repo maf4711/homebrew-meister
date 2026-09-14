@@ -172,8 +172,11 @@ final class ExecutionRunnerTests: XCTestCase {
 
     @MainActor
     func testGUITimeoutWrapperKeepsChildInCancelledProcessGroup() async throws {
-        let timeoutPath = ["/opt/homebrew/bin/timeout", "/usr/local/bin/timeout"].first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let timeoutPath else { throw XCTSkip("GNU timeout not installed") }
+        let timeoutPath = try XCTUnwrap([
+            "/opt/homebrew/bin/timeout", "/opt/homebrew/bin/gtimeout",
+            "/usr/local/bin/timeout", "/usr/local/bin/gtimeout"
+        ].first { FileManager.default.isExecutableFile(atPath: $0) },
+            "Install GNU coreutils to verify timeout-child cancellation")
         let script = try ExecutionFixture("""
         if [ "$MEISTER_GUI_PROCESS_GROUP" = 1 ]; then
             timeout() { command \(timeoutPath) --foreground "$@"; }
