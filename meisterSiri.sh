@@ -4,7 +4,11 @@
 # meisterSiri.sh
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.21
+# Version: 6.22
+# NEW in v6.22 — macOS 27 Foundation Models for MeisterSiri:
+#  - AI-Heal: PrivateCloudComputeLanguageModel + reasoning, @Generable JSON
+#  - On-device fallback; tokenCount vs contextSize; session Instructions
+#  - Compile helper with Xcode 27 SDK (-parse-as-library)
 # NEW in v6.21 — sudo pre-auth for root-owned cask upgrades:
 #  - Fix #151: brew's internal `sudo touch` for root-owned casks (Claude,
 #    WhatsApp, Tailscale, ...) failed hard ("a terminal is required to read
@@ -1027,34 +1031,6 @@ trap 'stop_bw_monitor; cleanup' EXIT
 # RAM (the model is resident in the OS). The helper is lazy-compiled once and
 # cached in ~/.meister; recompiled only when its embedded source changes.
 
-# Embedded helper source, kept in a function so the heredoc stays verbatim.
-_fm_helper_source() {
-    cat <<'SWIFT_EOF'
-import FoundationModels
-import Foundation
-let args = Array(CommandLine.arguments.dropFirst())
-if args.first == "--check" {
-    if case .available = SystemLanguageModel.default.availability { exit(0) }
-    exit(1)
-}
-guard case .available = SystemLanguageModel.default.availability else {
-    FileHandle.standardError.write("unavailable\n".data(using: .utf8)!); exit(1)
-}
-let prompt = args.isEmpty
-    ? (String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? "")
-    : args.joined(separator: " ")
-let sem = DispatchSemaphore(value: 0)
-var code: Int32 = 0
-Task {
-    do { let r = try await LanguageModelSession().respond(to: prompt); print(r.content) }
-    catch { FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!); code = 1 }
-    sem.signal()
-}
-sem.wait()
-exit(code)
-SWIFT_EOF
-}
-
 # ===== AI TRACE (shared; must live outside TWIN:AI-BACKEND) =====
 ai_trace_box() {
     # NEVER write to stdout — callers use $(fm_query …).
@@ -1215,6 +1191,200 @@ ai_heal_box() {
 # ===== /AI USAGE AUDIT =====
 
 # ===== TWIN:AI-BACKEND (Apple Intelligence — meisterSiri) =====
+
+# Embedded helper source, kept in a function so the heredoc stays verbatim.
+# macOS 27: @main + @Generable need `swiftc -parse-as-library` and the 27 SDK.
+_fm_helper_source() {
+    cat <<'SWIFT_EOF'
+import FoundationModels
+import Foundation
+
+@Generable(description: "Safe one-line shell fix or no-fix")
+struct HealFix {
+    @Guide(description: "true when no safe reversible command exists")
+    var noFix: Bool
+    @Guide(description: "A single shell command with real paths from the error; empty when noFix is true")
+    var command: String?
+}
+
+@main
+struct MeisterFM {
+    static func main() async {
+        let args = Array(CommandLine.arguments.dropFirst())
+        var check = false
+        var modelFlag = "auto"
+        var purpose = "query"
+        var positional: [String] = []
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "--check" { check = true; i += 1; continue }
+            if a == "--model", i + 1 < args.count { modelFlag = args[i + 1]; i += 2; continue }
+            if a.hasPrefix("--model=") { modelFlag = String(a.dropFirst(8)); i += 1; continue }
+            if a == "--purpose", i + 1 < args.count { purpose = args[i + 1]; i += 2; continue }
+            if a.hasPrefix("--purpose=") { purpose = String(a.dropFirst(10)); i += 1; continue }
+            positional.append(a)
+            i += 1
+        }
+        if check {
+            exit(Self.isAvailable(modelFlag) ? 0 : 1)
+        }
+        let prompt: String
+        if positional.isEmpty {
+            prompt = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        } else {
+            prompt = positional.joined(separator: " ")
+        }
+        do {
+            try await Self.respond(prompt: prompt, purpose: purpose, modelFlag: modelFlag)
+        } catch {
+            FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+
+    static func isAvailable(_ modelFlag: String) -> Bool {
+        switch modelFlag {
+        case "pcc":
+            return PrivateCloudComputeLanguageModel().isAvailable
+        case "auto":
+            return SystemLanguageModel.default.isAvailable
+                || PrivateCloudComputeLanguageModel().isAvailable
+        default:
+            return SystemLanguageModel.default.isAvailable
+        }
+    }
+
+    static func instructions(for purpose: String) -> String {
+        switch purpose {
+        case "ai-heal", "heal":
+            return """
+            You are a macOS sysadmin for MeisterSiri. Propose at most one safe, reversible \
+            shell command that fixes the given module failure. Never sudo. Never rm -rf. \
+            Never placeholders like /path/to or <file>. Use only real absolute paths that \
+            appear in the error. If no such fix is possible, set noFix=true and leave command empty.
+            """
+        case "explain":
+            return "Explain the macOS warning or log line in plain German, one short paragraph, no commands."
+        case "today":
+            return "Give a terse German morning briefing for this Mac from the facts provided. No commands."
+        case "suggest":
+            return "Suggest a safe macOS fix in German. Do not claim you executed anything."
+        default:
+            return "You are MeisterSiri's on-device assistant. Be concise. Do not invent commands to run."
+        }
+    }
+
+    static func respond(prompt: String, purpose: String, modelFlag: String) async throws {
+        let heal = (purpose == "ai-heal" || purpose == "heal")
+        let wantPCC = heal && modelFlag != "system"
+        if wantPCC {
+            let pcc = PrivateCloudComputeLanguageModel()
+            let pccOK = pcc.isAvailable && !pcc.quotaUsage.isLimitReached
+            if pccOK {
+                do {
+                    try await generate(
+                        model: pcc, tag: "pcc", prompt: prompt, purpose: purpose,
+                        heal: heal, reasoning: .moderate
+                    )
+                    return
+                } catch {
+                    if modelFlag == "pcc" { throw error }
+                    FileHandle.standardError.write(Data("fm-meta fallback=system from=pcc\n".utf8))
+                }
+            } else if modelFlag == "pcc" {
+                FileHandle.standardError.write(Data("unavailable\n".utf8))
+                exit(1)
+            }
+        }
+        let sys = SystemLanguageModel.default
+        guard sys.isAvailable else {
+            FileHandle.standardError.write(Data("unavailable\n".utf8))
+            exit(1)
+        }
+        try await generate(
+            model: sys, tag: "system", prompt: prompt, purpose: purpose,
+            heal: heal, reasoning: nil
+        )
+    }
+
+    static func generate<M: LanguageModel>(
+        model: M,
+        tag: String,
+        prompt: String,
+        purpose: String,
+        heal: Bool,
+        reasoning: ContextOptions.ReasoningLevel?
+    ) async throws {
+        let instr = instructions(for: purpose)
+        var text = prompt
+        let sys = SystemLanguageModel.default
+        let ctx: Int
+        if tag == "pcc" {
+            ctx = (try? await PrivateCloudComputeLanguageModel().contextSize) ?? 32768
+        } else {
+            ctx = sys.contextSize
+        }
+        let budget = max(256, ctx - 512)
+        if sys.isAvailable {
+            for _ in 0..<8 {
+                let n = (try? await sys.tokenCount(for: text)) ?? (text.count / 4)
+                let i = (try? await sys.tokenCount(for: Instructions(instr))) ?? 0
+                if n + i <= budget { break }
+                let keep = max(400, text.count / 2)
+                if keep >= text.count { break }
+                text = "…\n" + String(text.suffix(keep))
+            }
+        }
+        let session = LanguageModelSession(model: model, instructions: instr)
+        let options = GenerationOptions(
+            samplingMode: heal ? .greedy : nil,
+            maximumResponseTokens: heal ? 128 : nil,
+            toolCallingMode: .disallowed
+        )
+        let contextOptions = ContextOptions(reasoningLevel: reasoning)
+        if heal {
+            let response = try await session.respond(
+                to: text,
+                generating: HealFix.self,
+                options: options,
+                contextOptions: contextOptions
+            )
+            emitMeta(tag: tag, purpose: purpose, usage: response.usage, ctx: ctx)
+            print(response.rawContent.jsonString)
+        } else {
+            let response = try await session.respond(
+                to: text,
+                options: options,
+                contextOptions: contextOptions
+            )
+            emitMeta(tag: tag, purpose: purpose, usage: response.usage, ctx: ctx)
+            print(response.content)
+        }
+    }
+
+    static func emitMeta(tag: String, purpose: String, usage: LanguageModelSession.Usage, ctx: Int) {
+        let line = "fm-meta model=\(tag) purpose=\(purpose) in=\(usage.input.totalTokenCount) out=\(usage.output.totalTokenCount) ctx=\(ctx)\n"
+        FileHandle.standardError.write(Data(line.utf8))
+    }
+}
+SWIFT_EOF
+}
+
+# Compile with the macOS 27 SDK (Xcode-beta or a 27+ selected Xcode).
+_fm_swiftc() {
+    if [ -d /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk ]; then
+        env DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc "$@"
+        return
+    fi
+    local ver
+    ver=$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)
+    case "$ver" in
+        27*|28*) xcrun swiftc "$@" ;;
+        *) return 1 ;;
+    esac
+}
+
 # Compile the helper if missing or its source changed. Sets FM_ENABLED=false on
 # any failure (no swiftc, compile error) so callers degrade gracefully.
 ensure_fm_helper() {
@@ -1224,8 +1394,9 @@ ensure_fm_helper() {
     local want; want=$(_fm_helper_source)
     if [ ! -x "$FM_HELPER" ] || [ "$(cat "$FM_HELPER_SRC" 2>/dev/null)" != "$want" ]; then
         printf '%s\n' "$want" > "$FM_HELPER_SRC"
-        if ! xcrun swiftc -O "$FM_HELPER_SRC" -o "$FM_HELPER" 2>/dev/null; then
-            log WARN "Apple Intelligence helper compile failed (needs Xcode CLT + macOS 26+)"
+        if ! _fm_swiftc -parse-as-library -O "$FM_HELPER_SRC" -o "$FM_HELPER" \
+                2>"$MEISTER_DIR/meister-fm.compile.log"; then
+            log WARN "Apple Intelligence helper compile failed (needs Xcode 27 SDK + macOS 27)"
             FM_ENABLED=false
             return 1
         fi
@@ -1276,8 +1447,15 @@ fm_query() {
         fi
     fi
     ai_usage_record "$purpose" "$mode" "request" "label=$label"
-    local resp
-    resp=$(printf '%s' "$prompt" | "$FM_HELPER" 2>/dev/null) || true
+    local resp _fm_err _fm_model
+    _fm_model="system"
+    [ "$purpose" = "ai-heal" ] && _fm_model="${FM_HEAL_MODEL:-auto}"
+    _fm_err=$(mktemp "${TMPDIR:-/tmp}/meister-fm.XXXXXX")
+    resp=$(printf '%s' "$prompt" | "$FM_HELPER" --purpose "$purpose" --model "$_fm_model" 2>"$_fm_err") || true
+    if grep -q '^fm-meta ' "$_fm_err" 2>/dev/null; then
+        ai_usage_record "$purpose" "$mode" "meta" "$(grep '^fm-meta ' "$_fm_err" | tail -1)"
+    fi
+    rm -f "$_fm_err"
     if [ -n "$resp" ]; then
         ai_usage_record "$purpose" "$mode" "response-ok" "chars=${#resp}"
         if [ "${AI_TRACE:-true}" = "true" ]; then
@@ -1308,6 +1486,14 @@ fm_query() {
 
 # AI-Heal allowlist — preferred implementation: lib/core/heal_guards.sh (v6.13)
 # Fallback inline if lib not loaded (brew partial install / missing tree).
+if ! command -v heal_parse_suggestion >/dev/null 2>&1; then
+heal_parse_suggestion() {
+    local raw="${1-}" t
+    t=$(printf '%s\n' "$raw" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
+    t="${t#"${t%%[![:space:]]*}"}"; t="${t%"${t##*[![:space:]]}"}"
+    [ -n "$t" ] && printf '%s\n' "$t" || printf '%s\n' "NO_FIX"
+}
+fi
 if ! command -v heal_command_allowed >/dev/null 2>&1; then
 FM_HEAL_ALLOW=" killall pkill qlmanage mdutil mdimport dscacheutil atsutil defaults launchctl lsregister tccutil purge fc-cache dot_clean "
 heal_command_allowed() {
@@ -1429,18 +1615,12 @@ ai_heal() {
     [ -n "$prev_attempt" ] && retry_hint="
 A previous suggestion was already executed and did NOT fix it: $prev_attempt
 Suggest a DIFFERENT approach."
-    local prompt="You are a macOS sysadmin. A maintenance script module '$module_name' has failed.
-Error: $error_output${retry_hint}
-Reply ONLY with a single shell command that fixes the problem. No explanation, no markdown, just the command.
-Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placeholders like /path/to or <file> — use only real absolute paths that appear in the error above. If no such fix is possible, reply with: NO_FIX"
+    local prompt="Module '$module_name' failed.
+Error: $error_output${retry_hint}"
 
-    # On-device model returns plain text (no JSON envelope to parse).
-    # fm_query always prints REQUEST+RESPONSE; head -3 only for executable line.
+    # Helper returns @Generable JSON (or legacy text). Parse to one command / NO_FIX.
     local ai_response
-    ai_response=$(fm_query "$prompt" "AI-Heal:$module_name" | head -3)
-
-    # Strip markdown fences/backticks (models wrap commands despite the prompt)
-    ai_response=$(printf '%s\n' "$ai_response" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
+    ai_response=$(heal_parse_suggestion "$(fm_query "$prompt" "AI-Heal:$module_name")")
 
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"

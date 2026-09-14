@@ -4,7 +4,11 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.21
+# Version: 6.22
+# NEW in v6.22 — macOS 27 Foundation Models for Meister:
+#  - AI-Heal: PrivateCloudComputeLanguageModel + reasoning, @Generable JSON
+#  - On-device fallback; tokenCount vs contextSize; session Instructions
+#  - Compile helper with Xcode 27 SDK (-parse-as-library)
 # NEW in v6.21 — sudo pre-auth for root-owned cask upgrades:
 #  - Fix #151: brew's internal `sudo touch` for root-owned casks (Claude,
 #    WhatsApp, Tailscale, ...) failed hard ("a terminal is required to read
@@ -1029,34 +1033,6 @@ trap 'stop_bw_monitor; cleanup' EXIT
 # RAM (the model is resident in the OS). The helper is lazy-compiled once and
 # cached in ~/.meister; recompiled only when its embedded source changes.
 
-# Embedded helper source, kept in a function so the heredoc stays verbatim.
-_fm_helper_source() {
-    cat <<'SWIFT_EOF'
-import FoundationModels
-import Foundation
-let args = Array(CommandLine.arguments.dropFirst())
-if args.first == "--check" {
-    if case .available = SystemLanguageModel.default.availability { exit(0) }
-    exit(1)
-}
-guard case .available = SystemLanguageModel.default.availability else {
-    FileHandle.standardError.write("unavailable\n".data(using: .utf8)!); exit(1)
-}
-let prompt = args.isEmpty
-    ? (String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? "")
-    : args.joined(separator: " ")
-let sem = DispatchSemaphore(value: 0)
-var code: Int32 = 0
-Task {
-    do { let r = try await LanguageModelSession().respond(to: prompt); print(r.content) }
-    catch { FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!); code = 1 }
-    sem.signal()
-}
-sem.wait()
-exit(code)
-SWIFT_EOF
-}
-
 # ===== AI TRACE (shared; must live outside TWIN:AI-BACKEND) =====
 ai_trace_box() {
     # NEVER write to stdout — callers use $(fm_query …).
@@ -1287,6 +1263,14 @@ fm_query() {
 
 # AI-Heal allowlist — preferred implementation: lib/core/heal_guards.sh (v6.13)
 # Fallback inline if lib not loaded (brew partial install / missing tree).
+if ! command -v heal_parse_suggestion >/dev/null 2>&1; then
+heal_parse_suggestion() {
+    local raw="${1-}" t
+    t=$(printf '%s\n' "$raw" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
+    t="${t#"${t%%[![:space:]]*}"}"; t="${t%"${t##*[![:space:]]}"}"
+    [ -n "$t" ] && printf '%s\n' "$t" || printf '%s\n' "NO_FIX"
+}
+fi
 if ! command -v heal_command_allowed >/dev/null 2>&1; then
 FM_HEAL_ALLOW=" killall pkill qlmanage mdutil mdimport dscacheutil atsutil defaults launchctl lsregister tccutil purge fc-cache dot_clean "
 heal_command_allowed() {
@@ -1408,18 +1392,12 @@ ai_heal() {
     [ -n "$prev_attempt" ] && retry_hint="
 A previous suggestion was already executed and did NOT fix it: $prev_attempt
 Suggest a DIFFERENT approach."
-    local prompt="You are a macOS sysadmin. A maintenance script module '$module_name' has failed.
-Error: $error_output${retry_hint}
-Reply ONLY with a single shell command that fixes the problem. No explanation, no markdown, just the command.
-Rules: only safe, reversible commands. Never sudo. Never rm -rf. Never placeholders like /path/to or <file> — use only real absolute paths that appear in the error above. If no such fix is possible, reply with: NO_FIX"
+    local prompt="Module '$module_name' failed.
+Error: $error_output${retry_hint}"
 
-    # On-device model returns plain text (no JSON envelope to parse).
-    # fm_query always prints REQUEST+RESPONSE; head -3 only for executable line.
+    # Helper returns @Generable JSON (or legacy text). Parse to one command / NO_FIX.
     local ai_response
-    ai_response=$(fm_query "$prompt" "AI-Heal:$module_name" | head -3)
-
-    # Strip markdown fences/backticks (models wrap commands despite the prompt)
-    ai_response=$(printf '%s\n' "$ai_response" | sed -e '/^```/d' -e 's/^`//; s/`$//' | head -3)
+    ai_response=$(heal_parse_suggestion "$(fm_query "$prompt" "AI-Heal:$module_name")")
 
     if [ -z "$ai_response" ] || echo "$ai_response" | grep -qE "KEIN_FIX|NO_FIX"; then
         log WARN "AI-Heal: No fix found"
