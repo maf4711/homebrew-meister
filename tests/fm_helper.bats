@@ -39,6 +39,13 @@ xcode27_swiftc() {
   extract_helper | grep -q -- '--model'
 }
 
+@test "helper source uses allowlisted ProposeFixTool" {
+  extract_helper | grep -q 'struct ProposeFixTool'
+  extract_helper | grep -q 'propose_fix'
+  extract_helper | grep -q 'toolCallingMode: heal ? .allowed'
+  extract_helper | grep -q 'ProposeFixTool()'
+}
+
 @test "ensure_fm_helper compiles with parse-as-library and Xcode 27 SDK" {
   grep -q 'parse-as-library' "$SIRI"
   grep -q 'Xcode-beta\|MacOSX27' "$SIRI"

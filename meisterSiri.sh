@@ -9,6 +9,7 @@
 #  - AI-Heal: PrivateCloudComputeLanguageModel + reasoning, @Generable JSON
 #  - On-device fallback; tokenCount vs contextSize; session Instructions
 #  - Compile helper with Xcode 27 SDK (-parse-as-library)
+#  - propose_fix Tool (allowlisted verbs) + brew/sudo sanitizer; 25s heal timeout
 # NEW in v6.21 — sudo pre-auth for root-owned cask upgrades:
 #  - Fix #151: brew's internal `sudo touch` for root-owned casks (Claude,
 #    WhatsApp, Tailscale, ...) failed hard ("a terminal is required to read
@@ -1207,6 +1208,38 @@ struct HealFix {
     var command: String?
 }
 
+struct ProposeFixTool: Tool {
+    static let verbs: Set<String> = [
+        "killall", "pkill", "qlmanage", "mdutil", "mdimport", "dscacheutil",
+        "atsutil", "defaults", "launchctl", "lsregister", "tccutil", "purge",
+        "fc-cache", "dot_clean"
+    ]
+    let name = "propose_fix"
+    let description = """
+    Propose exactly one allowlisted maintenance command. \
+    Allowed verbs: killall, pkill, qlmanage, mdutil, mdimport, dscacheutil, atsutil, defaults, launchctl, lsregister, tccutil, purge, fc-cache, dot_clean. \
+    Never brew, sudo, rm, curl, chmod, or placeholders. \
+    If no safe command exists, call this with noFix=true.
+    """
+    @Generable
+    struct Arguments {
+        var noFix: Bool
+        var verb: String
+        var arguments: String
+    }
+    func call(arguments: Arguments) async throws -> String {
+        if arguments.noFix { return "NO_FIX" }
+        let verb = arguments.verb.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rest = arguments.arguments.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.verbs.contains(verb) else { return "NO_FIX" }
+        let cmd = rest.isEmpty ? verb : "\(verb) \(rest)"
+        if cmd.range(of: #"[;&|><$`\\]|brew|sudo|\brm\b"#, options: .regularExpression) != nil {
+            return "NO_FIX"
+        }
+        return cmd
+    }
+}
+
 @main
 struct MeisterFM {
     static func main() async {
@@ -1259,10 +1292,10 @@ struct MeisterFM {
         switch purpose {
         case "ai-heal", "heal":
             return """
-            You are a macOS sysadmin for MeisterSiri. Propose at most one safe, reversible \
-            shell command that fixes the given module failure. Never sudo. Never rm -rf. \
-            Never placeholders like /path/to or <file>. Use only real absolute paths that \
-            appear in the error. If no such fix is possible, set noFix=true and leave command empty.
+            You are a macOS sysadmin for MeisterSiri. You MUST call propose_fix. \
+            Only allowlisted verbs: killall pkill qlmanage mdutil mdimport dscacheutil atsutil defaults launchctl lsregister tccutil purge fc-cache dot_clean. \
+            Never brew, sudo, rm, curl, or placeholders like /path/to. Use only real paths from the error. \
+            If no such fix exists, call propose_fix with noFix=true. Then set HealFix.noFix/command to match.
             """
         case "explain":
             return "Explain the macOS warning or log line in plain German, one short paragraph, no commands."
@@ -1336,11 +1369,12 @@ struct MeisterFM {
                 text = "…\n" + String(text.suffix(keep))
             }
         }
-        let session = LanguageModelSession(model: model, instructions: instr)
+        let tools: [any Tool] = heal ? [ProposeFixTool()] : []
+        let session = LanguageModelSession(model: model, tools: tools, instructions: instr)
         let options = GenerationOptions(
             samplingMode: heal ? .greedy : nil,
-            maximumResponseTokens: heal ? 128 : nil,
-            toolCallingMode: .disallowed
+            maximumResponseTokens: heal ? 256 : nil,
+            toolCallingMode: heal ? .allowed : .disallowed
         )
         let contextOptions = ContextOptions(reasoningLevel: reasoning)
         if heal {
@@ -1351,7 +1385,7 @@ struct MeisterFM {
                 contextOptions: contextOptions
             )
             emitMeta(tag: tag, purpose: purpose, usage: response.usage, ctx: ctx)
-            print(response.rawContent.jsonString)
+            print(Self.healJSON(response.content))
         } else {
             let response = try await session.respond(
                 to: text,
@@ -1366,6 +1400,16 @@ struct MeisterFM {
     static func emitMeta(tag: String, purpose: String, usage: LanguageModelSession.Usage, ctx: Int) {
         let line = "fm-meta model=\(tag) purpose=\(purpose) in=\(usage.input.totalTokenCount) out=\(usage.output.totalTokenCount) ctx=\(ctx)\n"
         FileHandle.standardError.write(Data(line.utf8))
+    }
+
+    static func healJSON(_ fix: HealFix) -> String {
+        let cmd = (fix.command ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let banned = cmd.range(of: #"\b(brew|sudo|curl|chmod|chown|rm)\b"#, options: .regularExpression) != nil
+        if fix.noFix || cmd.isEmpty || banned {
+            return #"{"noFix":true,"command":""}"#
+        }
+        let escaped = cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return "{\"noFix\":false,\"command\":\"\(escaped)\"}"
     }
 }
 SWIFT_EOF
@@ -1451,7 +1495,11 @@ fm_query() {
     _fm_model="system"
     [ "$purpose" = "ai-heal" ] && _fm_model="${FM_HEAL_MODEL:-auto}"
     _fm_err=$(mktemp "${TMPDIR:-/tmp}/meister-fm.XXXXXX")
-    resp=$(printf '%s' "$prompt" | "$FM_HELPER" --purpose "$purpose" --model "$_fm_model" 2>"$_fm_err") || true
+    if [ "$purpose" = "ai-heal" ] && command -v timeout >/dev/null 2>&1; then
+        resp=$(printf '%s' "$prompt" | timeout 25 "$FM_HELPER" --purpose "$purpose" --model "$_fm_model" 2>"$_fm_err") || true
+    else
+        resp=$(printf '%s' "$prompt" | "$FM_HELPER" --purpose "$purpose" --model "$_fm_model" 2>"$_fm_err") || true
+    fi
     if grep -q '^fm-meta ' "$_fm_err" 2>/dev/null; then
         ai_usage_record "$purpose" "$mode" "meta" "$(grep '^fm-meta ' "$_fm_err" | tail -1)"
     fi

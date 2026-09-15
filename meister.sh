@@ -9,6 +9,7 @@
 #  - AI-Heal: PrivateCloudComputeLanguageModel + reasoning, @Generable JSON
 #  - On-device fallback; tokenCount vs contextSize; session Instructions
 #  - Compile helper with Xcode 27 SDK (-parse-as-library)
+#  - propose_fix Tool (allowlisted verbs) + brew/sudo sanitizer; 25s heal timeout
 # NEW in v6.21 — sudo pre-auth for root-owned cask upgrades:
 #  - Fix #151: brew's internal `sudo touch` for root-owned casks (Claude,
 #    WhatsApp, Tailscale, ...) failed hard ("a terminal is required to read
