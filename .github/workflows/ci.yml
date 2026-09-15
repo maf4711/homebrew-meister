@@ -1,15 +1,44 @@
-# Fabrik Welle-1 hygiene skeleton (zero-cost template wave)
 name: ci
 on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meister-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  smoke:
+  cli:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - name: Presence smoke
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install CLI check tools
         run: |
-          test -f README.md -o -f README -o -f readme.md
-          echo "hygiene smoke ok"
+          sudo apt-get update
+          sudo apt-get install -y shellcheck bats python3
+      - name: CLI lint, syntax, twin parity and behavior tests
+        run: bash scripts/check.sh
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install native check tools
+        run: brew install xcodegen shellcheck bats-core coreutils
+      - name: CLI checks on macOS
+        run: bash scripts/check.sh
+      - name: Native unit tests and Release build
+        run: bash scripts/check-app.sh

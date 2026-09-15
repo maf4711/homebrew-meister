@@ -28,14 +28,15 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Circle()
-                            .fill(app.runner.isRunning ? Color.orange : Color.green)
+                            .fill(app.runner.isRunning || !app.runner.isExecutionReady ? Color.orange : Color.green)
                             .frame(width: 8, height: 8)
-                        Text(app.runner.isRunning ? "Läuft…" : "Bereit")
+                        Text(app.runner.isCancelling ? "Wird beendet…" : (app.runner.isRunning ? "Läuft…" : (app.runner.isExecutionReady ? "Bereit" : "CLI prüfen")))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
                         if app.runner.isRunning {
                             Button("Stop") { app.runner.cancel() }
+                                .disabled(app.runner.isCancelling)
                                 .buttonStyle(.borderless)
                                 .font(.caption)
                         }
@@ -44,6 +45,12 @@ struct ContentView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
+                    if !app.runner.isExecutionReady {
+                        Text(app.runner.executionMessage)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(12)
                 .background(.bar)
@@ -58,7 +65,7 @@ struct ContentView: View {
                 Toggle("Dry-Run", isOn: $app.dryRunDefault)
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    .help("Keine Änderungen schreiben (-n)")
+                    .help("Vorschau für unterstützte Aktionen; andere Änderungen werden gesperrt.")
                 Button {
                     app.refreshAll()
                 } label: {
@@ -67,12 +74,12 @@ struct ContentView: View {
                 .help("Status aktualisieren")
             }
         }
-        .onAppear { app.refreshAll() }
     }
 
     @ViewBuilder
     private var detail: some View {
         switch app.selection {
+        case .dashboard: DashboardView(store: app.reports)
         case .maintenance: MaintenanceView()
         case .cleaning: CleaningView()
         case .parameters: ParametersView()

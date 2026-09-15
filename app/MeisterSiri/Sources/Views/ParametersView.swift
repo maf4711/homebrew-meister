@@ -27,11 +27,12 @@ struct ParametersView: View {
                                 Toggle("", isOn: Binding(
                                     get: { item.isOn },
                                     set: { newVal in
-                                        app.tweaks.set(id: item.id, on: newVal, viaCLI: app.runner)
+                                        app.setTweak(id: item.id, on: newVal)
                                     }
                                 ))
                                 .labelsHidden()
                                 .toggleStyle(.switch)
+                                .disabled(app.runner.isRunning)
                             }
                             .padding(.vertical, 10)
                             .padding(.horizontal, 4)

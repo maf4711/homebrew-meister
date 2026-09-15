@@ -9,13 +9,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/meisterSiri.sh"
 DST="$ROOT/meister.sh"
 [ -f "$SRC" ] || { echo "missing $SRC" >&2; exit 1; }
+MODE="${1:-write}"
+case "$MODE" in
+  write|--check) ;;
+  *) echo "Usage: $0 [--check]" >&2; exit 2 ;;
+esac
 
-python3 - "$SRC" "$DST" <<'PY'
+python3 - "$SRC" "$DST" "$MODE" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 src, dst = Path(sys.argv[1]), Path(sys.argv[2])
+check_only = sys.argv[3] == "--check"
 t = src.read_text()
 if "log() {" not in t:
     raise SystemExit("source missing log() — refuse to sync")
@@ -141,7 +147,11 @@ t = t[: m.start()] + ollama + t[m.end() :]
 if "log() {" not in t:
     raise SystemExit("log() missing after inject")
 
-dst.write_text(t)
+if check_only:
+    if not dst.exists() or dst.read_text() != t:
+        raise SystemExit("FAIL: twins differ; run bash scripts/sync-twins.sh")
+else:
+    dst.write_text(t)
 print(f"OK: {dst.name} {len(t)} bytes (Ollama twin)")
 print("  log + autofix + ollama generate: OK")
 PY
@@ -153,6 +163,6 @@ if grep -E 'meisterSiri|MeisterSiri' "$DST" >/dev/null; then
   grep -nE 'meisterSiri|MeisterSiri' "$DST" | head
   exit 1
 fi
-"$SRC" --version
-"$DST" --version
+# Do not execute either maintenance CLI during synchronization or CI.
+# Syntax and generated-source equality are sufficient and have no host side effects.
 echo "DONE: meisterSiri=Apple · meister=Ollama"

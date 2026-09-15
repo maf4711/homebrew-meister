@@ -59,6 +59,7 @@ struct AutomationView: View {
     private func openConfig() {
         let path = NSHomeDirectory() + "/.meister/config"
         if !FileManager.default.fileExists(atPath: path) {
+            guard app.mayCreateConfiguration() else { return }
             try? FileManager.default.createDirectory(
                 atPath: NSHomeDirectory() + "/.meister",
                 withIntermediateDirectories: true

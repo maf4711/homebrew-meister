@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# Quality gate for P1: shellcheck + bats (no network)
+# Offline CLI quality gate. Missing tools are failures, never a green skip.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "=== shellcheck lib/core + lib/commands ==="
-if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh
-  echo "OK lib/"
-else
-  echo "WARN: shellcheck not installed — skip"
-fi
+for tool in shellcheck bats python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "ERROR: $tool is required. Install shellcheck, bats-core and python3 before running checks." >&2
+    exit 1
+  fi
+done
+
+echo "=== shellcheck ==="
+shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh
 
 echo "=== bash -n twins ==="
 bash -n meisterSiri.sh
 bash -n meister.sh
 echo "OK bash -n"
 
+echo "=== twin parity (read-only) ==="
+bash scripts/sync-twins.sh --check
+
 echo "=== bats ==="
-if command -v bats >/dev/null 2>&1; then
-  bats tests/
-else
-  echo "WARN: bats not installed — skip (install: brew install bats-core)"
-fi
+bats tests/
 
 echo "=== ALL CHECKS PASSED ==="

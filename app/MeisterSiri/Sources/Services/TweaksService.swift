@@ -61,17 +61,6 @@ final class TweaksService: ObservableObject {
         ]
     }
 
-    func set(id: String, on: Bool, viaCLI: CLIRunner) {
-        let mode = on ? "on" : "off"
-        // Prefer CLI so behavior stays identical to meisterSiri tweaks
-        let result = viaCLI.runSync(arguments: ["tweaks", id, mode], timeout: 15)
-        lastMessage = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if lastMessage.isEmpty {
-            lastMessage = "\(id) → \(mode) (exit \(result.code))"
-        }
-        refresh()
-    }
-
     // MARK: - defaults helpers
 
     private func boolDefault(_ domain: String?, _ key: String) -> Bool {
