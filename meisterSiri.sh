@@ -1442,18 +1442,23 @@ struct MeisterFM {
 SWIFT_EOF
 }
 
-# Compile with the macOS 27 SDK (Xcode-beta or a 27+ selected Xcode).
+# Compile with the macOS 27 SDK. Prefer the selected Xcode (GM) when its
+# SDK is 27+; Xcode.app then Xcode-beta only as fallback.
 _fm_swiftc() {
+    local ver
+    ver=$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)
+    case "$ver" in
+        27*|28*) xcrun swiftc "$@"; return ;;
+    esac
+    if [ -d /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk ]; then
+        env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swiftc "$@"
+        return
+    fi
     if [ -d /Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk ]; then
         env DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc "$@"
         return
     fi
-    local ver
-    ver=$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)
-    case "$ver" in
-        27*|28*) xcrun swiftc "$@" ;;
-        *) return 1 ;;
-    esac
+    return 1
 }
 
 # Compile the helper if missing or its source changed. Sets FM_ENABLED=false on

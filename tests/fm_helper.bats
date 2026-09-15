@@ -48,7 +48,17 @@ xcode27_swiftc() {
 
 @test "ensure_fm_helper compiles with parse-as-library and Xcode 27 SDK" {
   grep -q 'parse-as-library' "$SIRI"
-  grep -q 'Xcode-beta\|MacOSX27' "$SIRI"
+  grep -q 'MacOSX27' "$SIRI"
+}
+
+@test "fm swiftc prefers selected SDK 27 over Xcode-beta" {
+  awk '/^_fm_swiftc\(\)/,/^}/' "$SIRI" > "${TMPDIR:-/tmp}/fm-swiftc-fn.$$"
+  sdk=$(grep -n 'show-sdk-version' "${TMPDIR:-/tmp}/fm-swiftc-fn.$$" | head -1 | cut -d: -f1)
+  beta=$(grep -n 'Xcode-beta.app' "${TMPDIR:-/tmp}/fm-swiftc-fn.$$" | head -1 | cut -d: -f1)
+  [ -n "$sdk" ]
+  [ -n "$beta" ]
+  [ "$sdk" -lt "$beta" ]
+  rm -f "${TMPDIR:-/tmp}/fm-swiftc-fn.$$"
 }
 
 @test "helper compiles and --check --model system succeeds" {
