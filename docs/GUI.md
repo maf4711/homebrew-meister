@@ -17,13 +17,17 @@
 
 ## Cask
 
-`Casks/meister-mac.rb` currently installs legacy Meister.app.  
-Until MeisterSiri is notarized and casked, document:
+`Casks/meister-mac.rb` installs **MeisterSiri.app** (Developer ID + notarized zip
+on the GitHub release). Legacy `Meister.app` from meister-app is retired.
 
 ```bash
-# CLI
-brew tap maf4711/meister && brew install meister
+brew tap maf4711/meister
+brew install meister
+brew install --cask meister-mac
+```
 
-# GUI (from this repo)
-cd app/MeisterSiri && ./scripts/build.sh
+Local unsigned build (dev only):
+
+```bash
+cd app/MeisterSiri && ./scripts/build.sh --install
 ```

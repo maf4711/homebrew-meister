@@ -38,4 +38,22 @@ setup() {
   [ -z "${FREED_BYTES:-}" ]
 }
 
+@test "successful deletes increment verified repair count" {
+  VERIFIED_REPAIR_COUNT=0
+  printf data > "$dir/delete.me"
+  cleanup_find_delete '*.me' "$dir"
+  [ "$CLEANUP_REMOVED" = 1 ]
+  [ "$VERIFIED_REPAIR_COUNT" = 1 ]
+}
+
+@test "meister_record_freed_mb accumulates bytes except in preview" {
+  unset FREED_BYTES
+  meister_record_freed_mb 2
+  [ "$FREED_BYTES" = "$((2 * 1048576))" ]
+  [ "$FREED_BYTES_SCOPE" = measured_file_removals ]
+  DRY_RUN=true
+  meister_record_freed_mb 9
+  [ "$FREED_BYTES" = "$((2 * 1048576))" ]
+}
+
 teardown() { unset -f rm; }

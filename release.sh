@@ -46,7 +46,8 @@ echo ""
 echo "--- Step 1: Update repo ---"
 cd "$SCRIPT_DIR"
 git add meister.sh meisterSiri.sh tools/ Formula/ LICENSE .gitignore release.sh 2>/dev/null || true
-git add meister.sh meisterSiri.sh Formula/ release.sh scripts/ lib/ tests/ docs/ config.fast.example AGENTS.md 2>/dev/null || true
+git add meister.sh meisterSiri.sh Formula/ Casks/ release.sh scripts/ lib/ tests/ docs/ config.fast.example AGENTS.md 2>/dev/null || true
+git add app/MeisterSiri/scripts/build.sh app/MeisterSiri/project.yml 2>/dev/null || true
 # tools/ LICENSE may not always change
 git add tools/ LICENSE .gitignore 2>/dev/null || true
 if git diff --cached --quiet; then
@@ -71,24 +72,42 @@ if gh release view "v${VERSION}" -R "$REPO" &>/dev/null; then
     git tag -d "v${VERSION}" 2>/dev/null || true
 fi
 NOTES_FILE=$(mktemp)
-cat > "$NOTES_FILE" <<EOF
+if [ -f "$SCRIPT_DIR/docs/releases/${VERSION}.md" ]; then
+    cat "$SCRIPT_DIR/docs/releases/${VERSION}.md" > "$NOTES_FILE"
+else
+    cat > "$NOTES_FILE" <<EOF
 macOS Maintenance & Self-Healing Script v${VERSION}
-
-## What's new
-- meisterSiri: branded twin CLI (Apple Intelligence on-device), same modules as meister
-- Shared config/state: ~/.meister/
-- Installs both binaries: meister + meisterSiri
 
 ## Install / upgrade
 brew tap maf4711/meister
 brew update && brew reinstall meister
+brew reinstall --cask meister-mac
 EOF
+fi
 gh release create "v${VERSION}" -R "$REPO" \
     --target "$TARGET_SHA" \
     --title "meister v${VERSION}" \
     --notes-file "$NOTES_FILE"
 rm -f "$NOTES_FILE"
 echo "Release created at $TARGET_SHA: https://github.com/$REPO/releases/tag/v${VERSION}"
+
+APP_ZIP="$SCRIPT_DIR/app/MeisterSiri/dist/MeisterSiri-macOS.zip"
+CASK="$SCRIPT_DIR/Casks/meister-mac.rb"
+if [ -f "$APP_ZIP" ]; then
+    echo ""
+    echo "--- Step 2b: Upload MeisterSiri.app zip ---"
+    gh release upload "v${VERSION}" "$APP_ZIP" -R "$REPO" --clobber
+    CASK_SHA=$(shasum -a 256 "$APP_ZIP" | awk '{print $1}')
+    sed -i '' "s|version \".*\"|version \"${VERSION}\"|" "$CASK"
+    sed -i '' "s|sha256 \".*\"|sha256 \"${CASK_SHA}\"|" "$CASK"
+    git add "$CASK"
+    if git diff --cached --quiet; then
+        echo "Cask already current"
+    else
+        git commit -m "cask: MeisterSiri.app v${VERSION}"
+        git push origin main
+    fi
+fi
 
 # 3. Get SHA256 of tarball
 echo ""
@@ -141,11 +160,17 @@ CACHE_FILE=$(brew --cache meister 2>/dev/null || true)
 brew update
 # Reinstall from the tap so both meister + meisterSiri land in Cellar
 brew reinstall maf4711/meister/meister || brew reinstall meister
+if [ -f "$CASK" ]; then
+    brew reinstall --cask maf4711/meister/meister-mac || brew reinstall --cask meister-mac || true
+fi
 echo ""
 echo "Installed binaries:"
 which meister meisterSiri
 meister --version
 meisterSiri --version
+if [ -d /Applications/MeisterSiri.app ]; then
+    defaults read /Applications/MeisterSiri.app/Contents/Info CFBundleShortVersionString
+fi
 
 echo ""
 echo "=== Release v${VERSION} done! ==="

@@ -50,5 +50,22 @@ cleanup_find_delete() {
             fi
         )
     done
+    if [ "${DRY_RUN:-false}" != true ] && [ "${CLEANUP_REMOVED:-0}" -gt 0 ]; then
+        : "${VERIFIED_REPAIR_COUNT:=0}"
+        VERIFIED_REPAIR_COUNT=$((VERIFIED_REPAIR_COUNT + 1))
+    fi
     return 0
+}
+
+# $1 = megabytes already claimed in a FIX line. Preview is a no-op.
+# Bytes are allocated-file estimates (MB * 1048576), not APFS free space.
+meister_record_freed_mb() {
+    local mb="${1:-0}"
+    [ "${DRY_RUN:-false}" = true ] && return 0
+    case "$mb" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$mb" -gt 0 ] || return 0
+    : "${FREED_BYTES:=0}"
+    FREED_BYTES=$((FREED_BYTES + mb * 1048576))
+    # shellcheck disable=SC2034
+    FREED_BYTES_SCOPE=measured_file_removals
 }

@@ -5,7 +5,7 @@
 # For auto, optional env gates: ICLOUD_FIX_ENABLED, UNIVERSAL_UPDATES, etc.
 
 # Quick profile whitelist (lean daily)
-PROFILE_QUICK_MODULES="Healer|Homebrew|App Store|macOS System|Cleanup|Security Suite|Broken Symlinks|Sleep Blockers|Simulator Fix|Time Machine"
+PROFILE_QUICK_MODULES="Healer|Homebrew|App Store|macOS System|Cleanup|Security Suite|Broken Symlinks|Sleep Blockers|Time Machine"
 
 # Returns 0 if module $1 should run under current RUN_PROFILE
 module_in_profile() {
@@ -32,6 +32,7 @@ module_in_profile() {
                 "Performance")          [ "${RUN_PERF_TUNE:-false}" = "true" ] || return 1 ;;
                 "Benchmark")            return 1 ;;
                 "node_modules"|".DS_Store") return 1 ;;
+                "Simulator Fix"|"iOS Simulators") return 1 ;;
                 "Brew Bottle Age"|"APFS Snapshots"|"Kext Audit"|"Receipts Audit"|"LaunchServices")
                     return 1 ;;
             esac

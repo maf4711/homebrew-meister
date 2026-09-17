@@ -1,36 +1,27 @@
 cask "meister-mac" do
-  version "1.0.0"
-  sha256 "a2340ff5b85665ab309ec245fa7abe44bc03cc72e29b4b2b98eeb8519f863e85"
+  version "6.24"
+  sha256 "4d5d2dc37b89835f3874a36e4232476337b466ef7b4e9f18bffa8dde0c3f689b"
 
-  url "https://github.com/maf4711/meister-app/releases/download/v#{version}/Meister-macOS-#{version}.zip",
-      verified: "github.com/maf4711/meister-app/"
-  name "Meister"
-  desc "macOS GUI over the bash-meister CLI + AddressBook cleanup"
-  homepage "https://github.com/maf4711/meister-app"
+  url "https://github.com/maf4711/homebrew-meister/releases/download/v#{version}/MeisterSiri-macOS.zip",
+      verified: "github.com/maf4711/homebrew-meister/"
+  name "MeisterSiri"
+  desc "macOS GUI over the meisterSiri CLI (Apple Intelligence maintenance)"
+  homepage "https://github.com/maf4711/homebrew-meister"
 
   depends_on formula: "maf4711/meister/meister"
   depends_on macos: ">= :sonoma"
 
-  app "Meister.app"
+  app "MeisterSiri.app"
 
   zap trash: [
-    "~/Library/Preferences/com.merados.meister.macos.plist",
-    "~/Library/Caches/com.merados.meister.macos",
+    "~/Library/Preferences/com.maf4711.meistersiri.plist",
+    "~/Library/Caches/com.maf4711.meistersiri",
   ]
 
   caveats <<~EOS
-    LEGACY GUI: This cask installs Meister.app from the older meister-app
-    track. Canonical GUI is MeisterSiri.app in homebrew-meister/app/MeisterSiri
-    (see docs/GUI.md). Prefer:
+    MeisterSiri.app talks to the meisterSiri CLI from formula `meister`.
 
-      brew install maf4711/meister/meister
-      # build GUI from homebrew-meister/app/MeisterSiri
-
-    On first launch of this legacy app, grant Contacts access if using
-    AddressBook cleanup. All processing stays local.
-
-    v1.0.0 is signed with an Apple Development certificate rather than a
-    Developer ID. If Gatekeeper blocks the app, right-click Meister.app
-    in Finder → Open → Open.
+    Legacy Meister.app (meister-app track) is no longer this cask.
+    Remove it with: rm -rf /Applications/Meister.app
   EOS
 end

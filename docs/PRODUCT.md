@@ -17,7 +17,7 @@ Marketing name: **Meister**. Implementation twins differ only in AI backend.
 |---------|--------|-------|
 | **`app/MeisterSiri/`** (this repo) | **Canonical GUI** | SwiftUI over `meisterSiri` CLI |
 | `~/Developer/meister-app` | **Legacy / AddressBook track** | Older multi-platform shell-out; not the release path |
-| Homebrew Cask `meister-mac` | Points at legacy meister-app zip | Prefer building MeisterSiri.app from this repo until a new cask ships |
+| Homebrew Cask `meister-mac` | **MeisterSiri.app** (notarized GitHub zip) | `brew install --cask meister-mac` |
 
 Do not invest in feature-parity for two GUIs.
 

@@ -52,7 +52,44 @@ codesign --force --deep --sign - "$OUT/MeisterSiri.app" 2>/dev/null || true
 
 echo "==> dist: $OUT/MeisterSiri.app"
 
-if [ "${1:-}" = "--install" ]; then
+cask_release=false
+do_install=false
+for arg in "$@"; do
+  case "$arg" in
+    --install) do_install=true ;;
+    --cask-release) cask_release=true ;;
+  esac
+done
+
+if $cask_release; then
+  # Hash, not the common name: two Developer ID certs share the same CN.
+  SIGN_ID="${SIGN_ID:-B6EAF16C978F2AC019070F04C3B0C6052ED0342E}"
+  ASC_KEY_ID="${ASC_KEY_ID:-5BXD2V69GS}"
+  ASC_ISSUER_ID="${ASC_ISSUER_ID:-18daeaec-9343-4c57-9b01-481a7da981c6}"
+  ASC_KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
+  [ -f "$ASC_KEY_PATH" ] || { echo "ERROR: missing $ASC_KEY_PATH"; exit 1; }
+  echo "==> Developer ID sign ($SIGN_ID)"
+  codesign --force --deep --options runtime --timestamp \
+    --sign "$SIGN_ID" "$OUT/MeisterSiri.app"
+  codesign --verify --deep --strict "$OUT/MeisterSiri.app"
+  ZIP="$OUT/MeisterSiri-macOS.zip"
+  rm -f "$ZIP"
+  ditto -c -k --keepParent "$OUT/MeisterSiri.app" "$ZIP"
+  echo "==> notarytool submit"
+  xcrun notarytool submit "$ZIP" \
+    --key "$ASC_KEY_PATH" \
+    --key-id "$ASC_KEY_ID" \
+    --issuer "$ASC_ISSUER_ID" \
+    --wait
+  echo "==> staple"
+  xcrun stapler staple "$OUT/MeisterSiri.app"
+  rm -f "$ZIP"
+  ditto -c -k --keepParent "$OUT/MeisterSiri.app" "$ZIP"
+  echo "==> zip: $ZIP"
+  shasum -a 256 "$ZIP"
+fi
+
+if $do_install; then
   echo "==> Installing to /Applications"
   rm -rf /Applications/MeisterSiri.app
   cp -R "$OUT/MeisterSiri.app" /Applications/

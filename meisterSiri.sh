@@ -6,7 +6,11 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.23
+# Version: 6.24
+# NEW in v6.24 — daily-safe Simulator + honest last.json bytes:
+#  - Simulator Fix / iOS Simulators only in --deep (never --auto/--quick)
+#  - No `simctl list`, no Simulator.app launch; kill stale Simulator.app only
+#  - last.json freed_bytes from measured MB; verified count on measured deletes
 # NEW in v6.23 — macOS 27 Foundation Models for MeisterSiri:
 #  - AI-Heal: PrivateCloudComputeLanguageModel + reasoning, @Generable JSON
 #  - On-device fallback; tokenCount vs contextSize; session Instructions
@@ -2024,7 +2028,23 @@ cleanup_find_delete() {
                 -o -name "$name" -type f -print0 2>/dev/null || true
         )
     done
+    if [ "${DRY_RUN:-false}" != true ] && [ "${CLEANUP_REMOVED:-0}" -gt 0 ]; then
+        : "${VERIFIED_REPAIR_COUNT:=0}"
+        VERIFIED_REPAIR_COUNT=$((VERIFIED_REPAIR_COUNT + 1))
+    fi
     return 0
+}
+fi
+
+if ! command -v meister_record_freed_mb >/dev/null 2>&1; then
+meister_record_freed_mb() {
+    local mb="${1:-0}"
+    [ "${DRY_RUN:-false}" = true ] && return 0
+    case "$mb" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$mb" -gt 0 ] || return 0
+    : "${FREED_BYTES:=0}"
+    FREED_BYTES=$((FREED_BYTES + mb * 1048576))
+    FREED_BYTES_SCOPE=measured_file_removals
 }
 fi
 
@@ -3884,6 +3904,11 @@ module_deepclean() {
     if [ "$total_freed" -gt 0 ]; then
         log FIX "   Deep Clean: ${total_freed} MB total freed"
         report_add FIX "Deep Clean: ${total_freed} MB freed"
+        command -v meister_record_freed_mb >/dev/null 2>&1 && meister_record_freed_mb "$total_freed"
+        if [ "${DRY_RUN:-false}" != true ]; then
+            : "${VERIFIED_REPAIR_COUNT:=0}"
+            VERIFIED_REPAIR_COUNT=$((VERIFIED_REPAIR_COUNT + 1))
+        fi
     fi
 }
 
@@ -5185,7 +5210,7 @@ module_tm_health() {
         # No destination = this Mac is a single copy. Surface candidates instead
         # of a quiet STEP line (Documents alone is 170 GB with no second copy).
         log WARN "   Time Machine NOT configured — no backup target, Mac is a single copy"
-        report_add WARN "Time Machine: not configured (no backup!)"
+        report_add WARN "Time Machine: not configured (no backup!) → meisterSiri backup"
         local candidates; candidates=$(tm_candidate_volumes)
         if [ -n "$candidates" ]; then
             log INFO "   Attached volumes usable as TM destination:"
@@ -5201,7 +5226,7 @@ module_tm_health() {
     local latest; latest=$(tmutil latestbackup 2>/dev/null | tail -1)
     if [ -z "$latest" ]; then
         log WARN "   No Time Machine backups found"
-        report_add WARN "Time Machine: no backups"
+        report_add WARN "Time Machine: no backups → meisterSiri backup"
     else
         local bkup_date; bkup_date=$(basename "$latest" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
         if [ -n "$bkup_date" ]; then
@@ -5587,13 +5612,18 @@ module_sleep_blockers() {
         log STEP "   No processes blocking sleep"
         return 0
     fi
-    echo "$assertions" | while IFS= read -r line; do
-        local pid name; pid=$(echo "$line" | grep -oE 'pid [0-9]+' | awk '{print $2}')
+    local n=0 names="" pid name
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        pid=$(echo "$line" | grep -oE 'pid [0-9]+' | awk '{print $2}')
         name=$(echo "$line" | grep -oE 'pid [0-9]+\([^)]+\)' | sed 's/.*(\(.*\))/\1/')
         [ -z "$name" ] && [ -n "$pid" ] && name=$(ps -p "$pid" -o comm= 2>/dev/null)
+        [ -z "$name" ] && name="pid${pid:-?}"
         log STEP "     pid $pid ($name) — blocking sleep"
-    done
-    report_add WARN "$(echo "$assertions" | wc -l | tr -d ' ') sleep blocker(s) active"
+        names="${names:+$names, }$name"
+        n=$((n + 1))
+    done <<< "$assertions"
+    report_add WARN "$n sleep blocker(s) active: $names"
 }
 
 module_launchservices_rebuild() {
@@ -5789,56 +5819,39 @@ module_tcc_privacy_audit() {
 }
 
 module_simfix() {
-    log INFO "Fixing iOS Simulator..."
+    log INFO "Fixing iOS Simulator (no device catalog, no Simulator.app)..."
     command_exists xcrun || { log STEP "   xcrun missing (Xcode not installed)"; return 0; }
 
-    bw_phase "SimFix: killing stale processes"
+    bw_phase "SimFix: killing stale Simulator.app processes"
     local killed=0
-    for proc in Simulator SimulatorTrampoline SimLaunchHost.arm64 simdiskimaged com.apple.CoreSimulator.CoreSimulatorService; do
+    for proc in Simulator SimulatorTrampoline SimLaunchHost.arm64; do
         if pgrep -x "$proc" >/dev/null 2>&1; then
             log STEP "   kill: $proc"
             $DRY_RUN || killall -9 "$proc" 2>/dev/null
             killed=$((killed + 1))
         fi
     done
-    [ "$killed" -eq 0 ] && log STEP "   No stale processes"
+    [ "$killed" -eq 0 ] && log STEP "   No stale Simulator.app processes"
 
-    bw_phase "SimFix: shutdown all devices"
-    $DRY_RUN || xcrun simctl shutdown all 2>/dev/null
-
-    bw_phase "SimFix: delete unavailable"
-    local unavail_before
-    unavail_before=$(xcrun simctl list devices 2>/dev/null | grep -c unavailable)
-    if [ "$unavail_before" -gt 0 ]; then
-        log STEP "   removing ${unavail_before} unavailable device(s)"
-        $DRY_RUN || xcrun simctl delete unavailable 2>/dev/null
-    fi
+    bw_phase "SimFix: shutdown booted devices (no device catalog)"
+    $DRY_RUN || xcrun simctl shutdown all 2>/dev/null || true
+    $DRY_RUN || xcrun simctl delete unavailable 2>/dev/null || true
 
     bw_phase "SimFix: clear CoreSimulator caches"
     local cache_dir="$HOME/Library/Developer/CoreSimulator/Caches"
     if [ -d "$cache_dir" ]; then
         local cache_mb; cache_mb=$(du -sm "$cache_dir" 2>/dev/null | awk '{print $1}')
-        log STEP "   caches: ${cache_mb} MB"
+        log STEP "   caches: ${cache_mb:-0} MB"
         $DRY_RUN || rm -rf "$cache_dir"/* 2>/dev/null
+        command -v meister_record_freed_mb >/dev/null 2>&1 && meister_record_freed_mb "${cache_mb:-0}"
     fi
 
-    bw_phase "SimFix: kickstart CoreSimulatorService"
-    if ! $DRY_RUN; then
-        if sudo -n launchctl kickstart -k "system/com.apple.CoreSimulator.CoreSimulatorService" 2>/dev/null; then
-            log FIX "   CoreSimulatorService restarted"
-        else
-            log STEP "   (skipped kickstart — needs sudo)"
-        fi
-    fi
-
-    bw_phase "SimFix: verifying"
-    sleep 2
-    if xcrun simctl list devices available >/dev/null 2>&1; then
-        log FIX "   Simulator ready — launch: open -a Simulator"
-        report_add FIX "iOS Simulator reset (try: open -a Simulator)"
+    if [ "$killed" -gt 0 ]; then
+        report_add FIX "Stopped $killed stale Simulator process(es)"
+        : "${VERIFIED_REPAIR_COUNT:=0}"
+        $DRY_RUN || VERIFIED_REPAIR_COUNT=$((VERIFIED_REPAIR_COUNT + 1))
     else
-        log WARN "   simctl still unresponsive — try: sudo xcode-select -r"
-        report_add WARN "Simulator still broken after reset"
+        log STEP "   Simulator.app was not running; did not enumerate or boot devices"
     fi
 }
 
@@ -8033,10 +8046,6 @@ if [ "${1:-}" = "simfix" ]; then
     DRY_RUN=false
     [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
-    # Cache sudo for CoreSimulatorService kickstart
-    if ! $DRY_RUN && [ -t 0 ]; then
-        ensure_sudo "simfix" || echo "  (sudo unavailable — kickstart step will skip)"
-    fi
     MODULE_TOTAL=1
     start_bw_monitor
     bw_set_status 1 1 "Simulator Fix"
@@ -10100,7 +10109,7 @@ TOOLS:
   meisterSiri battery      Battery health report
   meisterSiri heal [--dry-run]  Proactive auto-healer (broken symlinks, orphans, DNS, casks)
   meisterSiri free [--restart-ui]  Free RAM (sudo purge) + optionally restart Finder/Dock
-  meisterSiri simfix       Fix stuck iOS Simulator (kill stale procs, reset CoreSimulator)
+  meisterSiri simfix       Stop stale Simulator.app (no simctl catalog, does not boot)
   meisterSiri startup      Login items & launch agents audit
   meisterSiri wifi         Wi-Fi diagnostics & channel scan
   meisterSiri top [N]      Live process monitor (default: 3s refresh)
@@ -10428,7 +10437,7 @@ module_in_profile() {
     case "${RUN_PROFILE:-auto}" in
         quick)
             case "$name" in
-                Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Simulator\ Fix|Time\ Machine)
+                Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Time\ Machine)
                     return 0 ;;
                 *) return 1 ;;
             esac
@@ -10448,6 +10457,7 @@ module_in_profile() {
                 Performance)           ${RUN_PERF_TUNE:-false} || return 1 ;;
                 Benchmark)             return 1 ;;  # weekly only
                 node_modules|.DS_Store) return 1 ;; # deep only in auto
+                Simulator\ Fix|iOS\ Simulators) return 1 ;;
                 Brew\ Bottle\ Age|APFS\ Snapshots|Kext\ Audit|Receipts\ Audit|LaunchServices)
                     return 1 ;;  # deep only
             esac

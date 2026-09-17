@@ -7,6 +7,7 @@ One command to keep your Mac healthy, your configs synced, and your network moni
 ```
 brew tap maf4711/meister
 brew install meister
+brew install --cask meister-mac   # MeisterSiri.app
 ```
 
 ---

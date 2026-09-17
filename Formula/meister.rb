@@ -58,7 +58,7 @@ class Meister < Formula
         meisterSiri why profile | storage | contacts doctor
         meisterSiri report --diff | doctor --json
         Handshake file: ~/.meister/last.json (for heald)
-        GUI: build app/MeisterSiri (canonical); cask meister-mac is legacy
+        GUI: brew install --cask meister-mac  (MeisterSiri.app)
     EOS
   end
 
