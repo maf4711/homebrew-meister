@@ -5,7 +5,7 @@
 
 # MeisterAI.app build
 app/MeisterAI/build/
-app/MeisterAI/MeisterAI.xcodeproj/
+app/MeisterAI/*.xcodeproj/
 app/MeisterAI/dist/
 
 # Local FM evaluation/runtime caches
