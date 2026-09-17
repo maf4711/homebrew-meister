@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# sync-twins.sh — meisterSiri.sh (Apple Intelligence) → meister.sh (Ollama)
+# sync-twins.sh — MeisterAI.sh (Apple Intelligence) → meister.sh (Ollama)
 #
-# MERKREGEL: Feature-Quelle ist IMMER meisterSiri.sh.
+# MERKREGEL: Feature-Quelle ist IMMER MeisterAI.sh.
 #   ./scripts/sync-twins.sh && ./release.sh
 # release.sh ruft dies automatisch.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/meisterSiri.sh"
+SRC="$ROOT/MeisterAI.sh"
 DST="$ROOT/meister.sh"
 [ -f "$SRC" ] || { echo "missing $SRC" >&2; exit 1; }
 MODE="${1:-write}"
@@ -27,18 +27,19 @@ if "log() {" not in t:
     raise SystemExit("source missing log() — refuse to sync")
 
 # Branding
-t = t.replace("# meisterSiri.sh\n", "# meister.sh\n", 1)
-t = t.replace("# Usage: ./meisterSiri.sh [flags]", "# Usage: ./meister.sh [flags]", 1)
+t = t.replace("# MeisterAI.sh\n", "# meister.sh\n", 1)
+t = t.replace("# Usage: ./MeisterAI.sh [flags]", "# Usage: ./meister.sh [flags]", 1)
 t = re.sub(
     r"# Twin of[^\n]*\n(?:# [^\n]*\n){0,8}",
-    "# Twin of meisterSiri.sh — same modules/autofix/profiles/keep-current.\n"
-    "# AI backend = Ollama (localhost:11434). meisterSiri = Apple Intelligence.\n"
-    "# Shares ~/.meister/. KEEP IN SYNC: edit meisterSiri.sh → scripts/sync-twins.sh\n",
+    "# Twin of MeisterAI.sh — same modules/autofix/profiles/keep-current.\n"
+    "# AI backend = Ollama (localhost:11434). MeisterAI = Apple Intelligence.\n"
+    "# Shares ~/.meister/. KEEP IN SYNC: edit MeisterAI.sh → scripts/sync-twins.sh\n",
     t,
     count=1,
 )
-t = t.replace("MeisterSiri", "Meister")
-t = t.replace("meisterSiri", "meister")
+t = t.replace("MeisterAI", "meister")
+# Preserve the established Ollama display name independently of its executable.
+t = t.replace("meister - macOS Maintenance", "Meister - macOS Maintenance")
 t = re.sub(
     r'--version\) echo "meister v\$\{MEISTER_VERSION\}[^"]*"; exit 0 ;;',
     '--version) echo "meister v${MEISTER_VERSION} (Ollama)"; exit 0 ;;',
@@ -60,7 +61,7 @@ MEISTER_OLLAMA_MODEL="${MEISTER_OLLAMA_MODEL:-qwen3-coder:30b}"
 # ===== /TWIN:META-AI =====
 """
 if not re.search(meta_pat, t, re.S):
-    raise SystemExit("TWIN:META-AI missing in meisterSiri.sh")
+    raise SystemExit("TWIN:META-AI missing in MeisterAI.sh")
 t = re.sub(meta_pat, meta_new, t, count=1, flags=re.S)
 
 # Function backend only (never match META)
@@ -70,70 +71,61 @@ backend_pat = (
 )
 ollama = r"""# ===== TWIN:AI-BACKEND (Ollama — meister) =====
 ensure_fm_helper() {
-    if ! command -v jq >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
-        return 1
-    fi
-    return 0
+    command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 &&
+        [ -f "${MEISTER_LIB_DIR}/ollama/client.py" ]
+}
+fm_ollama_client() {
+    MEISTER_OLLAMA_URL="${MEISTER_OLLAMA_URL:-http://localhost:11434}" \
+    MEISTER_OLLAMA_MODEL="${MEISTER_OLLAMA_MODEL:-qwen3-coder:30b}" \
+    MEISTER_OLLAMA_TIMEOUT="${MEISTER_OLLAMA_TIMEOUT:-90}" \
+    MEISTER_OLLAMA_THINK="${MEISTER_OLLAMA_THINK:-false}" \
+    MEISTER_OLLAMA_KEEP_ALIVE="${MEISTER_OLLAMA_KEEP_ALIVE:-5m}" \
+    MEISTER_OLLAMA_NUM_CTX="${MEISTER_OLLAMA_NUM_CTX:-8192}" \
+    MEISTER_OLLAMA_NUM_PREDICT="${MEISTER_OLLAMA_NUM_PREDICT:-1024}" \
+        python3 "${MEISTER_LIB_DIR}/ollama/client.py" "$@"
 }
 fm_available() {
-    [ "${FM_ENABLED:-true}" = "true" ] || return 1
-    curl -sf --max-time 2 "${MEISTER_OLLAMA_URL:-http://localhost:11434}/api/tags" >/dev/null 2>&1
+    [ "${FM_ENABLED:-true}" = true ] || return 1
+    ensure_fm_helper || return 1
+    fm_ollama_client --check >/dev/null 2>&1
 }
-# $1=prompt  $2=label  $3=mode — same audit UX as Apple twin
+# Same validated diagnosis contract as Apple, with bounded Ollama transport.
 fm_query() {
-    local prompt="$1"
-    local label="${2:-query}"
-    local mode="${3:-readonly}"
-    local purpose="$label"
-    local url="${MEISTER_OLLAMA_URL:-http://localhost:11434}"
-    local model="${MEISTER_OLLAMA_MODEL:-qwen3-coder:30b}"
+    local prompt="$1" label="${2:-query}" mode="${3:-readonly}"
+    local purpose="$label" work rc=0 meta
     case "$label" in
-        AI-Heal:*|ai-heal:*|heal:*) purpose="ai-heal"; mode="heal-candidate" ;;
-        explain*) purpose="explain"; mode="readonly" ;;
-        ai-diagnose*|diagnose*) purpose="ai-diagnose"; mode="readonly" ;;
-        today*) purpose="today"; mode="readonly" ;;
-        suggest*) purpose="suggest"; mode="readonly" ;;
+        AI-Heal:*|ai-heal*|heal:*) purpose=ai-heal; mode=heal-candidate ;;
+        explain*) purpose=explain; mode=readonly ;;
+        ai-diagnose*|diagnose*) purpose=ai-diagnose; mode=readonly ;;
+        today*) purpose=today; mode=readonly ;;
+        suggest*) purpose=suggest; mode=readonly ;;
     esac
+    [ "${FM_ENABLED:-true}" = true ] && ensure_fm_helper || return 69
     AI_CALLS_THIS_RUN=$(( ${AI_CALLS_THIS_RUN:-0} + 1 ))
-    if [ "$mode" = "heal-candidate" ]; then
+    if [ "$mode" = heal-candidate ]; then
         AI_HEAL_CALLS_THIS_RUN=$(( ${AI_HEAL_CALLS_THIS_RUN:-0} + 1 ))
     else
         AI_READONLY_CALLS_THIS_RUN=$(( ${AI_READONLY_CALLS_THIS_RUN:-0} + 1 ))
     fi
-    if [ "${AI_TRACE:-true}" = "true" ]; then
-        ai_call_banner "$purpose" "$mode" "$label / model=$model"
-        ai_trace_box "REQUEST → ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  mode=${mode}  |  model=${model}" "$prompt"
-        ai_trace_line "⏳ ${AI_BACKEND_LABEL} denkt nach… (Call #${AI_CALLS_THIS_RUN})"
+    ai_usage_record "$purpose" "$mode" request "backend=ollama"
+    if [ "${AI_TRACE:-true}" = true ]; then
+        ai_call_banner "$purpose" "$mode" "Ollama"
+        ai_trace_line "Ollama: Anfrage läuft (Call #${AI_CALLS_THIS_RUN})"
     fi
-    ai_usage_record "$purpose" "$mode" "request" "label=$label model=$model"
-    local payload resp
-    if command -v jq >/dev/null 2>&1; then
-        payload=$(jq -n --arg m "$model" --arg p "$prompt" '{model:$m, prompt:$p, stream:false}')
+    work=$(mktemp -d "${TMPDIR:-/tmp}/meister-ollama.XXXXXX") || return 1
+    chmod 700 "$work"
+    printf '%s' "$prompt" | fm_ollama_client --purpose "$purpose" > "$work/response" 2> "$work/metadata" || rc=$?
+    # The helper emits fixed status labels and numeric timing/token metadata only.
+    meta=$(cat "$work/metadata")
+    if [ "$rc" = 0 ]; then
+        ai_usage_record "$purpose" "$mode" response-ok "$meta"
+        cat "$work/response"
     else
-        payload=$(python3 -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"prompt":sys.argv[2],"stream":False}))' "$model" "$prompt")
+        ai_usage_record "$purpose" "$mode" response-error "$meta"
+        printf 'Ollama: Anfrage fehlgeschlagen (Exit %s). %s\n' "$rc" "$meta" >&2
     fi
-    resp=$(curl -sf --max-time 180 "$url/api/generate" \
-        -H 'Content-Type: application/json' -d "$payload" 2>/dev/null \
-        | if command -v jq >/dev/null 2>&1; then jq -r '.response // empty'
-          else python3 -c 'import sys,json; print(json.load(sys.stdin).get("response") or "")'; fi) || true
-    if [ -n "$resp" ]; then
-        ai_usage_record "$purpose" "$mode" "response-ok" "chars=${#resp}"
-        if [ "${AI_TRACE:-true}" = "true" ]; then
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}  |  purpose=${purpose}  |  MODE=${mode}  |  (noch NICHT ausgeführt)" "$resp"
-            if [ "$mode" = "readonly" ]; then
-                ai_trace_line "✓ ${AI_BACKEND_LABEL}: nur Textanzeige — kein Befehl wird ausgeführt"
-            else
-                ai_trace_line "→ ${AI_BACKEND_LABEL}: Vorschlag geht an Allowlist (heal)"
-            fi
-        fi
-    else
-        ai_usage_record "$purpose" "$mode" "response-empty" "label=$label"
-        if [ "${AI_TRACE:-true}" = "true" ]; then
-            ai_trace_box "RESPONSE ← ${AI_BACKEND_LABEL}" "(leer — ollama serve / model pull?)"
-            ai_trace_line "✗ ${AI_BACKEND_LABEL}: keine Antwort"
-        fi
-    fi
-    printf '%s' "$resp"
+    rm -rf "$work"
+    return "$rc"
 }
 # ===== /TWIN:AI-BACKEND =====
 
@@ -158,11 +150,11 @@ PY
 
 bash -n "$SRC"
 bash -n "$DST"
-if grep -E 'meisterSiri|MeisterSiri' "$DST" >/dev/null; then
+if grep -E 'MeisterAI' "$DST" >/dev/null; then
   echo "FAIL residual branding" >&2
-  grep -nE 'meisterSiri|MeisterSiri' "$DST" | head
+  grep -nE 'MeisterAI' "$DST" | head
   exit 1
 fi
 # Do not execute either maintenance CLI during synchronization or CI.
 # Syntax and generated-source equality are sufficient and have no host side effects.
-echo "DONE: meisterSiri=Apple · meister=Ollama"
+echo "DONE: MeisterAI=Apple · meister=Ollama"

@@ -95,6 +95,7 @@ learned_fix_record() {
 try_learned_fix() {
     local module_name="$1" cmd
     cmd=$(learned_fix_lookup "$module_name") || return 1
+    heal_catalog_command_allowed "$cmd" || return 1
     heal_command_allowed "$cmd" || return 1
     # Consumed by the caller after execution.
     # shellcheck disable=SC2034

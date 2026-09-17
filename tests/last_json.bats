@@ -16,7 +16,7 @@ setup() {
   grep -q '"score": 87' "$MEISTER_DIR/last.json"
   grep -q '"role": "batch-maintain"' "$MEISTER_DIR/last.json"
   grep -q '"ai_heal_mode": "suggest-only"' "$MEISTER_DIR/last.json"
-  grep -q '"twin": "meisterSiri"' "$MEISTER_DIR/last.json"
+  grep -q '"twin": "MeisterAI"' "$MEISTER_DIR/last.json"
 }
 
 @test "write_last_json execute mode" {
@@ -126,4 +126,27 @@ for index,shell in enumerate(shells):
     assert report['warnings']==['warning\rline'],(shell,repr(report['warnings']))
     assert (state/'runs'/f"{report['run_id']}.json").read_bytes()==(state/'last.json').read_bytes()
 PYCODE
+}
+
+@test "saved reports retain diagnosis evidence links without claiming verification" {
+  REPORT_AI_DIAGNOSES=("$MEISTER_DIR/diagnoses/fm.test/diagnosis.json")
+  write_last_json 90
+  python3 - "$MEISTER_DIR/last.json" <<'PYTEST'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r['ai_diagnoses'][0].endswith('/diagnoses/fm.test/diagnosis.json')
+assert r['verified_repair_count']==0
+PYTEST
+}
+
+@test "legacy preferred Apple twin migrates while meister remains unchanged" {
+  printf '%s\n' meisterSiri > "$MEISTER_DIR/preferred_twin"
+  AI_BACKEND_KIND=apple
+  write_last_json 90
+  grep -q '"preferred_twin": "MeisterAI"' "$MEISTER_DIR/last.json"
+  printf '%s\n' meister > "$MEISTER_DIR/preferred_twin"
+  AI_BACKEND_KIND=ollama
+  write_last_json 90
+  grep -q '"preferred_twin": "meister"' "$MEISTER_DIR/last.json"
+  grep -q '"twin": "meister"' "$MEISTER_DIR/last.json"
 }

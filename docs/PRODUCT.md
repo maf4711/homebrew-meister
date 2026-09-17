@@ -4,7 +4,7 @@
 
 | Binary | AI backend | Role |
 |--------|------------|------|
-| **`meisterSiri`** | Apple Intelligence (on-device) | **Primary** daily CLI + LaunchAgents |
+| **`MeisterAI`** | Apple Intelligence (on-device) | **Primary** daily CLI + LaunchAgents |
 | **`meister`** | Ollama | Twin for offline / Ollama preference |
 
 Both share `~/.meister/` (config, logs, last.json, undo journal).
@@ -15,9 +15,9 @@ Marketing name: **Meister**. Implementation twins differ only in AI backend.
 
 | Surface | Status | Notes |
 |---------|--------|-------|
-| **`app/MeisterSiri/`** (this repo) | **Canonical GUI** | SwiftUI over `meisterSiri` CLI |
+| **`app/MeisterAI/`** (this repo) | **Canonical GUI** | SwiftUI over `MeisterAI` CLI |
 | `~/Developer/meister-app` | **Legacy / AddressBook track** | Older multi-platform shell-out; not the release path |
-| Homebrew Cask `meister-mac` | **MeisterSiri.app** (notarized GitHub zip) | `brew install --cask meister-mac` |
+| Homebrew Cask `meister-mac` | **MeisterAI.app** (notarized GitHub zip) | `brew install --cask meister-mac` |
 
 Do not invest in feature-parity for two GUIs.
 
@@ -31,8 +31,8 @@ Do not invest in feature-parity for two GUIs.
 Handshake file: `~/.meister/last.json` (`schema: meister.last/v1`).
 
 Fields for heald (`MeisterBridge` in heald ≥2.1):
-- `score`, `err`, `warn`, `ts`, `twin` (`meister` \| `meisterSiri`), `preferred_twin`
-- `~/.meister/preferred_twin` — set by `meisterSiri twins-bench`
+- `score`, `err`, `warn`, `ts`, `twin` (`meister` \| `MeisterAI`), `preferred_twin`
+- `~/.meister/preferred_twin` — set by `MeisterAI twins-bench`
 
 heald may:
 - read `last.json` every ~15 min
@@ -41,9 +41,9 @@ heald may:
 
 Twin benchmark:
 ```bash
-meisterSiri twins-bench           # full (incl. dry-run --quick)
-meisterSiri twins-bench --quick   # version/doctor/AI/lib only
-meisterSiri twins-bench --json
+MeisterAI twins-bench           # full (incl. dry-run --quick)
+MeisterAI twins-bench --quick   # version/doctor/AI/lib only
+MeisterAI twins-bench --json
 ```
 
 Meister does **not** replace heald’s always-on daemon.

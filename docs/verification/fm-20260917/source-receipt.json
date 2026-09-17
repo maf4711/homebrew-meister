@@ -1,0 +1,31 @@
+{
+  "base_commit": "1b3737d0ff52f949237c9e2afe59ec4fe3b4b44c",
+  "state": "uncommitted implementation including prior log fixes",
+  "files": {
+    ".gitignore": "f244a45325fa00e770839fa07bb4ed6a62b7db08a2f61149784728868a911a5b",
+    "config.fast.example": "48b3c42baed59dfc09919077f73139a8bc963c14f62943e1e6ec8b16e41a3e88",
+    "docs/FM.md": "8322de662dbc264c7b13a4934c01904eef409913a0b9f1c14d279a77ea5720c7",
+    "docs/verification/2026-09-17-fm-upgrade.md": "582afb14dc21f053e4dfd97420b1e74ce8ccc0ac7753c46b55234543a5e561a9",
+    "docs/verification/2026-09-17-log-review.md": "fcea96fe9fccbd4983656480e0a10b168dbf8242dfa26d1b126ed8b79b25a572",
+    "docs/verification/fm-20260917/live-system.json": "96a63ac3846edd49691f5f7d2569f159e305dae9e67d5b8f16fdf8e0f0ba543f",
+    "docs/verification/fm-20260917/offline-harness.json": "b56f510ccb8b4de075d071f3e0cfde8113f155d29cf6b20fcbe76a1e5ad44b63",
+    "lib/core/fm_diagnosis.sh": "0ec034117e5943272f4c323c7cb4fc03875efea52d3d31b2433ec61031877917",
+    "lib/core/heal_guards.sh": "3a159fc635f52bbeff11c9d5628a98da436359c46169ba9b89b37467b50aa099",
+    "lib/core/last_json.sh": "c0ec0dbb63be56846628e27ec9cfd34d7df4a3e2f772d953889ec957de445129",
+    "lib/core/learned_fixes.sh": "e1327663405eb6ae7a1d61601a7700f4105ca27af7941a4ccb73d6d0d229681e",
+    "lib/fm/MeisterFM.swift": "d8d27360b7be6a5c51854fb4d696c06db3d05321cc569a8d8447f7471d7cc758",
+    "lib/fm/contract.py": "bf84476890e368098652ad1e8c37e4c49be6b4fc881f4c0633147b526eb8f6d9",
+    "meister.sh": "abff9d65731edc778707de8caeabcc1805cb1c77bcbc715d1d218bb6f0d7136d",
+    "meisterSiri.sh": "676803f6f78a901f2bfa6abbd4b08f7a0434bd953f7d8fd384becd3fca5d83d6",
+    "scripts/check.sh": "5f13179be13d9728705e609ddf201dff844b28f62ebdd59b391747092b261325",
+    "scripts/evaluate-fm.py": "8fe0ad35fed7b3a806075a74448467d46b146da892033da507c031ae3dd6730a",
+    "scripts/sync-twins.sh": "3aa9df904470acb284cd7e3d3e06664b7aa560aee3c8d0031c1dbf4f85c1c9e1",
+    "tests/cli_contract.bats": "e87b2993e1e63e66f23fb1ddc413c0ff970e83e6403a7867d051f6df7e6f4a72",
+    "tests/fixtures/fm_cases.json": "ef2d3acbc741a05e1209b49827337e0528d4ea0d352fd16bca4275d15b7089ce",
+    "tests/fm_contract.bats": "c3d2e4b844de2e3b922a6d70def4e03014ecd789de77a58ebcc8a202ef610dd5",
+    "tests/fm_helper.bats": "fc47cb20a4f5e55782a30afb88111b235bb98ad20a8874a4dff77c2170ae10cf",
+    "tests/last_json.bats": "68dedb9ffca70f9bdcdbc5caa133d1626d4f9da1f3fe37680e39eb1fd5d5183c",
+    "tests/log_review.bats": "b982d8a4c1e42ed259aac821d756642445c8cf97391d518411b82e86f163f5ef",
+    "tests/test_fm_evaluation.py": "a3a817bd24e84ef0b220f30800be45b4ad92dd700165c642420b552e4af256ea"
+  }
+}

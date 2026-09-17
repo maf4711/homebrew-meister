@@ -1,5 +1,5 @@
 class Meister < Formula
-  desc "macOS Maintenance, Self-Healing & Dotfiles Sync (meister + meisterSiri)"
+  desc "macOS Maintenance, Self-Healing & Dotfiles Sync (meister + MeisterAI)"
   homepage "https://github.com/maf4711/homebrew-meister"
   url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v6.25.tar.gz"
   sha256 "4a9d50b042c8767662cd845d019b6a81ebf048c5b2e339f6dd735469a16f2a0e"
@@ -10,7 +10,15 @@ class Meister < Formula
 
   def install
     bin.install "meister.sh" => "meister"
-    bin.install "meisterSiri.sh" => "meisterSiri"
+    # Published 6.25 archives predate the rename; keep their checksum valid.
+    apple_source = File.exist?("MeisterAI.sh") ? "MeisterAI.sh" : "meisterSiri.sh"
+    bin.install apple_source => "MeisterAI"
+    if apple_source != "MeisterAI.sh"
+      inreplace bin/"MeisterAI", "MeisterSiri", "MeisterAI"
+      inreplace bin/"MeisterAI", "meisterSiri", "MeisterAI"
+      # The published 6.25 app still looks up the former executable.
+      bin.install_symlink "MeisterAI" => "meisterSiri"
+    end
     doc.install "config.fast.example" if File.exist?("config.fast.example")
     doc.install "AGENTS.md" if File.exist?("AGENTS.md")
     doc.install "docs/PRODUCT.md" if File.exist?("docs/PRODUCT.md")
@@ -40,11 +48,11 @@ class Meister < Formula
         meister -a       All modules
         meister -h       Help
 
-      MeisterSiri (same modules, Apple Intelligence branding):
-        meisterSiri      Auto-detect maintenance
-        meisterSiri ai   On-device AI diagnosis
-        meisterSiri explain <text>
-        meisterSiri -h   Help
+      MeisterAI (same modules, Apple Intelligence branding):
+        MeisterAI      Auto-detect maintenance
+        MeisterAI ai   On-device AI diagnosis
+        MeisterAI explain <text>
+        MeisterAI -h   Help
 
       Both share config: ~/.meister/config
 
@@ -55,16 +63,16 @@ class Meister < Formula
         meister bootstrap Full machine setup
 
       v6.13+:
-        meisterSiri why profile | storage | contacts doctor
-        meisterSiri report --diff | doctor --json
+        MeisterAI why profile | storage | contacts doctor
+        MeisterAI report --diff | doctor --json
         Handshake file: ~/.meister/last.json (for heald)
-        GUI: brew install --cask meister-mac  (MeisterSiri.app)
+        GUI: brew install --cask meister-mac  (MeisterAI.app)
     EOS
   end
 
   test do
     assert_match "meister", shell_output("#{bin}/meister -h 2>&1", 0)
-    assert_match "meisterSiri", shell_output("#{bin}/meisterSiri --version 2>&1", 0)
-    assert_match "6.", shell_output("#{bin}/meisterSiri --version 2>&1", 0)
+    assert_match "MeisterAI", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
+    assert_match "6.", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
   end
 end

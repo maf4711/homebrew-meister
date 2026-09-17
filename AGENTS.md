@@ -11,9 +11,9 @@ Wenn du einen Release machst (`./release.sh` oder manuell tag + formula):
    ```bash
    brew update && brew reinstall maf4711/meister/meister
    meister --version
-   meisterSiri --version
+   MeisterAI --version
    # Symlink-Pfad (nicht nur Cellar):
-   /opt/homebrew/bin/meisterSiri --version
+   /opt/homebrew/bin/MeisterAI --version
    ```
 3. Release erst melden, wenn die installierte Version mit dem Tag übereinstimmt.
 
@@ -32,20 +32,20 @@ Cross-session: `~/.grok/rules/meister-always-install-local.md` +
 | Command | File | Role |
 |---------|------|------|
 | `meister` | `meister.sh` | Main CLI (leave as-is unless intentional) |
-| `meisterSiri` | `meisterSiri.sh` | Same modules, MeisterSiri branding, Apple Intelligence |
+| `MeisterAI` | `MeisterAI.sh` | Same modules, MeisterAI branding, Apple Intelligence |
 
 Both share `~/.meister/` config and state.
 
-## v6.2 MeisterSiri commands
+## v6.2 MeisterAI commands
 
 | Command | Purpose |
 |---------|---------|
-| `meisterSiri today` | Morning briefing |
-| `meisterSiri doctor` | Read-only checklist |
-| `meisterSiri suggest <x>` | AI fix idea, never executes |
-| `meisterSiri privacy` | Privacy / persistence audit |
-| `meisterSiri selftest` | Smoke-test CLI |
-| `meisterSiri -n` | Dry-run: shows WOULD-FIX + "Would free", never FIXED/Freed |
+| `MeisterAI today` | Morning briefing |
+| `MeisterAI doctor` | Read-only checklist |
+| `MeisterAI suggest <x>` | AI fix idea, never executes |
+| `MeisterAI privacy` | Privacy / persistence audit |
+| `MeisterAI selftest` | Smoke-test CLI |
+| `MeisterAI -n` | Dry-run: shows WOULD-FIX + "Would free", never FIXED/Freed |
 
 Dry-run honesty is implemented in `report_add` / report footer — do not reintroduce `report_add FIX` that bypasses it.
 
@@ -53,23 +53,23 @@ Dry-run honesty is implemented in `report_add` / report footer — do not reintr
 
 | Command | Intent | Typical time |
 |---------|--------|--------------|
-| `meisterSiri` / `--auto` | Daily-fast defaults | 1–4 min |
-| `meisterSiri --quick` | Minimal (healer+brew+cleanup+security) | ~1–2 min |
-| `meisterSiri --deep` | Weekly full (iCloud, dev, docs, audits) | 5–15 min |
-| `meisterSiri -a` | Force all modules | longest |
+| `MeisterAI` / `--auto` | Daily-fast defaults | 1–4 min |
+| `MeisterAI --quick` | Minimal (healer+brew+cleanup+security) | ~1–2 min |
+| `MeisterAI --deep` | Weekly full (iCloud, dev, docs, audits) | 5–15 min |
+| `MeisterAI -a` | Force all modules | longest |
 
 Brew: `~/.meister/brew_last_update` — delete to force `brew update`.
 Config template: `config.fast.example` → merge into `~/.meister/config`.
 
-## MERKREGEL: meister + meisterSiri parallel halten
+## MERKREGEL: meister + MeisterAI parallel halten
 
-**Feature-Quelle:** `meisterSiri.sh`  
+**Feature-Quelle:** `MeisterAI.sh`
 **Zwilling:** `meister.sh` (nur Branding anders)
 
 Nach **jeder** Feature-Änderung an der CLI:
 
 ```bash
-./scripts/sync-twins.sh   # regeneriert meister.sh aus meisterSiri.sh
+./scripts/sync-twins.sh   # regeneriert meister.sh aus MeisterAI.sh
 ./release.sh              # tag + formula + local brew install
 ```
 
@@ -82,19 +82,19 @@ Beide teilen `~/.meister/` und dasselbe Autofix/Profile/Sudo-Verhalten.
 
 Default: `TOUCHID_SUDO=true` — `ensure_sudo` schreibt `pam_tid` nach `/etc/pam.d/sudo_local`
 wenn fehlt. Einmal Passwort, danach Fingerprint. Opt-out: `TOUCHID_SUDO=false` in
-`~/.meister/config` oder `meisterSiri touchid --off`.
+`~/.meister/config` oder `MeisterAI touchid --off`.
 
 ```bash
-meisterSiri touchid          # force enable / status message
-meisterSiri touchid status   # enabled? sensor? auto flag?
-meisterSiri touchid --off    # disable (set TOUCHID_SUDO=false to stop re-enable)
+MeisterAI touchid          # force enable / status message
+MeisterAI touchid status   # enabled? sensor? auto flag?
+MeisterAI touchid --off    # disable (set TOUCHID_SUDO=false to stop re-enable)
 ```
 
 ### Autofix (v6.7+)
 
 ```bash
-meisterSiri ai            # Autofix + AI-Rest-Zusammenfassung
-meisterSiri autofix       # nur deterministische Fixes
+MeisterAI ai            # Autofix + AI-Rest-Zusammenfassung
+MeisterAI autofix       # nur deterministische Fixes
 meister ai / meister autofix   # gleich (nach Sync)
 ```
 
@@ -132,16 +132,16 @@ Config: `AI_HEAL_EXECUTE=true` in `~/.meister/config` or flag on the run.
 
 | Twin | AI backend | Use |
 |------|------------|-----|
-| `meisterSiri` | Apple Intelligence (on-device) | Default GUI + LaunchAgents |
+| `MeisterAI` | Apple Intelligence (on-device) | Default GUI + LaunchAgents |
 | `meister` | Ollama (`qwen3-coder:30b` @ :11434) | When Ollama is preferred / offline Apple |
 
 Shared: modules, autofix catalog, profiles, `~/.meister/`.
 
 Every run: **Autofix first**, then Healer, then modules (AI-Heal on failures; default suggest-only since v6.12).
 
-LaunchAgents (install: `meisterSiri -I`):
-- Daily 09:15 `meisterSiri --auto -q`
-- Sunday 10:30 `meisterSiri --deep -q`
+LaunchAgents (install: `MeisterAI -I`):
+- Daily 09:15 `MeisterAI --auto -q`
+- Sunday 10:30 `MeisterAI --deep -q`
 - Retires legacy `com.meister.maintenance` (old meister2026.sh)
 
 Ollama model override: `MEISTER_OLLAMA_MODEL=...` in `~/.meister/config`.

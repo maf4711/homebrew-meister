@@ -4,7 +4,7 @@
 src_fn() {
   local name="$1"
   awk -v name="$name" '$0==name"() {" {on=1} on {print} on && /^}$/ {exit}' \
-    "$BATS_TEST_DIRNAME/../meisterSiri.sh"
+    "$BATS_TEST_DIRNAME/../MeisterAI.sh"
 }
 
 @test "module_simfix never invokes simctl list" {

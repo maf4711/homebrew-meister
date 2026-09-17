@@ -54,8 +54,8 @@ EOF
   [[ "$output" != *"microsoft-word"* ]]
 }
 
-@test "meisterSiri uses brew upgrade --formula not bare brew upgrade" {
-  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+@test "MeisterAI uses brew upgrade --formula not bare brew upgrade" {
+  src="${BATS_TEST_DIRNAME}/../MeisterAI.sh"
   grep -q 'brew upgrade --formula' "$src"
   # the unattended upgrade line must not be a bare `brew upgrade`
   ! grep -E 'timeout .* brew upgrade >' "$src"
@@ -63,12 +63,12 @@ EOF
 }
 
 @test "cask upgrade is wrapped in timeout" {
-  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  src="${BATS_TEST_DIRNAME}/../MeisterAI.sh"
   grep -q 'BREW_CASK_TIMEOUT_SEC\|timeout .* brew upgrade --cask' "$src"
 }
 
 @test "upgrades one package at a time with START/DONE banners" {
-  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  src="${BATS_TEST_DIRNAME}/../MeisterAI.sh"
   grep -q 'brew_upgrade_each' "$src"
   grep -q 'START \${name}' "$src"
   grep -q 'DONE  \${name}' "$src"
@@ -76,7 +76,7 @@ EOF
 }
 
 @test "Fix #151: sudo is pre-authed before cask upgrade so root-owned apps don't hard-fail" {
-  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  src="${BATS_TEST_DIRNAME}/../MeisterAI.sh"
   # ensure_sudo call must appear before brew_upgrade_each cask, not after
   before_line=$(grep -n 'ensure_sudo "brew cask upgrade"' "$src" | head -1 | cut -d: -f1)
   each_line=$(grep -n 'brew_upgrade_each cask' "$src" | head -1 | cut -d: -f1)
@@ -86,11 +86,11 @@ EOF
 }
 
 @test "Fix #151: cask reinstall retry (auto-heal) also pre-auths sudo" {
-  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  src="${BATS_TEST_DIRNAME}/../MeisterAI.sh"
   grep -q 'ensure_sudo "cask reinstall: \$name"' "$src"
 }
 
 @test "Fix #151: missing sudo ticket does not abort the run (warn + continue)" {
-  src="${BATS_TEST_DIRNAME}/../meisterSiri.sh"
+  src="${BATS_TEST_DIRNAME}/../MeisterAI.sh"
   grep -q 'No sudo ticket — casks needing admin rights' "$src"
 }

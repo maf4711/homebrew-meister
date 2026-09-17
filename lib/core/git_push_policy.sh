@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # lib/core/git_push_policy.sh — master switch + per-repo opt-out for auto-push
-# Sourced by meisterSiri / meister. Safe to unit-test with bats.
+# Sourced by MeisterAI / meister. Safe to unit-test with bats.
 
 # Global: may Autofix/Git module push at all?
 git_push_enabled() {

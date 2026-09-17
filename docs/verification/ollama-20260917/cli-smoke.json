@@ -1,0 +1,22 @@
+{
+  "scenario": "synthetic healthy saved report; main repository, diagnosis only",
+  "exit": 0,
+  "seconds": 1.589,
+  "stdout": "\u001b[1;34m  meister AI — Nur Diagnose\u001b[0m\n\n  Diagnose ist ein Vorschlag; Maßnahmen und Verifikation stehen im gespeicherten Bericht.\n",
+  "stderr": "Diagnose: Keine offenen Probleme im gespeicherten Bericht; keine neue Live-Prüfung. Der Systemzustand wird als gesund eingestuft.\nBeleg [E1]: Bericht [synthetic-healthy-report]: completed; Stand 2026-09-17T19:00:00Z\nBeleg [E2]: Verifizierte Reparaturen: 0\nBeleg [E3]: Keine offenen Probleme im gespeicherten Bericht; keine neue Live-Prüfung.\nNächste Prüfung (KI-Vorschlag, ungeprüft): Keine weitere Prüfung erforderlich, da kein aktuelles Problem vorliegt.\nVorschlag (nicht ausgeführt): none\n",
+  "diagnoses": [
+    {
+      "schema": "meister.diagnosis/v1",
+      "cause": "Keine offenen Probleme im gespeicherten Bericht; keine neue Live-Prüfung. Der Systemzustand wird als gesund eingestuft.",
+      "evidence": [
+        "E1",
+        "E2",
+        "E3"
+      ],
+      "missing_information": [],
+      "next_check": "Keine weitere Prüfung erforderlich, da kein aktuelles Problem vorliegt.",
+      "action": "none",
+      "parameters": []
+    }
+  ]
+}

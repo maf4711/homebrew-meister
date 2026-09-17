@@ -7,7 +7,7 @@ One command to keep your Mac healthy, your configs synced, and your network moni
 ```
 brew tap maf4711/meister
 brew install meister
-brew install --cask meister-mac   # MeisterSiri.app
+brew install --cask meister-mac   # MeisterAI.app
 ```
 
 ---
@@ -128,14 +128,15 @@ When a module fails and no known fix exists, Meister asks a local Ollama LLM for
 
 ```
 Module failed → Known fix? → Yes → Apply → Retry
-                           → No  → Ask Ollama → Safety check → Apply → Retry
+                           → No  → Ask Ollama → Validate evidence/action → Suggest
+                                                   → Opt-in: Apply → Verify
 ```
 
 - Default model: `qwen3-coder:30b` (configurable)
-- Fallback model: `llama3:latest`
-- **Safety check** blocks dangerous commands (`rm -rf /`, `mkfs`, `dd`, etc.)
+- Availability checks require the configured installed model; no silent fallback
+- **Safety check** accepts only fixed action IDs with valid evidence; no arbitrary shell code
 - All AI-suggested fixes are logged to `~/.meister/heal.log`
-- Ollama is auto-started if offline and auto-stopped if Meister started it
+- Start the Ollama server separately; meister does not start/stop it or download models
 
 ---
 
@@ -333,8 +334,7 @@ GIT_REPO_SEARCH_PATHS="$HOME/Documents $HOME/Developer"
 GIT_REPO_MAXDEPTH=5
 
 # AI Self-Healing
-OLLAMA_MODEL="qwen3-coder:30b"
-OLLAMA_FALLBACK_MODEL="llama3:latest"
+MEISTER_OLLAMA_MODEL="qwen3-coder:30b"
 
 # LaunchAgent
 LAUNCHAGENT_SCHEDULE=weekly
@@ -399,3 +399,5 @@ Runs on the configured schedule (default: weekly). The LaunchAgent is installed 
 ## License
 
 GPL-3.0
+
+Ollama backend configuration and verification: [docs/OLLAMA.md](docs/OLLAMA.md).

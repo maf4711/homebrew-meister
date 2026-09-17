@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # lib/commands/bloatware.sh — catalog scan + optional kill (quarantine).
 # Source of truth for patterns: kill-bloatware skill catalog.
-# Usage via twin: meisterSiri bloatware [scan|kill] [--p0|--p1] [--dry-run] [-y] [--json|--tsv]
+# Usage via twin: MeisterAI bloatware [scan|kill] [--p0|--p1] [--dry-run] [-y] [--json|--tsv]
 
 : "${HOME_DIR:=${HOME:-/Users/$(id -un)}}"
 : "${MEISTER_DIR:=$HOME_DIR/.meister}"
@@ -192,8 +192,8 @@ _bloat_print_human() {
         printf '         %s\n' "$path"
     done
     echo
-    echo "  Kill P0 (quarantine): meisterSiri bloatware kill --p0"
-    echo "  Dry-run:              meisterSiri bloatware kill --p0 --dry-run"
+    echo "  Kill P0 (quarantine): MeisterAI bloatware kill --p0"
+    echo "  Dry-run:              MeisterAI bloatware kill --p0 --dry-run"
     echo "  Protected: Apple, meradOS, Homebrew, core dev tools."
     echo "  Quarantine: $BLOAT_QUARANTINE_ROOT/"
 }
@@ -262,7 +262,7 @@ _bloat_kill_one() {
             fi
             mkdir -p "$q/Apps"
             mv "$path" "$q/Apps/" 2>/dev/null && echo "  ✓ quarantined app $name" && return 0
-            echo "  ✗ failed app $name (try: meisterSiri remove \"$name\")"
+            echo "  ✗ failed app $name (try: MeisterAI remove \"$name\")"
             return 1
             ;;
         brew-cask)
@@ -322,7 +322,7 @@ cmd_bloatware() {
             --tsv) format="tsv" ;;
             --help|-h)
                 cat <<'EOF'
-Usage: meisterSiri bloatware [scan|kill] [flags]
+Usage: MeisterAI bloatware [scan|kill] [flags]
 
   scan (default)   Read-only catalog scan (apps, LaunchAgents, brew, leftovers)
   kill             Quarantine approved severities (default needs --p0 and/or --p1)
@@ -344,7 +344,7 @@ EOF
                 ;;
             *)
                 echo "Unknown flag: $a" >&2
-                echo "Try: meisterSiri bloatware --help" >&2
+                echo "Try: MeisterAI bloatware --help" >&2
                 return 1
                 ;;
         esac

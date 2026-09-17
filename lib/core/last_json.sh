@@ -55,10 +55,11 @@ write_last_json() {
     [ "$verified" -le "$fix" ] || verified="$fix"
     case "$status" in completed|partial|interrupted) ;; *) status=partial ;; esac
     case "${AI_BACKEND_KIND:-}" in
-        apple) twin=meisterSiri ;; ollama) twin=meister ;;
-        *) case "${0##*/}" in meisterSiri*) twin=meisterSiri ;; meister*) twin=meister ;; *) twin=unknown ;; esac ;;
+        apple) twin=MeisterAI ;; ollama) twin=meister ;;
+        *) case "${0##*/}" in MeisterAI*) twin=MeisterAI ;; meister*) twin=meister ;; *) twin=unknown ;; esac ;;
     esac
     [ ! -f "$dir/preferred_twin" ] || preferred=$(tr -d '[:space:]' < "$dir/preferred_twin")
+    [ "$preferred" != meisterSiri ] || preferred=MeisterAI
     run_id="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}}"
     # Never allow report identity to choose a path outside runs/.
     case "$run_id" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
@@ -70,6 +71,7 @@ write_last_json() {
         printf ',\n  "run_id": '; meister_json_string "$run_id"
         printf ',\n  "report_kind": '; meister_json_string "${REPORT_KIND:-maintenance}"
         printf ',\n  "planned_modules": '; meister_json_array "${REPORT_PLANNED[@]}"
+        printf ',\n  "ai_diagnoses": '; meister_json_array "${REPORT_AI_DIAGNOSES[@]}"
         printf ',\n  "status": '; meister_json_string "$status"
         printf ',\n  "dry_run": %s,\n  "host": ' "$dry"; meister_json_string "$host"
         printf ',\n  "version": '; meister_json_string "$version"

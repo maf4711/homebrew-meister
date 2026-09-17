@@ -21,7 +21,7 @@ setup() {
   source "$BATS_TEST_DIRNAME/../lib/core/run_lock.sh"
   source "$BATS_TEST_DIRNAME/../lib/core/learned_fixes.sh"
   for fn in report_add known_fix selfheal_preflight run_or_dry compute_score save_history heal_verify_module run_module_safe; do
-    eval "$(awk -v name="$fn" '$0==name"() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../meisterSiri.sh")"
+    eval "$(awk -v name="$fn" '$0==name"() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
   done
 }
 

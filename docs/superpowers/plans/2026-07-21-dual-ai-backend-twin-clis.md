@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship two v6.0 twin CLIs in the `homebrew-meister` tap — `meister.sh` (AI backend = Ollama) and `meisterSiri.sh` (AI backend = Apple FoundationModels) — that are byte-identical outside two clearly-marked divergent regions.
+**Goal:** Ship two v6.0 twin CLIs in the `homebrew-meister` tap — `meister.sh` (AI backend = Ollama) and `MeisterAI.sh` (AI backend = Apple FoundationModels) — that are byte-identical outside two clearly-marked divergent regions.
 
-**Architecture:** Both twins keep the function names `fm_available` / `fm_query`, so the ~6 existing call-sites (`ai_heal` etc.) are untouched. The Apple twin (`meisterSiri.sh`) is today's `meister.sh` verbatim + rebrand. The Ollama twin (`meister.sh`) swaps the embedded-Swift-helper block for a thin `curl localhost:11434` path. Two `# ===== TWIN: … =====` marker regions (branding + AI backend) fence off every intended difference; a symmetry test asserts nothing else diverges (drift guard for the accepted duplication).
+**Architecture:** Both twins keep the function names `fm_available` / `fm_query`, so the ~6 existing call-sites (`ai_heal` etc.) are untouched. The Apple twin (`MeisterAI.sh`) is today's `meister.sh` verbatim + rebrand. The Ollama twin (`meister.sh`) swaps the embedded-Swift-helper block for a thin `curl localhost:11434` path. Two `# ===== TWIN: … =====` marker regions (branding + AI backend) fence off every intended difference; a symmetry test asserts nothing else diverges (drift guard for the accepted duplication).
 
 **Tech Stack:** Bash, `curl`, `jq`, `shellcheck`. On-device Apple FoundationModels (Apple twin, unchanged). Local Ollama HTTP API (Ollama twin).
 
@@ -15,8 +15,8 @@
 ## File structure
 
 - Modify: `meister.sh` — becomes the **Ollama** twin. Add TWIN markers; replace vars `221-222` and the AI block `658-720` with the thin Ollama backend.
-- Create: `meisterSiri.sh` — the **Apple** twin. Copy of current `meister.sh` (Apple) + TWIN markers + branding.
-- Modify: `Formula/meister.rb` — install `meisterSiri.sh`; `depends_on "jq"`.
+- Create: `MeisterAI.sh` — the **Apple** twin. Copy of current `meister.sh` (Apple) + TWIN markers + branding.
+- Modify: `Formula/meister.rb` — install `MeisterAI.sh`; `depends_on "jq"`.
 - Create: `tests/helpers.sh` — tiny assert + function-extraction helpers.
 - Create: `tests/test_ollama_backend.sh` — unit-tests the Ollama `fm_available`/`fm_query` with a stubbed `curl`.
 - Create: `tests/test_twin_symmetry.sh` — asserts the twins differ ONLY inside TWIN regions.
@@ -95,7 +95,7 @@ cd "$DIR" || exit 1
 fail=0
 echo "== shellcheck =="
 shellcheck -x meister.sh || fail=1
-[ -f meisterSiri.sh ] && { shellcheck -x meisterSiri.sh || fail=1; }
+[ -f MeisterAI.sh ] && { shellcheck -x MeisterAI.sh || fail=1; }
 
 for t in tests/test_*.sh; do
     [ -e "$t" ] || continue
@@ -124,11 +124,11 @@ git commit -m "test: add minimal bash test harness for twin CLIs"
 
 ---
 
-## Task 2: Symmetry test (RED) → create Apple twin `meisterSiri.sh` (GREEN)
+## Task 2: Symmetry test (RED) → create Apple twin `MeisterAI.sh` (GREEN)
 
 **Files:**
 - Create: `tests/test_twin_symmetry.sh`
-- Create: `meisterSiri.sh`
+- Create: `MeisterAI.sh`
 - Modify: `meister.sh` (add TWIN markers only — still Apple in this task)
 
 - [ ] **Step 1: Write the failing symmetry test**
@@ -139,7 +139,7 @@ git commit -m "test: add minimal bash test harness for twin CLIs"
 set -u
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-[ -f "$DIR/meisterSiri.sh" ] || { echo "FAIL: meisterSiri.sh missing"; exit 1; }
+[ -f "$DIR/MeisterAI.sh" ] || { echo "FAIL: MeisterAI.sh missing"; exit 1; }
 
 strip_twin() {  # remove every TWIN region (markers inclusive) from stdin
     awk '
@@ -150,7 +150,7 @@ strip_twin() {  # remove every TWIN region (markers inclusive) from stdin
 }
 
 a="$(strip_twin "$DIR/meister.sh")"
-b="$(strip_twin "$DIR/meisterSiri.sh")"
+b="$(strip_twin "$DIR/MeisterAI.sh")"
 if [ "$a" = "$b" ]; then
     echo "ok: twins identical outside TWIN regions"
 else
@@ -163,13 +163,13 @@ fi
 - [ ] **Step 2: Run it — expect RED**
 
 Run: `bash tests/test_twin_symmetry.sh`
-Expected: FAIL — `meisterSiri.sh missing`.
+Expected: FAIL — `MeisterAI.sh missing`.
 
-- [ ] **Step 3: Create `meisterSiri.sh` as a copy of the current (Apple) `meister.sh`**
+- [ ] **Step 3: Create `MeisterAI.sh` as a copy of the current (Apple) `meister.sh`**
 
 Run:
 ```bash
-cp meister.sh meisterSiri.sh
+cp meister.sh MeisterAI.sh
 ```
 
 - [ ] **Step 4: Add the `TWIN:BRANDING` region to BOTH files**
@@ -180,16 +180,16 @@ In `meister.sh`, immediately below the shebang line, insert:
 MEISTER_LABEL="meister v6.0 (Ollama)"
 # ===== /TWIN:BRANDING =====
 ```
-In `meisterSiri.sh`, at the identical location, insert:
+In `MeisterAI.sh`, at the identical location, insert:
 ```sh
 # ===== TWIN:BRANDING (divergent — do NOT sync between twins) =====
-MEISTER_LABEL="meisterSiri v6.0 (Apple Intelligence)"
+MEISTER_LABEL="MeisterAI v6.0 (Apple Intelligence)"
 # ===== /TWIN:BRANDING =====
 ```
 
 - [ ] **Step 5: Wrap the Apple backend in a `TWIN:AI-BACKEND` region in BOTH files**
 
-The Apple backend spans two spots. In BOTH `meister.sh` and `meisterSiri.sh`, wrap them identically (both are still Apple at this point):
+The Apple backend spans two spots. In BOTH `meister.sh` and `MeisterAI.sh`, wrap them identically (both are still Apple at this point):
 
 Around the vars (currently `FM_ENABLED=true` / `FM_HELPER=…`, lines ~221-222) — put the opening marker on the line above `FM_ENABLED=true` and the closing marker on the line below `FM_HELPER=…`:
 ```sh
@@ -221,14 +221,14 @@ Expected: `ok: twins identical outside TWIN regions` (only the BRANDING region d
 
 - [ ] **Step 7: Lint both**
 
-Run: `shellcheck -x meister.sh meisterSiri.sh && echo OK`
+Run: `shellcheck -x meister.sh MeisterAI.sh && echo OK`
 Expected: `OK`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add meister.sh meisterSiri.sh tests/test_twin_symmetry.sh
-git commit -m "feat: add meisterSiri.sh (Apple twin) + TWIN markers + symmetry test"
+git add meister.sh MeisterAI.sh tests/test_twin_symmetry.sh
+git commit -m "feat: add MeisterAI.sh (Apple twin) + TWIN markers + symmetry test"
 ```
 
 ---
@@ -345,7 +345,7 @@ Expected: `ok: twins identical outside TWIN regions`.
 
 - [ ] **Step 6: Lint**
 
-Run: `shellcheck -x meister.sh meisterSiri.sh && echo OK`
+Run: `shellcheck -x meister.sh MeisterAI.sh && echo OK`
 Expected: `OK`.
 
 - [ ] **Step 7: Commit**
@@ -367,7 +367,7 @@ git commit -m "feat: meister.sh AI backend → thin Ollama HTTP path (keeps fm_*
 In `Formula/meister.rb`, inside `def install`, directly below the existing
 `bin.install "meister.sh" => "meister"` line, add:
 ```ruby
-    bin.install "meisterSiri.sh" => "meisterSiri"
+    bin.install "MeisterAI.sh" => "MeisterAI"
 ```
 And near the top of the class (below `homepage`/`url`/`sha256`, above `def install`), add:
 ```ruby
@@ -384,7 +384,7 @@ Expected: `Syntax OK`.
 Run:
 ```bash
 grep -q 'bin.install "meister.sh" => "meister"'         Formula/meister.rb && \
-grep -q 'bin.install "meisterSiri.sh" => "meisterSiri"' Formula/meister.rb && \
+grep -q 'bin.install "MeisterAI.sh" => "MeisterAI"' Formula/meister.rb && \
 grep -q 'depends_on "jq"'                               Formula/meister.rb && echo OK
 ```
 Expected: `OK`.
@@ -393,7 +393,7 @@ Expected: `OK`.
 
 ```bash
 git add Formula/meister.rb
-git commit -m "build(formula): install meisterSiri twin + depend on jq"
+git commit -m "build(formula): install MeisterAI twin + depend on jq"
 ```
 
 ---
@@ -418,7 +418,7 @@ Expected: reachable → prints a short model response. If Ollama is not installe
 
 - [ ] **Step 3 (optional): live smoke of the Apple twin availability**
 
-Run: `bash -c '. <(sed -n "/^fm_available()/,/^}/p; /^FM_/p" meisterSiri.sh); fm_available && echo "apple-available"'`
+Run: `bash -c '. <(sed -n "/^fm_available()/,/^}/p; /^FM_/p" MeisterAI.sh); fm_available && echo "apple-available"'`
 Expected: on Apple-Intelligence-enabled hardware → `apple-available`; otherwise silent (degrades).
 
 - [ ] **Step 4: Final commit (if run.sh changed) + push branch**

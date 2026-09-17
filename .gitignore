@@ -3,7 +3,11 @@
 *.bak
 *.tmp
 
-# MeisterSiri.app build
-app/MeisterSiri/build/
-app/MeisterSiri/MeisterSiri.xcodeproj/
-app/MeisterSiri/dist/
+# MeisterAI.app build
+app/MeisterAI/build/
+app/MeisterAI/MeisterAI.xcodeproj/
+app/MeisterAI/dist/
+
+# Local FM evaluation/runtime caches
+__pycache__/
+artifacts/fm-*.json

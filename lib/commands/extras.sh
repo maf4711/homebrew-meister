@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # lib/commands/extras.sh — P2/P3 subcommands as functions
-# Called from meisterSiri.sh early-exit handlers. Expects MEISTER_DIR, colors optional.
+# Called from MeisterAI.sh early-exit handlers. Expects MEISTER_DIR, colors optional.
 
 # --- report history --diff (last two runs) ---
 cmd_report_diff() {
@@ -44,10 +44,10 @@ cmd_report_diff() {
 cmd_why() {
     local q="${1:-}"
     if [ -z "$q" ]; then
-        echo "Usage: meisterSiri why <module|warn-text|profile>"
-        echo "  meisterSiri why Homebrew"
-        echo "  meisterSiri why profile"
-        echo "  meisterSiri why \"broken symlink\""
+        echo "Usage: MeisterAI why <module|warn-text|profile>"
+        echo "  MeisterAI why Homebrew"
+        echo "  MeisterAI why profile"
+        echo "  MeisterAI why \"broken symlink\""
         return 1
     fi
     if [ "$q" = "profile" ] || [ "$q" = "profiles" ]; then
@@ -181,7 +181,7 @@ cmd_storage() {
         printf "  %-12s %10s  %s\n" "$mb" "$path" "$note"
     }
     _row "$HOME/Library/Developer/Xcode/DerivedData" "Xcode DerivedData — meister -X"
-    _row "$HOME/Library/Developer/CoreSimulator" "iOS Simulators — meisterSiri simfix"
+    _row "$HOME/Library/Developer/CoreSimulator" "iOS Simulators — MeisterAI simfix"
     _row "$HOME/Library/Caches" "User caches — meister -C"
     _row "$HOME/.Trash" "Trash — meister -T"
     _row "$HOME/Library/Logs" "User logs — deep clean"
@@ -195,8 +195,8 @@ cmd_storage() {
     _row "$HOME/go/pkg/mod" "Go module cache"
     _row "$HOME/.cargo/registry" "Cargo registry"
     echo ""
-    echo "  Apply safely: meisterSiri --deep -n   # dry-run first"
-    echo "                meisterSiri -X -C -T    # targeted"
+    echo "  Apply safely: MeisterAI --deep -n   # dry-run first"
+    echo "                MeisterAI -X -C -T    # targeted"
 }
 
 # --- contacts doctor: AddressBook bloat / risk (read-only) ---

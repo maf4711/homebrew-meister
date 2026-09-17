@@ -1,4 +1,4 @@
-# MeisterSiri: execution, reports and Siri
+# MeisterAI: execution, reports and Siri
 
 Authorized on 2026-09-14: implement all six improvements from the code review.
 Baseline: `380b1af` in `homebrew-meister`; the existing 50 CLI tests passed.
@@ -50,4 +50,4 @@ a separate action; a local green build does not imply a green remote CI run.
 ## Recap
 
 Six authorized improvements are tracked above. Final evidence is recorded in
-`docs/verification/2026-09-14-meistersiri.md` after integration.
+`docs/verification/2026-09-14-meisterai.md` after integration.

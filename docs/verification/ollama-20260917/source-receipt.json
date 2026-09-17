@@ -1,0 +1,25 @@
+{
+  "scope": "final live-tested sources and fixtures",
+  "sha256": {
+    "MeisterAI.sh": "68bd0c96c9b33d6beac778a949d381ae92e182dc1b3ad24305627229301d4f39",
+    "meister.sh": "d1c9d29d6bbe2f65f6a2eace3108a8eef5c98a657f3447062b8e47a0e838e79d",
+    "lib/ollama/client.py": "85c1a1321f1cf1a3d9b7cb9ad23aee70e5df3c19d9ff8479a19bc8d43f9fb575",
+    "lib/fm/contract.py": "293daae69debbfb0afa1bc9dd33fb3d815723639a735cc16999737261b8e307b",
+    "scripts/sync-twins.sh": "e727dcee8af82390b419e41223507b346fd0cf271f48f4e301bdcdc6a18aa8a7",
+    "scripts/evaluate-fm.py": "57f199057092df13dfb1e463b35cd0195df8bec32af098254c09b7fa069679d9",
+    "tests/fixtures/fm_cases.json": "ef2d3acbc741a05e1209b49827337e0528d4ea0d352fd16bca4275d15b7089ce",
+    "tests/fixtures/ollama_holdout.json": "fa3b2f8acd2e172279532b2f54612f6539a61c05cf525905daf563276d9bc71e"
+  },
+  "verification": {
+    "bats": 152,
+    "python_tests": 22,
+    "offline_cases": 24,
+    "live_baseline_queries": 112,
+    "live_tuned_queries": 112,
+    "live_holdout_queries": 50,
+    "cli_diagnose_only_exit": 0,
+    "temporary_server_stopped": true,
+    "repairs_executed": false,
+    "published_or_installed": false
+  }
+}

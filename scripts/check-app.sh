@@ -2,7 +2,7 @@
 # Build and test the native macOS application; never starts an iOS Simulator.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT/app/MeisterSiri"
+cd "$ROOT/app/MeisterAI"
 
 if [ "$(uname -s)" != Darwin ]; then
   echo "ERROR: the app gate requires macOS and Xcode." >&2
@@ -14,8 +14,8 @@ done
 
 xcodegen generate
 xcodebuild \
-  -project MeisterSiri.xcodeproj \
-  -scheme MeisterSiri \
+  -project MeisterAI.xcodeproj \
+  -scheme MeisterAI \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath build/CheckDerivedData \
@@ -24,8 +24,8 @@ xcodebuild \
   test
 
 xcodebuild \
-  -project MeisterSiri.xcodeproj \
-  -scheme MeisterSiri \
+  -project MeisterAI.xcodeproj \
+  -scheme MeisterAI \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -derivedDataPath build/CheckDerivedData \

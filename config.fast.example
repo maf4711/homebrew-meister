@@ -1,5 +1,5 @@
-# MeisterSiri Daily-Fast config — copy to ~/.meister/config (merge keys)
-# Full weekly run: meisterSiri --deep
+# MeisterAI Daily-Fast config — copy to ~/.meister/config (merge keys)
+# Full weekly run: MeisterAI --deep
 
 # Profiles (CLI overrides this): auto | quick | deep
 # RUN_PROFILE=auto
@@ -52,3 +52,22 @@ AI_HEAL_EXECUTE=false
 
 # Fleet (optional)
 # FLEET_HOSTS="mac-mini.local"
+
+# Structured FM diagnoses: system | auto | pcc
+# auto starts on-device; unresolved complete evidence can escalate to PCC.
+# system keeps all inference on-device. PCC receives bounded, redacted context.
+# FM_HEAL_MODEL=auto
+# FM_DIAGNOSE_MODEL=system
+# Actions are fixed catalog IDs; AI_HEAL_EXECUTE remains the execution gate.
+
+# meister / Ollama: explicit model, bounded generation, reuse loaded weights.
+# No automatic downloads or silent model fallback.
+MEISTER_OLLAMA_URL="http://localhost:11434"
+MEISTER_OLLAMA_MODEL="qwen3-coder:30b"
+MEISTER_OLLAMA_TIMEOUT=90
+MEISTER_OLLAMA_KEEP_ALIVE="5m"
+MEISTER_OLLAMA_NUM_CTX=8192
+MEISTER_OLLAMA_NUM_PREDICT=1024
+
+# Bounded diagnostics need the final answer, not an internal reasoning trace.
+MEISTER_OLLAMA_THINK="false"

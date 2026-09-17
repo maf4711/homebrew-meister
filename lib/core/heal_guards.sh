@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # lib/core/heal_guards.sh — pure AI-Heal allowlist (no side effects)
-# Sourced by meisterSiri / meister. Safe to unit-test with bats.
+# Sourced by MeisterAI / meister. Safe to unit-test with bats.
 
 # Allowlisted verbs for AI-Heal / Learned-Fix execution
 : "${FM_HEAL_ALLOW:= killall pkill qlmanage mdutil mdimport dscacheutil atsutil defaults launchctl lsregister tccutil purge fc-cache dot_clean }"
@@ -84,4 +84,12 @@ heal_missing_path() {
         fi
     done
     return 1
+}
+
+# Exact catalog applies to new model proposals AND previously learned AI commands.
+heal_catalog_command_allowed() {
+    case "$1" in
+        '/usr/bin/qlmanage -r cache'|'/usr/bin/killall Finder'|'/usr/bin/killall Dock') return 0 ;;
+        *) return 1 ;;
+    esac
 }

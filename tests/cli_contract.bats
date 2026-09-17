@@ -2,7 +2,7 @@
 # Run only read-only probes and disabled preview fixtures in temporary MEISTER_DIR.
 
 @test "read-only CLI version leaves an existing run lock untouched" {
-  python3 - "$BATS_TEST_DIRNAME/../meisterSiri.sh" "$BATS_TEST_TMPDIR" <<'PY'
+  python3 - "$BATS_TEST_DIRNAME/../MeisterAI.sh" "$BATS_TEST_TMPDIR" <<'PY'
 import os,pathlib,subprocess,sys
 script=pathlib.Path(sys.argv[1]).resolve(); fixture=pathlib.Path(sys.argv[2])/'fixture'
 state=fixture/'.meister'; state.mkdir(parents=True)
@@ -18,7 +18,7 @@ PY
 }
 
 @test "autofix and ai preview produce honest reports through their real handlers" {
-  python3 - "$BATS_TEST_DIRNAME/../meisterSiri.sh" "$BATS_TEST_TMPDIR" <<'PY'
+  python3 - "$BATS_TEST_DIRNAME/../MeisterAI.sh" "$BATS_TEST_TMPDIR" <<'PY'
 import json,os,pathlib,subprocess,sys
 script=pathlib.Path(sys.argv[1]).resolve(); fixture=pathlib.Path(sys.argv[2])/'fixture'
 state=fixture/'.meister'; state.mkdir(parents=True)
@@ -41,7 +41,7 @@ PY
 }
 
 @test "health and AI diagnosis inspections preserve prior report and live lock" {
-  python3 - "$BATS_TEST_DIRNAME/../meisterSiri.sh" "$BATS_TEST_TMPDIR" <<'PY'
+  python3 - "$BATS_TEST_DIRNAME/../MeisterAI.sh" "$BATS_TEST_TMPDIR" <<'PY'
 import os,pathlib,subprocess,sys
 script=pathlib.Path(sys.argv[1]).resolve(); fixture=pathlib.Path(sys.argv[2])/'fixture'
 state=fixture/'.meister'; state.mkdir(parents=True)
@@ -55,7 +55,10 @@ bindir=fixture/'bin'; bindir.mkdir()
 env={**os.environ,'MEISTER_DIR':str(state),'MEISTER_LIB':str(script.parent/'lib'),'PATH':f'{bindir}:{os.environ["PATH"]}'}
 for args in [['-H'],['ai','--diagnose-only']]:
  p=subprocess.run(['/bin/bash',str(script),*args],env=env,capture_output=True,text=True,timeout=15)
- assert p.returncode==0,(p.stdout,p.stderr)
+ assert p.returncode==(69 if args[0]=="ai" else 0),(p.stdout,p.stderr)
+ if args[0]=="ai":
+  assert "keine Modell-Diagnose erstellt" in p.stdout
+  assert not (state/"diagnoses").exists()
  assert (state/'last.json').read_text()=='{"old":"report"}\n'
  assert (state/'history.log').read_text()=='existing-history\n'
  assert lock.read_text()==str(os.getpid())
@@ -64,7 +67,7 @@ PY
 }
 
 @test "all profile previews plan modules without invoking maintenance programs" {
-  python3 - "$BATS_TEST_DIRNAME/../meisterSiri.sh" "$BATS_TEST_TMPDIR" <<'PY'
+  python3 - "$BATS_TEST_DIRNAME/../MeisterAI.sh" "$BATS_TEST_TMPDIR" <<'PY'
 import json,os,pathlib,subprocess,sys
 script=pathlib.Path(sys.argv[1]).resolve(); fixture=pathlib.Path(sys.argv[2])/'fixture'
 state=fixture/'.meister'; state.mkdir(parents=True)
@@ -89,8 +92,25 @@ PY
 
 @test "state directory override rejects relative paths and parent traversal" {
   for state in relative/state /tmp/../unexpected /; do
-    run env MEISTER_DIR="$state" /bin/bash "$BATS_TEST_DIRNAME/../meisterSiri.sh" --version
+    run env MEISTER_DIR="$state" /bin/bash "$BATS_TEST_DIRNAME/../MeisterAI.sh" --version
     [ "$status" = 2 ]
     [[ "$output" == *'MEISTER_DIR must be an absolute state directory'* ]]
   done
+}
+
+@test "AI report renders saved evidence without model access or changing report" {
+  python3 - "$BATS_TEST_DIRNAME/../MeisterAI.sh" "$BATS_TEST_TMPDIR" <<'PY'
+import json,os,pathlib,subprocess,sys
+script=pathlib.Path(sys.argv[1]).resolve(); root=pathlib.Path(sys.argv[2]); state=root/'state'; state.mkdir()
+data={'schema':'meister.last/v1','run_id':'fixture','status':'completed','dry_run':False,'verified_repair_count':0,'fixes':['update requested'],'warnings':['verification pending'],'errors':[],'ai_diagnoses':['/fixture/diagnosis.json']}
+report=json.dumps(data); (state/'last.json').write_text(report)
+env={**os.environ,'MEISTER_DIR':str(state),'MEISTER_LIB':str(script.parent/'lib')}
+p=subprocess.run(['/bin/bash',str(script),'ai','report'],env=env,capture_output=True,text=True,timeout=15)
+assert p.returncode==0,(p.stdout,p.stderr)
+assert 'Verifizierte Reparaturen: 0' in p.stdout
+assert 'Offen [warnings/0]: verification pending' in p.stdout
+assert 'Diagnosebeleg [ai_diagnoses/0]' in p.stdout
+assert (state/'last.json').read_text()==report
+assert not (state/'meister-fm').exists() and not (state/'diagnoses').exists()
+PY
 }

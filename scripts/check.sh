@@ -15,7 +15,7 @@ echo "=== shellcheck ==="
 shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh
 
 echo "=== bash -n twins ==="
-bash -n meisterSiri.sh
+bash -n MeisterAI.sh
 bash -n meister.sh
 echo "OK bash -n"
 
@@ -25,4 +25,10 @@ bash scripts/sync-twins.sh --check
 echo "=== bats ==="
 bats tests/
 
+echo "=== FM evaluation harness ==="
+python3 -m unittest discover -s tests -p 'test_fm*.py'
+fm_result=$(mktemp "${TMPDIR:-/tmp}/meister-fm-evaluation.XXXXXX")
+trap 'rm -f "$fm_result"' EXIT
+python3 scripts/evaluate-fm.py --output "$fm_result"
+python3 scripts/evaluate-fm.py --fixtures tests/fixtures/ollama_holdout.json --output "$fm_result"
 echo "=== ALL CHECKS PASSED ==="

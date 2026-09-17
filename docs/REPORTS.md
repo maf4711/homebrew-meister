@@ -1,6 +1,6 @@
 # Local maintenance reports and repair evidence
 
-MeisterSiri and meister keep their shared state in `~/.meister`. The CLI can use
+MeisterAI and meister keep their shared state in `~/.meister`. The CLI can use
 an absolute `MEISTER_DIR` override without parent-directory components for
 isolated fixtures. The desktop app and Siri read the normal user directory.
 
