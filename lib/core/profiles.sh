@@ -23,7 +23,7 @@ module_in_profile() {
         auto|*)
             case "$name" in
                 "iCloud Fix")           [ "${ICLOUD_FIX_ENABLED:-false}" = "true" ] || return 1 ;;
-                "Dev Updates")          [ "${UNIVERSAL_UPDATES:-false}" = "true" ] || return 1 ;;
+                "Dev Updates")          [ "${UNIVERSAL_UPDATES:-true}" = "true" ] || return 1 ;;
                 "Docs Order")           [ "${DOCS_ORDER_ENABLED:-true}" = "true" ] || return 1 ;;
                 "Docker Prune")         [ "${CLEAN_DOCKER:-false}" = "true" ] || return 1 ;;
                 "Dev Caches")           [ "${CLEAN_DEV_CACHES:-true}" = "true" ] || return 1 ;;

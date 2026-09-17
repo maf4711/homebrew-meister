@@ -15,8 +15,9 @@ BREW_UPGRADE_TIMEOUT_SEC=600
 # BREW_CASK_SKIP="whatsapp microsoft-word"
 FIND_TIMEOUT_SEC=60
 
-# Heavy modules off for daily (enable with --deep)
-UNIVERSAL_UPDATES=false
+# Extra software sources (npm/pipx/rust/gem/VS Code/…) on auto+deep.
+# brew / App Store / macOS already have their own modules.
+UNIVERSAL_UPDATES=true
 ICLOUD_FIX_ENABLED=false
 ICLOUD_STUBS_SCAN=false
 DOCS_ORDER_DATALESS_SCAN=false

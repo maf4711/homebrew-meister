@@ -6,7 +6,12 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.23
+# Version: 6.24
+# NEW in v6.24 — software inventory + update from every present source:
+#  - meisterSiri updates [--scan|--apply|--json]: brew, mas, macOS, Sparkle,
+#    npm/pnpm/bun, pipx, rust/cargo/uv, gem, mise, MacPorts, VS Code/Cursor,
+#    Microsoft AutoUpdate, tldr, oh-my-zsh, gcloud
+#  - Dev Updates runs on auto/deep by default (UNIVERSAL_UPDATES=true)
 # NEW in v6.23 — macOS 27 Foundation Models for MeisterSiri:
 #  - AI-Heal: PrivateCloudComputeLanguageModel + reasoning, @Generable JSON
 #  - On-device fallback; tokenCount vs contextSize; session Instructions
@@ -405,6 +410,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/brew_upgrade.sh" ] && . "$MEISTER_LIB_DIR/core/brew_upgrade.sh"
     # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/software_updates.sh" ] && . "$MEISTER_LIB_DIR/core/software_updates.sh"
+    # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/git_push_policy.sh" ] && . "$MEISTER_LIB_DIR/core/git_push_policy.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/aufraum_hook.sh" ] && . "$MEISTER_LIB_DIR/core/aufraum_hook.sh"
@@ -415,6 +422,20 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
     MEISTER_LIB_LOADED=true
+fi
+
+# ── software updates (all sources) — before getopts ──
+if [ "${1:-}" = "updates" ] || [ "${1:-}" = "appupdates" ] || [ "${1:-}" = "macupdate" ]; then
+    echo -e "\033[1;34m  MeisterSiri UPDATES — alle Softwarestände\033[0m"
+    echo ""
+    if ! command -v cmd_software_updates >/dev/null 2>&1; then
+        echo "  lib/core/software_updates.sh not loaded (MEISTER_LIB missing)"
+        exit 1
+    fi
+    shift
+    set +e
+    cmd_software_updates "$@"
+    exit $?
 fi
 
 # ── bloatware / kill-bloat (v6.18) — MUST run before getopts / --* reject ──
@@ -2577,158 +2598,33 @@ module_universal_updates() {
         log STEP "   disabled (UNIVERSAL_UPDATES=false in config)"
         return 0
     fi
-    log INFO "Universal Updates (npm/pipx/rust/gcloud/tldr/omz)..."
-    local tools_updated=0 tools_current=0 tools_failed=0
-
-    # npm globals (nvm-based installs only appear when npm is on PATH)
-    if command_exists npm; then
-        bw_phase "Updates: npm -g"
-        local npm_outdated
-        npm_outdated=$(timeout 60 npm outdated -g --parseable 2>/dev/null | grep -c . || true)
-        if [ "${npm_outdated:-0}" -gt 0 ]; then
-            if $DRY_RUN; then
-                log STEP "   [DRY-RUN] npm -g: ${npm_outdated} outdated"
-            elif timeout 300 npm update -g >/dev/null 2>&1; then
-                log FIX "   npm -g: ${npm_outdated} package(s) updated"
-                tools_updated=$((tools_updated + 1))
-            else
-                log WARN "   npm -g: update failed"
-                tools_failed=$((tools_failed + 1))
-            fi
-        else
-            log STEP "   npm -g: up to date"
-            tools_current=$((tools_current + 1))
-        fi
+    if ! command -v software_apply_all >/dev/null 2>&1; then
+        log WARN "   software_updates.sh not loaded — skip extra sources"
+        return 0
+    fi
+    log INFO "Software updates (toolchains + VS Code/Cursor/Office; brew/mas/macOS have own modules)..."
+    bw_phase "Updates: extra sources"
+    local before after applied
+    before=$(software_scan_all | grep -c . || true)
+    if $DRY_RUN; then
+        SOFTWARE_DRY_RUN=true
+    else
+        SOFTWARE_DRY_RUN=false
+    fi
+    SOFTWARE_APPLY_GROUPS=toolchain,apps
+    software_apply_all >/dev/null 2>&1 || true
+    after=$(software_scan_all | awk -F'\t' '$5=="apply"' | grep -c . || true)
+    applied=$(( before - after ))
+    [ "$applied" -lt 0 ] && applied=0
+    log INFO "   Extra sources: ${before} listed, ${applied} applied (remaining apply-rows: ${after})"
+    if [ "${before:-0}" -eq 0 ]; then
+        report_add SUCCESS "Dev-Toolchains up to date"
+    elif [ "$applied" -gt 0 ]; then
+        report_add FIX "Software updates: ${applied} extra source(s) applied"
+    else
+        report_add SUCCESS "Extra software sources checked"
     fi
 
-    # pipx-managed CLI tools
-    if command_exists pipx; then
-        bw_phase "Updates: pipx"
-        if $DRY_RUN; then
-            log STEP "   [DRY-RUN] pipx upgrade-all"
-        else
-            local pipx_out
-            pipx_out=$(timeout 300 pipx upgrade-all 2>&1)
-            local pipx_n
-            pipx_n=$(echo "$pipx_out" | grep -c "upgraded package" || true)
-            if [ "${pipx_n:-0}" -gt 0 ]; then
-                log FIX "   pipx: ${pipx_n} package(s) upgraded"
-                tools_updated=$((tools_updated + 1))
-            else
-                log STEP "   pipx: up to date"
-                tools_current=$((tools_current + 1))
-            fi
-        fi
-    fi
-
-    # pip user packages: REPORT ONLY — auto-upgrading pip packages under a
-    # conda/miniforge python breaks environments faster than it helps.
-    if command_exists pip3; then
-        bw_phase "Updates: pip (report)"
-        local pip_outdated
-        pip_outdated=$(timeout 60 pip3 list --outdated 2>/dev/null | tail -n +3 | grep -c . || true)
-        if [ "${pip_outdated:-0}" -gt 0 ]; then
-            log STEP "   pip: ${pip_outdated} outdated (report-only — update via conda/pipx)"
-        else
-            log STEP "   pip: up to date"
-        fi
-    fi
-
-    # Rust toolchain
-    if command_exists rustup; then
-        bw_phase "Updates: rustup"
-        if $DRY_RUN; then
-            log STEP "   [DRY-RUN] rustup update"
-        else
-            local rust_out
-            rust_out=$(timeout 300 rustup update 2>&1)
-            if echo "$rust_out" | grep -q "updated"; then
-                log FIX "   rustup: toolchain updated"
-                tools_updated=$((tools_updated + 1))
-            else
-                log STEP "   rustup: up to date"
-                tools_current=$((tools_current + 1))
-            fi
-        fi
-    fi
-
-    # cargo binaries (only with cargo-install-update helper present)
-    if command_exists cargo-install-update; then
-        bw_phase "Updates: cargo"
-        if $DRY_RUN; then
-            log STEP "   [DRY-RUN] cargo install-update -a"
-        else
-            local cargo_out
-            cargo_out=$(timeout 600 cargo install-update -a 2>&1)
-            if [ $? -ne 0 ]; then
-                log WARN "   cargo install-update failed"
-                tools_failed=$((tools_failed + 1))
-            elif echo "$cargo_out" | grep -qi "updating\|installing"; then
-                log FIX "   cargo: binaries updated"
-                tools_updated=$((tools_updated + 1))
-            else
-                log STEP "   cargo: up to date"
-                tools_current=$((tools_current + 1))
-            fi
-        fi
-    fi
-
-    # uv (python package manager, self-managed when not from brew)
-    if command_exists uv && ! brew list uv &>/dev/null; then
-        bw_phase "Updates: uv"
-        if $DRY_RUN; then
-            log STEP "   [DRY-RUN] uv self update"
-        elif timeout 120 uv self update 2>&1 | grep -q "Upgraded"; then
-            log FIX "   uv: updated"
-            tools_updated=$((tools_updated + 1))
-        else
-            log STEP "   uv: up to date"
-            tools_current=$((tools_current + 1))
-        fi
-    fi
-
-    # Google Cloud SDK (heavy — gated, default on)
-    if command_exists gcloud && [ "${UPDATE_GCLOUD:-true}" = "true" ]; then
-        bw_phase "Updates: gcloud"
-        if $DRY_RUN; then
-            log STEP "   [DRY-RUN] gcloud components update"
-        elif timeout 600 gcloud components update --quiet >/dev/null 2>&1; then
-            log STEP "   gcloud: components checked/updated"
-            tools_current=$((tools_current + 1))
-        else
-            log STEP "   gcloud: update skipped (managed install or offline)"
-        fi
-    fi
-
-    # tldr pages cache
-    if command_exists tldr; then
-        bw_phase "Updates: tldr"
-        $DRY_RUN || timeout 60 tldr --update >/dev/null 2>&1
-        log STEP "   tldr: pages cache refreshed"
-        tools_current=$((tools_current + 1))
-    fi
-
-    # oh-my-zsh (git-based — ff-only so a dirty checkout never breaks)
-    if [ -d "$HOME/.oh-my-zsh/.git" ]; then
-        bw_phase "Updates: oh-my-zsh"
-        if $DRY_RUN; then
-            log STEP "   [DRY-RUN] git -C ~/.oh-my-zsh pull"
-        else
-            local omz_before omz_after
-            omz_before=$(git -C "$HOME/.oh-my-zsh" rev-parse HEAD 2>/dev/null)
-            timeout 60 git -C "$HOME/.oh-my-zsh" pull --ff-only --quiet 2>/dev/null
-            omz_after=$(git -C "$HOME/.oh-my-zsh" rev-parse HEAD 2>/dev/null)
-            if [ -n "$omz_before" ] && [ "$omz_before" != "$omz_after" ]; then
-                log FIX "   oh-my-zsh: updated"
-                tools_updated=$((tools_updated + 1))
-            else
-                log STEP "   oh-my-zsh: up to date"
-                tools_current=$((tools_current + 1))
-            fi
-        fi
-    fi
-
-    # conda: OFF by default — `conda update --all` reshuffles entire envs
     if command_exists conda; then
         if [ "${UPDATE_CONDA:-false}" = "true" ]; then
             bw_phase "Updates: conda"
@@ -2736,26 +2632,17 @@ module_universal_updates() {
                 log STEP "   [DRY-RUN] conda update -n base conda"
             elif timeout 600 conda update -n base -c conda-forge conda -y >/dev/null 2>&1; then
                 log STEP "   conda: base checked"
-                tools_current=$((tools_current + 1))
             else
                 log WARN "   conda: base update failed"
-                tools_failed=$((tools_failed + 1))
+                report_add WARN "conda base update failed"
             fi
         else
             log STEP "   conda: present, skipped (enable: UPDATE_CONDA=true)"
         fi
     fi
-
-    log INFO "   Universal Updates: ${tools_updated} updated, ${tools_current} current, ${tools_failed} failed"
-    # failures must surface in report + ledger, not hide behind a SUCCESS line
-    [ "$tools_failed" -gt 0 ] && report_add WARN "Universal Updates: ${tools_failed} toolchain update(s) failed"
-    if [ "$tools_updated" -gt 0 ]; then
-        report_add FIX "Universal Updates: ${tools_updated} toolchain(s) updated"
-    elif [ "$tools_failed" -eq 0 ]; then
-        report_add SUCCESS "Dev-Toolchains up to date"
-    fi
     return 0
 }
+
 
 # ── GIT REPO MANAGEMENT (Fix #101-102) ──
 
@@ -8194,67 +8081,7 @@ if [ "${1:-}" = "tcc-clean" ]; then
     exit 0
 fi
 
-# ── App Updates (meister appupdates) — MacUpdater-style unified check ──
-# One list for ALL app updates: brew casks, Mac App Store, and Sparkle-based
-# apps (reads each app's SUFeedURL appcast — the same mechanism MacUpdater uses).
-if [ "${1:-}" = "appupdates" ] || [ "${1:-}" = "macupdate" ]; then
-    echo -e "\033[1;34m  MeisterSiri APPUPDATES — alle App-Updates (MacUpdater-Style)\033[0m"
-    echo ""
-    _AU_TOTAL=0
-
-    if command_exists brew; then
-        echo -e "  \033[1mHomebrew Casks\033[0m"
-        _AU_BREW=$(brew outdated --cask --greedy --verbose 2>/dev/null | grep -v '(latest)')
-        if [ -n "$_AU_BREW" ]; then
-            echo "$_AU_BREW" | sed 's/^/    /'
-            _AU_TOTAL=$((_AU_TOTAL + $(echo "$_AU_BREW" | grep -c .)))
-            echo "    → brew upgrade --cask"
-        else
-            echo "    alle aktuell"
-        fi
-        echo ""
-    fi
-
-    if command_exists mas; then
-        echo -e "  \033[1mMac App Store\033[0m"
-        _AU_MAS=$(mas outdated 2>/dev/null)
-        if [ -n "$_AU_MAS" ]; then
-            echo "$_AU_MAS" | sed 's/^/    /'
-            _AU_TOTAL=$((_AU_TOTAL + $(echo "$_AU_MAS" | grep -c .)))
-            echo "    → mas upgrade"
-        else
-            echo "    alle aktuell"
-        fi
-        echo ""
-    fi
-
-    echo -e "  \033[1mSparkle-Apps (Appcast-Check)\033[0m"
-    _AU_SPARKLE=0
-    for _app in /Applications/*.app; do
-        [ -d "$_app" ] || continue
-        _feed=$(defaults read "$_app/Contents/Info.plist" SUFeedURL 2>/dev/null)
-        [ -z "$_feed" ] && continue
-        _cur=$(defaults read "$_app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)
-        [ -z "$_cur" ] && continue
-        _latest=$(curl -sfL --max-time 8 "$_feed" 2>/dev/null | \
-            grep -oE 'sparkle:shortVersionString="[^"]+"' | head -1 | cut -d'"' -f2)
-        [ -z "$_latest" ] && continue
-        if [ "$_cur" != "$_latest" ]; then
-            echo "    $(basename "$_app" .app): ${_cur} → ${_latest}  (App-Menue: Nach Updates suchen)"
-            _AU_SPARKLE=$((_AU_SPARKLE + 1))
-            _AU_TOTAL=$((_AU_TOTAL + 1))
-        fi
-    done
-    [ "$_AU_SPARKLE" -eq 0 ] && echo "    alle aktuell (oder kein Sparkle-Feed)"
-    echo ""
-
-    if [ -d "/Applications/MacUpdater.app" ]; then
-        echo "  MacUpdater ist installiert — Vollscan: open -a MacUpdater"
-        echo ""
-    fi
-    echo "  ${_AU_TOTAL} Update(s) insgesamt. Nicht-brew-Apps adoptieren: meister adopt"
-    exit 0
-fi
+# appupdates/macupdate handled early via cmd_software_updates
 
 # ── System Diff (meister diff) — Zeitreise: was hat sich geaendert? ──
 if [ "${1:-}" = "diff" ]; then
@@ -10146,7 +9973,11 @@ SYSTEM:
   meisterSiri tweaks       Hidden macOS settings (OnyX-style): showhidden,
                        extensions, pathbar, keyrepeat, savepanel, dockfast
   meisterSiri adopt [--do] Bring unmanaged /Applications apps under brew (updates!)
-  meisterSiri appupdates   ALL app updates in one list: brew + App Store + Sparkle
+  meisterSiri updates [--apply|--json|--dry-run]
+                       Inventory + update every present source (brew, mas, macOS,
+                       Sparkle, npm/pnpm/bun, pipx, rust, gem, mise, MacPorts,
+                       VS Code/Cursor, Microsoft AutoUpdate, tldr, omz, gcloud)
+  meisterSiri appupdates   Alias for updates (scan)
   meisterSiri win <pos>    Move frontmost window: left|right|max|center|tl|tr|bl|br
   meisterSiri clip         Clipboard history (Maccy-style): --install, <nr>, --purge
   meisterSiri keys <mode>  Key remapping: caps2esc | caps2ctrl | reset | status
@@ -10439,7 +10270,7 @@ module_in_profile() {
         auto|*)
             case "$name" in
                 iCloud\ Fix)           ${ICLOUD_FIX_ENABLED:-false} || return 1 ;;
-                Dev\ Updates)          [ "${UNIVERSAL_UPDATES:-false}" = "true" ] || return 1 ;;
+                Dev\ Updates)          [ "${UNIVERSAL_UPDATES:-true}" = "true" ] || return 1 ;;
                 Docs\ Order)           ${DOCS_ORDER_ENABLED:-true} || return 1 ;;
                 Docker\ Prune)         ${CLEAN_DOCKER:-false} || return 1 ;;
                 Dev\ Caches)           ${CLEAN_DEV_CACHES:-true} || return 1 ;;
