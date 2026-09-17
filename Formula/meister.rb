@@ -5,6 +5,7 @@ class Meister < Formula
   sha256 "9fbc14d70fb0be57aadd496376751de2546ae43cd3c8cd931d64e5c9ca299c8a"
   license "GPL-3.0-only"
   version "6.26"
+  revision 1
 
   depends_on :macos
 
@@ -16,9 +17,9 @@ class Meister < Formula
     if apple_source != "MeisterAI.sh"
       inreplace bin/"MeisterAI", "MeisterSiri", "MeisterAI"
       inreplace bin/"MeisterAI", "meisterSiri", "MeisterAI"
-      # The published 6.25 app still looks up the former executable.
-      bin.install_symlink "MeisterAI" => "meisterSiri"
     end
+    # Compatibility only: installed pre-rename LaunchAgents can retain this path.
+    bin.install_symlink "MeisterAI" => "meisterSiri"
     doc.install "config.fast.example" if File.exist?("config.fast.example")
     doc.install "AGENTS.md" if File.exist?("AGENTS.md")
     doc.install "docs/PRODUCT.md" if File.exist?("docs/PRODUCT.md")
