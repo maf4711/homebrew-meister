@@ -6,7 +6,13 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterSiri - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.24
+# Version: 6.25
+# NEW in v6.25 — LaunchAgent PATH + no /dev/tty spam:
+#  - Prepend /opt/homebrew/bin so brew/mas exist under launchd PATH
+#  - keepcurrent plists set EnvironmentVariables PATH
+#  - ensure_brew never runs the installer without a TTY
+#  - AI-Heal banners go to stderr when not a TTY
+#  - Package-cache FIX is measured delta; sleep blockers skip powerd/coreaudiod
 # NEW in v6.24 — daily-safe Simulator + honest last.json bytes:
 #  - Simulator Fix / iOS Simulators only in --deep (never --auto/--quick)
 #  - No `simctl list`, no Simulator.app launch; kill stale Simulator.app only
@@ -346,6 +352,11 @@ case "$MEISTER_DIR" in
 esac
 HEAL_LOG="$MEISTER_DIR/heal.log"
 mkdir -p "$MEISTER_DIR/patches" "$MEISTER_DIR/output" 2>/dev/null
+# launchd PATH is /usr/bin:/bin:/usr/sbin:/sbin — brew/mas live in Homebrew prefix.
+case ":$PATH:" in
+    *:/opt/homebrew/bin:*) ;;
+    *) PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin${PATH:+:}$PATH"; export PATH ;;
+esac
 
 # ── v6.13/v6.15: resolve + source lib (core + commands) ──
 # Must resolve brew symlinks (/opt/homebrew/bin/meisterSiri → Cellar/...).
@@ -414,6 +425,9 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/aufraum_hook.sh" ] && . "$MEISTER_LIB_DIR/core/aufraum_hook.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/launchagent_keepcurrent.sh" ] && . "$MEISTER_LIB_DIR/core/launchagent_keepcurrent.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/path.sh" ] && . "$MEISTER_LIB_DIR/core/path.sh"
+    command -v meister_bootstrap_path >/dev/null 2>&1 && meister_bootstrap_path
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
     # shellcheck source=/dev/null
@@ -1096,8 +1110,8 @@ ai_trace_box() {
             } >"$dest"
         fi
     }
-    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
-        _ai_emit /dev/tty 2>/dev/null || _ai_emit stderr
+    if [ -t 2 ]; then
+        _ai_emit stderr
     else
         _ai_emit stderr
     fi
@@ -1114,12 +1128,7 @@ ai_trace_box() {
 
 ai_trace_line() {
     local msg="$*"
-    if [ -c /dev/tty ] && { : > /dev/tty; } 2>/dev/null; then
-        echo -e "${MAGENTA}[AI]${NC} ${msg}" > /dev/tty 2>/dev/null \
-            || echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
-    else
-        echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
-    fi
+    echo -e "${MAGENTA}[AI]${NC} ${msg}" >&2
     echo "$(date +'%Y-%m-%d %H:%M:%S') - AI - $msg" >> "$LOGFILE" 2>/dev/null || true
 }
 
@@ -1164,19 +1173,16 @@ ai_call_banner() {
 # ── AI-HEAL only: high-visibility yellow banners (unmistakable) ──
 ai_heal_emit() {
     local msg="$*"
-    local out="/dev/tty"
-    { [ -w /dev/tty ] 2>/dev/null; } || out="/dev/stderr"
-    # Prefer yellow; fall back to magenta if colors unset
     local fg="${AIHEAL_FG:-$YELLOW}"; fg="${fg:-$MAGENTA}"
     local bg="${AIHEAL_BG:-}"
-    {
-        if [ -n "$bg" ]; then
-            echo -e "${bg} AI-HEAL ${NC} ${fg}${msg}${NC}"
-        else
-            echo -e "${fg}[AI-HEAL]${NC} ${fg}${msg}${NC}"
-        fi
-    } >"$out" 2>/dev/null || echo -e "${fg}[AI-HEAL]${NC} ${msg}" >&2
     echo "$(date +'%Y-%m-%d %H:%M:%S') - AI-HEAL - $msg" >> "$LOGFILE" 2>/dev/null || true
+    # LaunchAgents have no TTY; skip banners (logfile already has the line).
+    [ -t 1 ] || [ -t 2 ] || return 0
+    if [ -n "$bg" ]; then
+        echo -e "${bg} AI-HEAL ${NC} ${fg}${msg}${NC}" >&2
+    else
+        echo -e "${fg}[AI-HEAL]${NC} ${fg}${msg}${NC}" >&2
+    fi
 }
 
 ai_heal_banner_start() {
@@ -1195,23 +1201,16 @@ ai_heal_box() {
     local body="$*"
     local ts; ts=$(date +'%H:%M:%S')
     local fg="${AIHEAL_FG:-$YELLOW}"; fg="${fg:-$MAGENTA}"
-    local out="/dev/tty"
-    { [ -w /dev/tty ] 2>/dev/null; } || out="/dev/stderr"
-    {
-        echo ""
-        echo -e "${fg}┏━━ AI-HEAL ${title} ── ${ts} ━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        if [ -n "$body" ]; then
-            while IFS= read -r line || [ -n "$line" ]; do
-                echo -e "${fg}┃${NC} ${line}"
-            done <<< "$body"
-        fi
-        echo -e "${fg}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    } >"$out" 2>/dev/null || {
-        echo "" >&2
-        echo -e "${fg}[AI-HEAL] ${title}${NC}" >&2
-        printf '%s
-' "$body" | sed 's/^/  | /' >&2
-    }
+    echo "$(date +'%Y-%m-%d %H:%M:%S') - AI-HEAL - ${title}" >> "$LOGFILE" 2>/dev/null || true
+    [ -t 1 ] || [ -t 2 ] || return 0
+    echo "" >&2
+    echo -e "${fg}┏━━ AI-HEAL ${title} ── ${ts} ━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+    if [ -n "$body" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            echo -e "${fg}┃${NC} ${line}" >&2
+        done <<< "$body"
+    fi
+    echo -e "${fg}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
     {
         echo "$(date +'%Y-%m-%d %H:%M:%S') - AI-HEAL - === ${title} ==="
         printf '%s
@@ -2085,22 +2084,37 @@ check_net() {
 }
 
 ensure_brew() {
-    if ! command_exists brew; then
-        log WARN "Homebrew not found. Installing..."
-        run_or_dry /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        if command_exists brew; then
-            log FIX "Homebrew installed."
-            report_add FIX "Installed Homebrew"
-            eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null
-        else
-            log ERROR "Homebrew install failed."
-            report_add ERROR "Homebrew missing"
-            return 1
-        fi
-    else
-        log STEP "   Homebrew found: $(brew --prefix)"
+    command -v meister_bootstrap_path >/dev/null 2>&1 && meister_bootstrap_path
+    local brew_bin=""
+    if command -v meister_find_brew >/dev/null 2>&1; then
+        brew_bin=$(meister_find_brew || true)
+    elif command_exists brew; then
+        brew_bin=$(command -v brew)
     fi
-    return 0
+    if [ -n "$brew_bin" ]; then
+        case "$brew_bin" in
+            /opt/homebrew/bin/brew) eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true ;;
+            /usr/local/bin/brew) eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null || true ;;
+        esac
+        log STEP "   Homebrew found: $("$brew_bin" --prefix 2>/dev/null || echo "$brew_bin")"
+        return 0
+    fi
+    if [ ! -t 0 ]; then
+        log WARN "Homebrew not on PATH (non-interactive; skipped installer)"
+        report_add WARN "Homebrew not on PATH"
+        return 1
+    fi
+    log WARN "Homebrew not found. Installing..."
+    run_or_dry /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if command_exists brew || [ -x /opt/homebrew/bin/brew ]; then
+        log FIX "Homebrew installed."
+        report_add FIX "Installed Homebrew"
+        eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null
+        return 0
+    fi
+    log ERROR "Homebrew install failed."
+    report_add ERROR "Homebrew missing"
+    return 1
 }
 
 # Keep Homebrew quiet: no env hints, no auto-update chatter on every command.
@@ -3735,12 +3749,18 @@ module_deepclean() {
         local pkg_freed=0
 
         if command_exists npm && [ -d "$HOME/.npm" ]; then
-            local npm_size=$(du -sm "$HOME/.npm" 2>/dev/null | awk '{print $1}')
+            local npm_size npm_after npm_delta
+            npm_size=$(du -sm "$HOME/.npm" 2>/dev/null | awk '{print $1}')
             [ -z "$npm_size" ] && npm_size=0
             if [ "$npm_size" -gt 50 ]; then
                 log INFO "   npm cache: ${npm_size} MB"
                 run_or_dry npm cache clean --force 2>/dev/null
-                pkg_freed=$((pkg_freed + npm_size))
+                npm_after=$(du -sm "$HOME/.npm" 2>/dev/null | awk '{print $1}')
+                [ -z "$npm_after" ] && npm_after=0
+                npm_delta=$((npm_size - npm_after))
+                [ "$npm_delta" -lt 0 ] && npm_delta=0
+                pkg_freed=$((pkg_freed + npm_delta))
+                [ "$npm_delta" -eq 0 ] && log STEP "   npm cache unchanged after clean (${npm_after} MB remain)"
             else
                 log STEP "   npm cache: ${npm_size} MB (OK)"
             fi
@@ -3752,7 +3772,12 @@ module_deepclean() {
             if [ "$yarn_size" -gt 50 ]; then
                 log INFO "   yarn cache: ${yarn_size} MB"
                 run_or_dry yarn cache clean 2>/dev/null
-                pkg_freed=$((pkg_freed + yarn_size))
+                local yarn_after yarn_delta
+                yarn_after=$(du -sm "$HOME/.yarn/cache" 2>/dev/null | awk '{print $1}')
+                [ -z "$yarn_after" ] && yarn_after=0
+                yarn_delta=$((yarn_size - yarn_after))
+                [ "$yarn_delta" -lt 0 ] && yarn_delta=0
+                pkg_freed=$((pkg_freed + yarn_delta))
             fi
         fi
 
@@ -3764,7 +3789,12 @@ module_deepclean() {
                 if [ "$pip_size" -gt 50 ]; then
                     log INFO "   pip cache: ${pip_size} MB"
                     run_or_dry pip3 cache purge 2>/dev/null
-                    pkg_freed=$((pkg_freed + pip_size))
+                    local pip_after pip_delta
+                    pip_after=$(du -sm "$pip_dir" 2>/dev/null | awk '{print $1}')
+                    [ -z "$pip_after" ] && pip_after=0
+                    pip_delta=$((pip_size - pip_after))
+                    [ "$pip_delta" -lt 0 ] && pip_delta=0
+                    pkg_freed=$((pkg_freed + pip_delta))
                 fi
             fi
         fi
@@ -3775,7 +3805,12 @@ module_deepclean() {
             if [ "$gem_size" -gt 50 ]; then
                 log INFO "   gem cache: ${gem_size} MB"
                 run_or_dry gem cleanup 2>/dev/null
-                pkg_freed=$((pkg_freed + gem_size / 2))
+                local gem_after gem_delta
+                gem_after=$(du -sm "$HOME/.gem" 2>/dev/null | awk '{print $1}')
+                [ -z "$gem_after" ] && gem_after=0
+                gem_delta=$((gem_size - gem_after))
+                [ "$gem_delta" -lt 0 ] && gem_delta=0
+                pkg_freed=$((pkg_freed + gem_delta))
             fi
         fi
 
@@ -5619,10 +5654,19 @@ module_sleep_blockers() {
         name=$(echo "$line" | grep -oE 'pid [0-9]+\([^)]+\)' | sed 's/.*(\(.*\))/\1/')
         [ -z "$name" ] && [ -n "$pid" ] && name=$(ps -p "$pid" -o comm= 2>/dev/null)
         [ -z "$name" ] && name="pid${pid:-?}"
+        case "$name" in
+            powerd|coreaudiod|loginwindow|WindowServer|kernel_task|UserEventAgent) continue ;;
+        esac
         log STEP "     pid $pid ($name) — blocking sleep"
-        names="${names:+$names, }$name"
-        n=$((n + 1))
+        case ",$names," in
+            *",$name,"*) ;;
+            *) names="${names:+$names, }$name"; n=$((n + 1)) ;;
+        esac
     done <<< "$assertions"
+    if [ "$n" -eq 0 ]; then
+        log STEP "   Only system daemons hold sleep assertions (ignored)"
+        return 0
+    fi
     report_add WARN "$n sleep blocker(s) active: $names"
 }
 
@@ -5727,7 +5771,7 @@ module_docs_order() {
         local unsorted
         unsorted=$(find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' ')
         if [ "${unsorted:-0}" -gt 0 ]; then
-            log WARN "   _Inbox: ${unsorted} unsorted files"
+            log STEP "   _Inbox: ${unsorted} unsorted files"
             if command -v aufraum_hook_inbox >/dev/null 2>&1; then
                 aufraum_hook_inbox "$inbox" "$unsorted"
             fi
@@ -5751,11 +5795,15 @@ module_docs_order() {
                         report_add FIX "_Inbox: archived ${moved} files (>${days}d)"
                     else
                         log STEP "   No _Inbox files older than ${days}d to archive (${unsorted} newer remain)"
-                        report_add WARN "_Inbox: ${unsorted} unsorted files (all <${days}d)"
+                        if [ "${AUFRAUM_APPLY:-false}" = true ]; then
+                            report_add WARN "_Inbox: ${unsorted} unsorted files (all <${days}d)"
+                        else
+                            log STEP "   _Inbox: ${unsorted} files <${days}d (AufRaum apply off — not scored)"
+                        fi
                     fi
                 fi
             else
-                report_add WARN "_Inbox: ${unsorted} unsorted files"
+                log STEP "   _Inbox: ${unsorted} unsorted (archive autofix off)"
             fi
         else
             log STEP "   _Inbox empty"

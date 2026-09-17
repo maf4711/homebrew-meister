@@ -34,6 +34,7 @@ keepcurrent_plist_xml() {
       <key>Minute</key><integer>${minute}</integer>
     </dict>"
     fi
+    local path_env="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     cat << PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,6 +47,13 @@ keepcurrent_plist_xml() {
         ${args_xml}
     </array>
     ${cal}
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${path_env}</string>
+        <key>HOME</key>
+        <string>${HOME}</string>
+    </dict>
     <key>StandardOutPath</key>
     <string>${MEISTER_DIR:-$HOME/.meister}/launchagent.log</string>
     <key>StandardErrorPath</key>
