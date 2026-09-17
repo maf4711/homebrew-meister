@@ -1,8 +1,8 @@
 cask "meister-mac" do
-  version "6.25"
-  sha256 "4d5d2dc37b89835f3874a36e4232476337b466ef7b4e9f18bffa8dde0c3f689b"
+  version "6.26"
+  sha256 "df1a93194ca48662161ec2efb348cb288b6ec718fad2c3b5aedd9879f9ab1f02"
 
-  url "https://github.com/maf4711/homebrew-meister/releases/download/v#{version}/MeisterSiri-macOS.zip"
+  url "https://github.com/maf4711/homebrew-meister/releases/download/v#{version}/MeisterAI-macOS.zip"
   name "MeisterAI"
   desc "macOS GUI over the MeisterAI CLI (Apple Intelligence maintenance)"
   homepage "https://github.com/maf4711/homebrew-meister"
@@ -10,8 +10,7 @@ cask "meister-mac" do
   depends_on formula: "maf4711/meister/meister"
   depends_on macos: :sonoma
 
-  # Existing published artifact; release.sh switches this to the renamed bundle.
-  app "MeisterSiri.app", target: "MeisterAI.app"
+  app "MeisterAI.app"
 
   zap trash: [
     "~/Library/Preferences/com.maf4711.meisterai.plist",
