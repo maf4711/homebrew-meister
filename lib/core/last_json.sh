@@ -48,7 +48,7 @@ write_last_json() {
     local archive_tmp last_tmp archive run_id
     ts=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
     host=$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || echo unknown)
-    [ "${AI_HEAL_EXECUTE:-false}" = true ] && ai_mode=execute
+    [ "${AI_HEAL_EXECUTE:-true}" = true ] && ai_mode=execute
     [ "${DRY_RUN:-false}" = true ] && { dry=true; fix=0; heal=0; verified=0; freed=''; }
     fix=$(meister_json_number "$fix")
     verified=$(meister_json_number "$verified")

@@ -35,11 +35,9 @@ GIT_AUTO_PUSH=false
 # AI transparency (false = less terminal noise)
 # AI_TRACE=true
 
-# AI-Heal execute gate (v6.12) — default is suggest-only (safer)
-# When false: model may propose an allowlisted command; it is NOT run.
-# When true: allowlisted command may run, then module is retested (verify-after-heal).
-# CLI override: --ai-heal-execute / --ai-heal-suggest
-AI_HEAL_EXECUTE=false
+# AI-Heal execute gate — default ON (allowlisted cmds run + verify-after-heal).
+# Opt-out: AI_HEAL_EXECUTE=false or --ai-heal-suggest
+AI_HEAL_EXECUTE=true
 
 # v6.13 run budget (soft)
 # RUN_MAX_SEC=1200          # skip remaining modules after 20 min wall clock

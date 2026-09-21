@@ -50,7 +50,7 @@ learned_fix_suspended() {
 learned_fix_record() {
     local module="$1" cmd="$2" outcome="$3" dir="${MEISTER_DIR}"
     [ "${DRY_RUN:-false}" != true ] || return 0
-    [ "${AI_HEAL_EXECUTE:-false}" = true ] || return 0
+    [ "${AI_HEAL_EXECUTE:-true}" = true ] || return 0
     [ "${HEAL_CONTEXT_MODULE:-}" = "$module" ] || return 1
     local field
     for field in "$module" "$cmd" "${HEAL_FAILURE_FINGERPRINT:-}" "${HEAL_CONTEXT_OS:-}"; do
@@ -101,7 +101,7 @@ try_learned_fix() {
     # shellcheck disable=SC2034
     AI_LAST_CMD="$cmd"
     ai_usage_record learned-fix heal-candidate no-model "module=$module_name (matching context)"
-    if [ "${AI_HEAL_EXECUTE:-false}" != true ]; then
+    if [ "${AI_HEAL_EXECUTE:-true}" != true ]; then
         log HEAL "Learned-Fix suggestion (AI_HEAL_EXECUTE=false): $cmd"
         log_heal_event learned-fix "$module_name" suggested "$cmd"
         report_add WARN "Learned-Fix suggestion (not executed): $module_name → $cmd"

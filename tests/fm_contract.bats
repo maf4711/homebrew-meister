@@ -112,7 +112,7 @@ load_ai_heal() {
   timeout() { printf '%s\n' "$*" >> "$MEISTER_DIR/execution"; }
   DRY_RUN=false
 }
-@test "actual AI heal suggests catalog action without executing or learning by default" {
+@test "actual AI heal suggests catalog action without executing when AI_HEAL_EXECUTE=false" {
   load_ai_heal
   AI_HEAL_EXECUTE=false
   run ai_heal QuickLook 'QuickLook cache failed'
@@ -121,6 +121,17 @@ load_ai_heal() {
   [ ! -e "$MEISTER_DIR/learned" ]
   grep -q suggested "$MEISTER_DIR/heals"
   grep -q 'not executed' "$MEISTER_DIR/reports"
+}
+@test "AI-Heal default in MeisterAI.sh is execute" {
+  grep -qE '^AI_HEAL_EXECUTE=true' "$ROOT/MeisterAI.sh"
+}
+@test "AI heal executes allowlisted command when execute gate is unset" {
+  load_ai_heal
+  unset AI_HEAL_EXECUTE
+  run ai_heal QuickLook 'QuickLook cache failed'
+  [ "$status" = 0 ]
+  [ "$(cat "$MEISTER_DIR/execution")" = '30 /usr/bin/qlmanage -r cache' ]
+  grep -q executed "$MEISTER_DIR/heals"
 }
 @test "opt-in executes only mapped argv and does not call it verified" {
   load_ai_heal

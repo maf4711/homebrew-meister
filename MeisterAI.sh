@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterAI - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.28
+# Version: 6.29
 # NEW in v6.25 — LaunchAgent PATH + no /dev/tty spam:
 #  - Prepend /opt/homebrew/bin so brew/mas exist under launchd PATH
 #  - keepcurrent plists set EnvironmentVariables PATH
@@ -85,8 +85,8 @@
 #  - RUN_MAX_SEC soft cap skips remaining modules; MEISTER_NOTIFY already used
 #
 # NEW in v6.12 — P0 trust: verify-after-heal, cleanup tallies, AI-Heal suggest-only:
-#  - AI_HEAL_EXECUTE=false by default: model suggests after allowlist, does NOT run.
-#    Opt-in: AI_HEAL_EXECUTE=true in ~/.meister/config or --ai-heal-execute
+#  - AI_HEAL_EXECUTE=true by default: allowlisted commands run, then verify-after-heal.
+#    Opt-out: AI_HEAL_EXECUTE=false or --ai-heal-suggest
 #  - Verify-after-heal: known/learned/AI fixes only count as FIX after module retest
 #    passes; heal.log uses executed|verified|unverified|suggested (not premature success)
 #  - Cleanup tallies: .DS_Store (and similar) report found/removed/skipped_perm;
@@ -490,9 +490,9 @@ AI_BACKEND_KIND="apple"   # apple | ollama
 FM_HELPER="$MEISTER_DIR/meister-fm"          # compiled Swift helper (lazy-built, cached)
 FM_HELPER_SRC="$MEISTER_DIR/meister-fm.swift"
 AI_TRACE=true                           # always show AI REQUEST+RESPONSE at runtime
-# AI-Heal execute gate (v6.12): default suggest-only. Model may propose an
-# allowlisted command; it runs only when AI_HEAL_EXECUTE=true (config or CLI).
-AI_HEAL_EXECUTE=false
+# AI-Heal execute gate: default ON. Allowlisted commands run, then verify-after-heal.
+# Opt-out: AI_HEAL_EXECUTE=false in ~/.meister/config or --ai-heal-suggest.
+AI_HEAL_EXECUTE=true
 RUN_MAX_SEC=0                 # 0=off; e.g. 1200 soft-skip remaining modules after N seconds
 MODULE_SLOW_SEC=300           # WARN if a single module exceeds this (soft)
 MEISTER_NOTIFY=true           # macOS notification after run
@@ -1495,7 +1495,7 @@ ai_heal() {
     AI_LAST_CMD="$ai_response"
 
     # v6.12: default suggest-only — show allowlisted command, do not run it
-    if [ "${AI_HEAL_EXECUTE:-false}" != "true" ]; then
+    if [ "${AI_HEAL_EXECUTE:-true}" != "true" ]; then
         ai_heal_emit "PHASE 3/3 SUGGEST-ONLY (AI_HEAL_EXECUTE=false) — kein Execute"
         ai_heal_emit "############################################################"
         ai_heal_emit "###  AI-HEAL ERGEBNIS: SUGGESTED (not executed)          ###"
@@ -6153,10 +6153,10 @@ print_report() {
         echo -e "\n${YELLOW}--- AI diese Session (${AI_BACKEND_LABEL:-AI}) ---${NC}"
         echo "  Backend:     ${AI_BACKEND_LABEL:-?} [${AI_BACKEND_KIND:-?}]"
         echo "  Calls:       ${AI_CALLS_THIS_RUN:-0} total  ·  nur-lesen: ${AI_READONLY_CALLS_THIS_RUN:-0}"
-        if [ "${AI_HEAL_EXECUTE:-false}" = "true" ]; then
+        if [ "${AI_HEAL_EXECUTE:-true}" = "true" ]; then
             echo "  AI-Heal:     EXECUTE on (verify-after-heal)"
         else
-            echo "  AI-Heal:     SUGGEST-ONLY (default; --ai-heal-execute to run)"
+            echo "  AI-Heal:     SUGGEST-ONLY (--ai-heal-suggest)"
         fi
         if [ "${AI_HEAL_CALLS_THIS_RUN:-0}" -gt 0 ]; then
             echo -e "  ${AIHEAL_FG}★★★ AI-HEAL Calls: ${AI_HEAL_CALLS_THIS_RUN}  (Modul-Fails → Model → Allowlist)${NC}"
@@ -8583,7 +8583,7 @@ if [ "${1:-}" = "selftest" ]; then
     _t "help branding" bash -c "\"$_SELF\" -h 2>&1 | head -5 | grep -qiE 'Meister'"
     _t "help cmds match binary" bash -c "\"$_SELF\" -h 2>&1 | grep -qE \"^  ${_BIN} \""
     _t "help no foreign twin cmds" bash -c "! \"$_SELF\" -h 2>&1 | grep -E \"^  ${_FOREIGN} \""
-    _t "v6.12 AI_HEAL_EXECUTE default false" bash -c "grep -qE '^AI_HEAL_EXECUTE=false' \"$_SELF\""
+    _t "v6.29 AI_HEAL_EXECUTE default true" bash -c "grep -qE '^AI_HEAL_EXECUTE=true' \"$_SELF\""
     _t "v6.12 verify-after-heal helper" bash -c "grep -q 'heal_verify_module' \"$_SELF\""
     _t "v6.12 cleanup_find_delete helper" bash -c "grep -q 'cleanup_find_delete' \"$_SELF\""
     _t "v6.12 --ai-heal-execute flag" bash -c "\"$_SELF\" -h 2>&1 | grep -q 'ai-heal-execute'"
@@ -10040,9 +10040,8 @@ MAINTENANCE:
   MeisterAI -q           Quiet (warnings/fixes only)
   MeisterAI -H           Health dashboard
   MeisterAI -I           Install LaunchAgent
-  MeisterAI --ai-heal-execute  Allow AI-Heal / Learned-Fix to RUN commands
-                                 (default: suggest-only; safer)
-  MeisterAI --ai-heal-suggest  Force suggest-only (overrides config)
+  MeisterAI --ai-heal-execute  AI-Heal runs allowlisted commands (default)
+  MeisterAI --ai-heal-suggest  Suggest only, do not run
 
   OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
               -L Large files  -P Performance  -G Git
@@ -10131,8 +10130,8 @@ DOTFILES SYNC:
   MeisterAI status       Check symlinks
 
 Config: ~/.meister/config  (see config.fast.example)
-  AI_HEAL_EXECUTE=false    # default: AI-Heal only suggests (v6.12)
-  AI_HEAL_EXECUTE=true     # opt-in: allowlisted commands may run + verify
+  AI_HEAL_EXECUTE=true     # default: allowlisted AI-Heal commands run + verify
+  AI_HEAL_EXECUTE=false    # opt-out: suggest only (--ai-heal-suggest)
   RUN_MAX_SEC=0            # soft wall-clock: skip remaining modules after N seconds
   MODULE_SLOW_SEC=300      # WARN if one module exceeds N seconds
   MEISTER_NOTIFY=true      # notification after run
@@ -10284,10 +10283,10 @@ echo -e "${NC}"
 start_bw_monitor
 log INFO "MeisterAI v${MEISTER_VERSION} started ($(date))"
 [ "${AI_TRACE:-true}" = "true" ] && log STEP "   AI-Trace: ON (jeder AI-Call zeigt REQUEST+RESPONSE; AI_TRACE=false zum Abschalten)"
-if [ "${AI_HEAL_EXECUTE:-false}" = "true" ]; then
-    log STEP "   AI-Heal: EXECUTE on (allowlisted cmds may run + verify-after-heal)"
+if [ "${AI_HEAL_EXECUTE:-true}" = "true" ]; then
+    log STEP "   AI-Heal: EXECUTE on (allowlisted cmds run + verify-after-heal)"
 else
-    log STEP "   AI-Heal: SUGGEST-ONLY (default) — enable with --ai-heal-execute or AI_HEAL_EXECUTE=true"
+    log STEP "   AI-Heal: SUGGEST-ONLY — --ai-heal-execute or AI_HEAL_EXECUTE=true to run"
 fi
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"

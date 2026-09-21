@@ -121,12 +121,12 @@ New commands: `why`, `storage`, `contacts doctor`, `report --diff|--json`, `doct
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `AI_HEAL_EXECUTE` | **false** | AI-Heal / Learned-Fix only **suggest** after allowlist |
-| `--ai-heal-execute` | CLI | Opt-in: allowlisted commands may **run** |
+| `AI_HEAL_EXECUTE` | **true** | AI-Heal / Learned-Fix **run** allowlisted commands, then verify |
+| `--ai-heal-suggest` | CLI | Opt-out: suggest only |
 | verify-after-heal | always | FIX only if module retest passes; heal.log: `executed`/`verified`/`unverified`/`suggested` |
 | cleanup tallies | always | found/removed/skipped_perm — perm noise ≠ module failure |
 
-Config: `AI_HEAL_EXECUTE=true` in `~/.meister/config` or flag on the run.
+Config: `AI_HEAL_EXECUTE=false` in `~/.meister/config` or `--ai-heal-suggest` to suggest only.
 
 ## v6.8 Keep-current architecture
 
@@ -137,7 +137,7 @@ Config: `AI_HEAL_EXECUTE=true` in `~/.meister/config` or flag on the run.
 
 Shared: modules, autofix catalog, profiles, `~/.meister/`.
 
-Every run: **Autofix first**, then Healer, then modules (AI-Heal on failures; default suggest-only since v6.12).
+Every run: **Autofix first**, then Healer, then modules (AI-Heal on failures; allowlisted commands run by default).
 
 LaunchAgents (install: `MeisterAI -I`):
 - Daily 09:15 `MeisterAI --auto -q`

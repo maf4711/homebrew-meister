@@ -52,7 +52,7 @@ cmd_why() {
     fi
     if [ "$q" = "profile" ] || [ "$q" = "profiles" ]; then
         echo "  Current RUN_PROFILE=${RUN_PROFILE:-auto}"
-        echo "  AI_HEAL_EXECUTE=${AI_HEAL_EXECUTE:-false}"
+        echo "  AI_HEAL_EXECUTE=${AI_HEAL_EXECUTE:-true}"
         echo "  Quick whitelist: $PROFILE_QUICK_MODULES"
         echo ""
         echo "  Sample membership (current profile):"
@@ -84,8 +84,8 @@ cmd_why() {
             echo "  Policy: report-only in --quick; push only if GIT_AUTO_PUSH=true"
             ;;
         *Heal*|AI*|ai*)
-            echo "  AI_HEAL_EXECUTE=${AI_HEAL_EXECUTE:-false} (false = suggest-only)"
-            echo "  Opt-in: --ai-heal-execute or AI_HEAL_EXECUTE=true in config"
+            echo "  AI_HEAL_EXECUTE=${AI_HEAL_EXECUTE:-true} (false = suggest-only)"
+            echo "  Opt-out: --ai-heal-suggest or AI_HEAL_EXECUTE=false in config"
             ;;
         *iCloud*)
             echo "  ICLOUD_FIX_ENABLED=${ICLOUD_FIX_ENABLED:-false}"
@@ -128,7 +128,7 @@ cmd_doctor_json() {
   "sip": $sip,
   "disk_used_pct": ${disk:-null},
   "ai_available": $ai,
-  "ai_heal_execute": ${AI_HEAL_EXECUTE:-false},
+  "ai_heal_execute": ${AI_HEAL_EXECUTE:-true},
   "profile_default": "${RUN_PROFILE:-auto}",
   "last_json": "$MEISTER_DIR/last.json"
 }
