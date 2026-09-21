@@ -10,6 +10,34 @@ keepcurrent_legacy_labels() {
     printf '%s\n' "com.meister.maintenance"
 }
 
+keepcurrent_apple_cli_name() { printf '%s\n' "MeisterAI"; }
+
+keepcurrent_apple_cli_path() {
+    local name prefix
+    name=$(keepcurrent_apple_cli_name)
+    prefix="${HOMEBREW_PREFIX:-/opt/homebrew}"
+    if [ -x "${prefix}/bin/${name}" ]; then
+        printf '%s\n' "${prefix}/bin/${name}"
+        return 0
+    fi
+    command -v "$name" 2>/dev/null || printf '%s\n' "${prefix}/bin/${name}"
+}
+
+# Rewrite leftover meisterSiri ProgramArguments.0 to MeisterAI. $1=plist path.
+keepcurrent_rewrite_legacy_cli() {
+    local plist="$1" current base apple
+    [ -n "$plist" ] && [ -f "$plist" ] || return 0
+    current=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)
+    [ -n "$current" ] || return 0
+    base=$(basename "$current")
+    case "$base" in
+        meisterSiri|MeisterSiri) ;;
+        *) return 0 ;;
+    esac
+    apple=$(keepcurrent_apple_cli_path)
+    /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 ${apple}" "$plist" >/dev/null
+}
+
 # $1=label $2=script_path $3=args_line $4=hour $5=minute $6=weekday (empty=daily)
 keepcurrent_plist_xml() {
     local label="$1" script_path="$2" args_line="$3" hour="$4" minute="$5" weekday="${6:-}"

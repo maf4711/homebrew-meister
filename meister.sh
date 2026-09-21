@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.26
+# Version: 6.27
 # NEW in v6.25 — LaunchAgent PATH + no /dev/tty spam:
 #  - Prepend /opt/homebrew/bin so brew/mas exist under launchd PATH
 #  - keepcurrent plists set EnvironmentVariables PATH
@@ -6282,11 +6282,24 @@ install_launchagent() {
     local self_base
     self_base=$(basename "$0")
     case "$self_base" in
-        meister|meister.sh) script_path=$(command -v meister 2>/dev/null || echo "$script_path") ;;
-        meister|meister.sh)         script_path=$(command -v meister 2>/dev/null || echo "$script_path") ;;
+        meister|meister.sh|meisterSiri|meisterSiri.sh)
+            script_path=$(command -v meister 2>/dev/null || echo "$script_path")
+            ;;
+        meister|meister.sh)
+            script_path=$(command -v meister 2>/dev/null || echo "$script_path")
+            ;;
+    esac
+    case "$(basename "$script_path")" in
+        meisterSiri|MeisterSiri)
+            script_path=$(command -v meister 2>/dev/null || echo "/opt/homebrew/bin/meister")
+            ;;
     esac
 
     mkdir -p "$HOME/Library/LaunchAgents" "$MEISTER_DIR"
+    if command -v keepcurrent_rewrite_legacy_cli >/dev/null 2>&1; then
+        keepcurrent_rewrite_legacy_cli "$HOME/Library/LaunchAgents/$(keepcurrent_daily_label 2>/dev/null || echo com.meister.keepcurrent.daily).plist"
+        keepcurrent_rewrite_legacy_cli "$HOME/Library/LaunchAgents/$(keepcurrent_weekly_label 2>/dev/null || echo com.meister.keepcurrent.weekly).plist"
+    fi
 
     _install_one_agent() {
         local label="$1" args_line="$2" hour="$3" minute="$4" weekday="$5"  # weekday empty = daily

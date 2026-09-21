@@ -1,11 +1,10 @@
 class Meister < Formula
   desc "macOS Maintenance, Self-Healing & Dotfiles Sync (meister + MeisterAI)"
   homepage "https://github.com/maf4711/homebrew-meister"
-  url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v6.26.tar.gz"
-  sha256 "9fbc14d70fb0be57aadd496376751de2546ae43cd3c8cd931d64e5c9ca299c8a"
+  url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v6.27.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "GPL-3.0-only"
-  version "6.26"
-  revision 1
+  version "6.27"
 
   depends_on :macos
 
@@ -18,8 +17,6 @@ class Meister < Formula
       inreplace bin/"MeisterAI", "MeisterSiri", "MeisterAI"
       inreplace bin/"MeisterAI", "meisterSiri", "MeisterAI"
     end
-    # Compatibility only: installed pre-rename LaunchAgents can retain this path.
-    bin.install_symlink "MeisterAI" => "meisterSiri"
     doc.install "config.fast.example" if File.exist?("config.fast.example")
     doc.install "AGENTS.md" if File.exist?("AGENTS.md")
     doc.install "docs/PRODUCT.md" if File.exist?("docs/PRODUCT.md")
@@ -75,5 +72,6 @@ class Meister < Formula
     assert_match "meister", shell_output("#{bin}/meister -h 2>&1", 0)
     assert_match "MeisterAI", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
     assert_match "6.", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
+    refute_path_exists bin/"meisterSiri"
   end
 end

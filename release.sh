@@ -155,10 +155,19 @@ echo "--- Step 6: Local install (MERKREGEL: immer nach Release) ---"
 if [[ -L /opt/homebrew/bin/MeisterAI ]]; then
     rm -f /opt/homebrew/bin/MeisterAI
 fi
+if [[ -L /opt/homebrew/bin/meisterSiri ]]; then
+    rm -f /opt/homebrew/bin/meisterSiri
+fi
 CACHE_FILE=$(brew --cache meister 2>/dev/null || true)
 [ -n "${CACHE_FILE:-}" ] && [ -f "$CACHE_FILE" ] && rm -f "$CACHE_FILE"
-# Refresh tap from GitHub (formula lives in this repo / tap)
-brew update
+# Refresh tap from GitHub (formula lives in this repo / tap).
+# brew update can fail on this prefix when other taps lack remotes.
+export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
+brew update || echo "WARN: brew update failed; pulling maf4711/meister tap instead"
+TAP_REPO=$(brew --repo maf4711/meister 2>/dev/null || true)
+if [ -n "${TAP_REPO:-}" ] && [ -d "$TAP_REPO/.git" ]; then
+    git -C "$TAP_REPO" pull --ff-only || true
+fi
 # Reinstall from the tap so both meister + MeisterAI land in Cellar
 brew reinstall maf4711/meister/meister || brew reinstall meister
 if [ -f "$CASK" ]; then

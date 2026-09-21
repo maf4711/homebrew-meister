@@ -8,6 +8,9 @@ app/MeisterAI/build/
 app/MeisterAI/*.xcodeproj/
 app/MeisterAI/dist/
 
+# Retired Apple-twin app name; do not ship leftover MeisterSiri trees
+app/MeisterSiri/
+
 # Local FM evaluation/runtime caches
 __pycache__/
 artifacts/fm-*.json
