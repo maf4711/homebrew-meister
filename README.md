@@ -42,7 +42,7 @@ Manages local Ollama LLM models. Updates installed models, removes unused ones (
 
 ### macOS System
 
-Checks for pending macOS software updates. Reports disk usage and Time Machine snapshot status.
+Checks for pending macOS software updates. Reports disk usage and Time Machine backup destination status.
 
 ### Cleanup (`-T` Trash, `-C` Caches, `-X` Xcode)
 

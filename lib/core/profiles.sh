@@ -33,7 +33,7 @@ module_in_profile() {
                 "Benchmark")            return 1 ;;
                 "node_modules"|".DS_Store") return 1 ;;
                 "Simulator Fix"|"iOS Simulators") return 1 ;;
-                "Brew Bottle Age"|"APFS Snapshots"|"Kext Audit"|"Receipts Audit"|"LaunchServices")
+                "Brew Bottle Age"|"Kext Audit"|"Receipts Audit"|"LaunchServices")
                     return 1 ;;
             esac
             return 0

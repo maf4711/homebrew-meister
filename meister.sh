@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.29
+# Version: 6.30
 # NEW in v6.25 — LaunchAgent PATH + no /dev/tty spam:
 #  - Prepend /opt/homebrew/bin so brew/mas exist under launchd PATH
 #  - keepcurrent plists set EnvironmentVariables PATH
@@ -3444,28 +3444,6 @@ module_deepclean() {
         log STEP "   No old screenshots"
     fi
 
-    # Fix #60: Time Machine lokale Snapshots
-    log STEP "   [6/14] Time Machine Snapshots..."
-    local tm_snapshots=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c "com.apple" || echo 0)
-    if [ "$tm_snapshots" -gt 0 ]; then
-        # Purgeable Space durch TM Snapshots berechnen
-        local tm_purgeable=$(( $(tmutil listlocalsnapshots / 2>/dev/null | wc -l) ))
-        log INFO "   ${tm_purgeable} local TM snapshots found"
-        local disk_pct=$(df -h / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
-        if [ "$disk_pct" -gt "$DISK_USAGE_THRESHOLD" ] 2>/dev/null; then
-            log WARN "   Disk ${disk_pct}% full - deleting old TM snapshots..."
-            # Fix #69: Korrektes Snapshot-Datum extrahieren (Format: com.apple.TimeMachine.YYYY-MM-DD-HHMMSS.local)
-            tmutil listlocalsnapshots / 2>/dev/null | sed -n 's/.*TimeMachine\.\(.*\)\.local/\1/p' | while IFS= read -r snap; do
-                [ -n "$snap" ] && run_or_dry sudo -n tmutil deletelocalsnapshots "$snap"
-            done
-            report_add FIX "TM-Snapshots deleted (Disk war ${disk_pct}%)"
-        else
-            report_add SUCCESS "TM-Snapshots: ${tm_purgeable} present (Disk OK)"
-        fi
-    else
-        log STEP "   No lokalen TM-Snapshots"
-    fi
-
     # Fix #66: Alte iOS-Backups
     log STEP "   [7/14] iOS-Backups..."
     local backup_dir="$HOME/Library/Application Support/MobileSync/Backup"
@@ -5027,8 +5005,6 @@ module_tm_health() {
             fi
         fi
     fi
-    local snap_count; snap_count=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c com.apple.TimeMachine)
-    log STEP "   Local snapshots on /: ${snap_count}"
 }
 
 module_battery() {
@@ -5229,32 +5205,6 @@ module_shell_history() {
             log STEP "   $(basename "$f"): ${size_mb}MB OK"
         fi
     done
-}
-
-module_apfs_snapshots() {
-    log INFO "Checking APFS local snapshots..."
-    bw_phase "Snapshots: enumerating"
-    command_exists tmutil || { log STEP "   tmutil missing"; return 0; }
-    local snaps
-    snaps=$(tmutil listlocalsnapshots / 2>/dev/null | grep com.apple.TimeMachine)
-    [ -z "$snaps" ] && { log STEP "   No local snapshots"; return 0; }
-    local count; count=$(echo "$snaps" | wc -l | tr -d ' ')
-    local free_before; free_before=$(df -h / | awk 'NR==2{print $4}')
-    log STEP "   ${count} local snapshots (free: $free_before)"
-    # Thin to 5GB target purge
-    bw_phase "Snapshots: thinning to 5GB"
-    if ! $DRY_RUN; then
-        tmutil thinlocalsnapshots / 5000000000 4 >/dev/null 2>&1
-    fi
-    local free_after; free_after=$(df -h / | awk 'NR==2{print $4}')
-    local snaps_after; snaps_after=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c com.apple.TimeMachine)
-    local thinned=$((count - snaps_after))
-    if [ "$thinned" -gt 0 ]; then
-        log FIX "   Thinned ${thinned} snapshots ($free_before → $free_after free)"
-        report_add FIX "APFS snapshots: ${thinned} thinned"
-    else
-        log STEP "   No thinning needed ($free_after free)"
-    fi
 }
 
 module_kext_audit() {
@@ -10354,7 +10304,7 @@ module_in_profile() {
                 Benchmark)             return 1 ;;  # weekly only
                 node_modules|.DS_Store) return 1 ;; # deep only in auto
                 Simulator\ Fix|iOS\ Simulators) return 1 ;;
-                Brew\ Bottle\ Age|APFS\ Snapshots|Kext\ Audit|Receipts\ Audit|LaunchServices)
+                Brew\ Bottle\ Age|Kext\ Audit|Receipts\ Audit|LaunchServices)
                     return 1 ;;  # deep only
             esac
             return 0
@@ -10449,7 +10399,6 @@ if $DRY_RUN || check_net; then
     run_module_if "Brew Bottle Age" module_brew_age
     run_module_if "LaunchDaemons"  module_launchd_orphans
     run_module_if "Shell History"  module_shell_history
-    run_module_if "APFS Snapshots" module_apfs_snapshots
     run_module_if "Kext Audit"     module_kext_audit
     run_module_if "Time Sync"      module_time_sync
     run_module_if "Render Caches"  module_rendering_caches
