@@ -24,7 +24,7 @@ enum CommandPolicy {
 
     static func prepare(arguments: [String], dryRun: Bool, supportsAIPreview: Bool = false, supportsProfilePreview: Bool = false) -> Decision {
         let requestedPreview = dryRun || arguments.contains("-n") || arguments.contains("--dry-run")
-        let args = arguments.filter { $0 != "-n" && $0 != "--dry-run" }
+        let args = arguments.filter { $0 != "-n" && $0 != "--dry-run" && $0 != "-y" && $0 != "--yes" }
         guard let capability = capability(for: args) else {
             return .blocked("Aktion nicht freigegeben: \(args.joined(separator: " ")). Es wurde nichts gestartet.")
         }

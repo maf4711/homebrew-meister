@@ -13,6 +13,10 @@ meister_bootstrap_path() {
     done
     [ -n "$extra" ] && PATH="$extra${PATH:+:}$PATH"
     export PATH
+    export NONINTERACTIVE="${NONINTERACTIVE:-1}"
+    export HOMEBREW_NO_ENV_HINTS="${HOMEBREW_NO_ENV_HINTS:-1}"
+    export HOMEBREW_NO_ANALYTICS="${HOMEBREW_NO_ANALYTICS:-1}"
+    export HOMEBREW_NO_INTERACTIVE="${HOMEBREW_NO_INTERACTIVE:-1}"
 }
 
 meister_find_brew() {

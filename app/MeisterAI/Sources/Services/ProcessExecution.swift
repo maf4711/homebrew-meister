@@ -79,7 +79,9 @@ final class ProcessExecution: @unchecked Sendable {
         var uniquePaths = Set<String>()
         environment["PATH"] = (trustedPaths + inheritedPaths).filter { uniquePaths.insert($0).inserted }.joined(separator: ":")
         environment.merge(["TERM": "dumb", "NO_COLOR": "1", "CLICOLOR": "0",
-                           "HOMEBREW_NO_AUTO_UPDATE": "1", "MEISTER_GUI_PROCESS_GROUP": "1"]) { _, new in new }
+                           "HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_INTERACTIVE": "1",
+                           "NONINTERACTIVE": "1", "MEISTER_ALWAYS_YES": "true",
+                           "MEISTER_GUI_PROCESS_GROUP": "1"]) { _, new in new }
         let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
         var child: pid_t = 0

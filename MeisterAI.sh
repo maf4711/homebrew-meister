@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterAI - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.27
+# Version: 6.28
 # NEW in v6.25 — LaunchAgent PATH + no /dev/tty spam:
 #  - Prepend /opt/homebrew/bin so brew/mas exist under launchd PATH
 #  - keepcurrent plists set EnvironmentVariables PATH
@@ -431,10 +431,16 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/path.sh" ] && . "$MEISTER_LIB_DIR/core/path.sh"
     command -v meister_bootstrap_path >/dev/null 2>&1 && meister_bootstrap_path
     # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/confirm.sh" ] && . "$MEISTER_LIB_DIR/core/confirm.sh"
+    # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
     MEISTER_LIB_LOADED=true
+fi
+if ! command -v meister_confirm >/dev/null 2>&1; then
+    meister_always_yes() { [ ! -t 0 ] || [ "${MEISTER_ALWAYS_YES:-true}" != false ]; }
+    meister_confirm() { printf '  %s → yes\n' "${1:-Continue?}"; return 0; }
 fi
 
 # ── bloatware / kill-bloat (v6.18) — MUST run before getopts / --* reject ──
@@ -5834,10 +5840,12 @@ ensure_touchid_sudo() {
         fi
     fi
 
-    # GUI admin dialog — usually accepts Touch ID already (Authorization Services)
-    if _touchid_write_via_gui "$body" "$_pam" && touchid_sudo_enabled; then
-        log FIX "Touch ID for sudo ENABLED via system dialog — future sudo uses fingerprint"
-        return 0
+    # GUI admin dialog — interactive only. Unattended runs must not pop a sheet.
+    if [ -t 0 ] || ( : < /dev/tty ) 2>/dev/null; then
+        if _touchid_write_via_gui "$body" "$_pam" && touchid_sudo_enabled; then
+            log FIX "Touch ID for sudo ENABLED via system dialog — future sudo uses fingerprint"
+            return 0
+        fi
     fi
 
     log WARN "Could not enable Touch ID for sudo (manual: MeisterAI touchid)"
@@ -7562,19 +7570,13 @@ if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
         fi
     fi
 
-    # ── 6. Confirm ──
+    # ── 6. Confirm (default yes; never wait without a TTY) ──
     if ! $DRY_RUN && ! $REMOVE_YES; then
-        if [ ! -t 0 ]; then
-            log ERROR "Non-interactive terminal and no -y/--yes given — aborting."
-            exit 1
-        fi
         if $REMOVE_PURGE; then
-            printf "  \033[1;31mPERMANENTLY delete\033[0m these %s item(s)? [y/N] " "$_nitems"
+            meister_confirm "PERMANENTLY delete these ${_nitems} item(s)?" || { echo "  Aborted."; exit 0; }
         else
-            printf "  Move these %s item(s) to Trash (System Extensions: uninstall)? [y/N] " "$_nitems"
+            meister_confirm "Move these ${_nitems} item(s) to Trash (System Extensions: uninstall)?" || { echo "  Aborted."; exit 0; }
         fi
-        read -r _reply
-        case "$_reply" in [yY]|[yY][eE][sS]) ;; *) echo "  Aborted."; exit 0 ;; esac
     fi
 
     # ── 7. Remove (unprivileged first, escalate to root on failure — like CleanMyMac) ──
@@ -7852,10 +7854,9 @@ if [ "${1:-}" = "orphans" ]; then
     # here if their parent app is uninstalled. Deselect anything you still use — and note
     # everything goes to the Trash, so a wrong pick is recoverable.
     _pick_all=false
-    if $DRY_RUN || $ORPH_YES; then
+    if $DRY_RUN || $ORPH_YES || meister_always_yes; then
         _pick_all=true
     else
-        [ -t 0 ] || { log ERROR "Non-interactive terminal and no -y/--yes given — aborting."; exit 1; }
         echo ""
         echo "  Select:  [a]=all   \"3 7\"=only these   \"!3 7\"=all except these   [Enter]=cancel"
         printf "  → "
@@ -7877,10 +7878,11 @@ if [ "${1:-}" = "orphans" ]; then
         esac
         if ! $_pick_all && [ ! -s "$_picked" ]; then echo "  Nothing selected — aborting."; exit 0; fi
         $_pick_all && _cnt="${#_gids[@]}" || _cnt="$(grep -c . "$_picked")"
-        if $ORPH_PURGE; then printf "  \033[1;31mPERMANENTLY delete\033[0m leftovers of %s app(s)? [y/N] " "$_cnt"
-        else printf "  Move leftovers of %s app(s) to Trash? [y/N] " "$_cnt"; fi
-        read -r _reply
-        case "$_reply" in [yY]|[yY][eE][sS]) ;; *) echo "  Aborted."; exit 0 ;; esac
+        if $ORPH_PURGE; then
+            meister_confirm "PERMANENTLY delete leftovers of ${_cnt} app(s)?" || { echo "  Aborted."; exit 0; }
+        else
+            meister_confirm "Move leftovers of ${_cnt} app(s) to Trash?" || { echo "  Aborted."; exit 0; }
+        fi
     fi
 
     # ── 5. Reap (unprivileged first, escalate to root on failure — like remove) ──
@@ -9274,10 +9276,10 @@ if [ "${1:-}" = "adopt" ]; then
             # name→cask matching is a heuristic — confirm each app individually
             # (a wrong guess would install a DIFFERENT app over the existing one)
             for _c in $_A_ADOPTABLE; do
-                if [ -t 0 ]; then
-                    printf '  %s adoptieren? [y/N]: ' "$_c"
+                if ! meister_always_yes; then
+                    printf '  %s adoptieren? [Y/n]: ' "$_c"
                     read -r _yn
-                    [ "$_yn" = "y" ] || [ "$_yn" = "Y" ] || { echo "    uebersprungen"; continue; }
+                    case "$_yn" in ''|[yY]|[yY][eE][sS]) ;; *) echo "    uebersprungen"; continue ;; esac
                 fi
                 echo "  Adoptiere $_c..."
                 brew install --cask --adopt "$_c" 2>&1 | tail -1 | sed 's/^/    /'
@@ -9628,6 +9630,46 @@ if [ "${1:-}" = "touchid" ]; then
     exit 0
 fi
 
+# ── Shared sudo ticket (meister sudo-setup) ──
+# !tty_tickets + 2h timeout so GUI, terminals and LaunchAgents reuse one auth.
+if [ "${1:-}" = "sudo-setup" ]; then
+    echo -e "\033[1;34m  MeisterAI SUDO-SETUP — shared sudo ticket\033[0m"
+    echo ""
+    _SUDOERS="/etc/sudoers.d/zz-meister"
+    _user=$(id -un)
+    _body=$(printf '%s\n' \
+        "# MeisterAI / meister — share sudo across TTYs for ${_user}" \
+        "Defaults:${_user} !tty_tickets" \
+        "Defaults:${_user} timestamp_timeout=120" \
+        "Defaults:${_user} !lecture")
+    _tmp=$(mktemp /tmp/meister-sudoers.XXXXXX) || exit 1
+    printf '%s\n' "$_body" > "$_tmp"
+    if ! visudo -cf "$_tmp" >/dev/null 2>&1; then
+        echo "  [ERROR] sudoers syntax check failed"
+        rm -f "$_tmp"
+        exit 1
+    fi
+    if sudo -n true 2>/dev/null; then
+        sudo -n cp "$_tmp" "$_SUDOERS" && sudo -n chmod 440 "$_SUDOERS" && sudo -n chown root:wheel "$_SUDOERS"
+    elif [ -t 0 ] || ( : < /dev/tty ) 2>/dev/null; then
+        sudo cp "$_tmp" "$_SUDOERS" && sudo chmod 440 "$_SUDOERS" && sudo chown root:wheel "$_SUDOERS"
+    else
+        echo "  Unattended: no sudo ticket — skipped writing $_SUDOERS"
+        echo "  Run once in Terminal: MeisterAI sudo-setup"
+        rm -f "$_tmp"
+        exit 0
+    fi
+    rm -f "$_tmp"
+    if [ -f "$_SUDOERS" ]; then
+        echo "  Installed $_SUDOERS"
+        echo "  Shared ticket: 2h, all terminals/LaunchAgents after one auth"
+    else
+        echo "  [ERROR] could not install $_SUDOERS"
+        exit 1
+    fi
+    exit 0
+fi
+
 # ── Time Machine setup (meister backup) ──
 if [ "${1:-}" = "backup" ]; then
     echo -e "\033[1;34m  MeisterAI BACKUP — Time Machine status & setup\033[0m"
@@ -9690,9 +9732,9 @@ EOF
     if sudo tmutil setdestination -a "$_target"; then
         sudo tmutil enable 2>/dev/null
         echo "  Destination set + automatic backups enabled."
-        printf '  Start first backup now? [y/N]: '
-        read -r _go
-        [ "$_go" = "y" ] || [ "$_go" = "Y" ] && tmutil startbackup --auto && echo "  First backup started (background)"
+        if meister_confirm "Start first backup now?"; then
+            tmutil startbackup --auto && echo "  First backup started (background)"
+        fi
     else
         echo "  [ERROR] setdestination failed — is the volume APFS/HFS+ and writable?"
         exit 1
@@ -9942,13 +9984,14 @@ for arg in "$@"; do
         --help)    _NEW_ARGS+=("-h") ;;
         --version) echo "MeisterAI v${MEISTER_VERSION} (Apple Intelligence)"; exit 0 ;;
         --dry-run) _NEW_ARGS+=("-n") ;;
+        --yes|-y)  MEISTER_ALWAYS_YES=true ;;
         --menu)    _NEW_ARGS+=("menu") ;;
         --quick)   RUN_PROFILE=quick ;;
         --deep)    RUN_PROFILE=deep ;;
         --auto)    RUN_PROFILE=auto ;;
         --ai-heal-execute) AI_HEAL_EXECUTE=true ;;
         --ai-heal-suggest) AI_HEAL_EXECUTE=false ;;
-        --p0|--p1|--json|--tsv|--yes|--purge)
+        --p0|--p1|--json|--tsv|--purge)
             _NEW_ARGS+=("$arg") ;;
         --*)
             case "$_FIRST_POS" in

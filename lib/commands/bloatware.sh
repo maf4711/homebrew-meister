@@ -394,13 +394,17 @@ EOF
     echo
 
     if [ "$dry" = false ] && [ "$yes" = false ]; then
-        local reply
-        printf '  Quarantine these? [y/N] '
-        read -r reply
-        case "$reply" in
-            [yY]|[yY][eE][sS]) ;;
-            *) echo "  Aborted."; return 0 ;;
-        esac
+        if command -v meister_confirm >/dev/null 2>&1; then
+            meister_confirm "Quarantine these?" || { echo "  Aborted."; return 0; }
+        else
+            printf '  Quarantine these? [Y/n] '
+            local reply=""
+            read -r reply || true
+            case "$reply" in
+                ''|[yY]|[yY][eE][sS]) ;;
+                *) echo "  Aborted."; return 0 ;;
+            esac
+        fi
     fi
 
     local ok=0 fail=0
