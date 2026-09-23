@@ -6,7 +6,13 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.31
+# Version: 6.32
+# NEW in v6.32 — Homebrew shared by every admin user:
+#  - module_homebrew shares the prefix before brew update: group admin,
+#    setgid, inherited ACL, git safe.directory for /usr/bin/git and
+#    Homebrew's git. Does not chown the tree.
+#  - meister homebrew-share runs the same heal. No sudo ticket (LaunchAgent)
+#    skips instead of prompting.
 # NEW in v6.25 — LaunchAgent PATH + no /dev/tty spam:
 #  - Prepend /opt/homebrew/bin so brew/mas exist under launchd PATH
 #  - keepcurrent plists set EnvironmentVariables PATH
@@ -420,6 +426,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/learned_fixes.sh" ] && . "$MEISTER_LIB_DIR/core/learned_fixes.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/brew_upgrade.sh" ] && . "$MEISTER_LIB_DIR/core/brew_upgrade.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/homebrew_share.sh" ] && . "$MEISTER_LIB_DIR/core/homebrew_share.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/git_push_policy.sh" ] && . "$MEISTER_LIB_DIR/core/git_push_policy.sh"
     # shellcheck source=/dev/null
@@ -1904,6 +1912,7 @@ module_homebrew() {
     log INFO "Homebrew Maintenance..."
     ensure_brew || return 1
     ensure_brew_quiet
+    command -v homebrew_share_ensure >/dev/null 2>&1 && homebrew_share_ensure
 
     local brew_version=$(brew --version 2>/dev/null | head -1)
     log STEP "   Version: $brew_version"
@@ -9512,6 +9521,21 @@ if [ "${1:-}" = "touchid" ]; then
     exit 0
 fi
 
+# ── Share the Homebrew prefix with every admin user ──
+if [ "${1:-}" = "homebrew-share" ]; then
+    case "${2:-}" in
+        --dry-run|-n) DRY_RUN=true ;;
+    esac
+    echo -e "\033[1;34m  meister HOMEBREW-SHARE — prefix for every admin user\033[0m"
+    echo ""
+    if ! command -v homebrew_share_ensure >/dev/null 2>&1; then
+        echo "  [ERROR] homebrew share helper missing"
+        exit 1
+    fi
+    homebrew_share_ensure
+    exit 0
+fi
+
 # ── Shared sudo ticket (meister sudo-setup) ──
 # !tty_tickets + 2h timeout so GUI, terminals and LaunchAgents reuse one auth.
 if [ "${1:-}" = "sudo-setup" ]; then
@@ -9965,6 +9989,7 @@ TOOLS:
   meister fleet        Score/status of all Macs (FLEET_HOSTS in config)
   meister touchid [--off|status]  Touch ID for sudo (auto-on; pam_tid in sudo_local)
   meister sudo-setup       Long shared sudo ticket (2h, all terminals)
+  meister homebrew-share   Share the Homebrew prefix with every admin user
   meister backup [--now]   Time Machine status; set up destination if none
   meister dash [N]     Live system dashboard: CPU/RAM/Disk/Netz (Stats-style)
   meister files <x>    Who has port/file/process open (Sloth-style lsof)
