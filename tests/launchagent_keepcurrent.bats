@@ -4,6 +4,27 @@
 setup() {
   # shellcheck source=../lib/core/launchagent_keepcurrent.sh
   source "${BATS_TEST_DIRNAME}/../lib/core/launchagent_keepcurrent.sh"
+  # Keep the same rewrite assertions on Linux, where Apple's tool is absent.
+  # macOS continues to exercise the real PlistBuddy implementation.
+  if [ ! -x /usr/libexec/PlistBuddy ] || [ "${MEISTER_TEST_PLIST_ADAPTER:-0}" = 1 ]; then
+    function /usr/libexec/PlistBuddy() {
+      python3 - "$@" <<'PYPLIST'
+import plistlib, sys
+assert sys.argv[1] == '-c'
+command, path = sys.argv[2:]
+with open(path, 'rb') as stream:
+    data = plistlib.load(stream)
+if command == 'Print :ProgramArguments:0':
+    print(data['ProgramArguments'][0])
+elif command.startswith('Set :ProgramArguments:0 '):
+    data['ProgramArguments'][0] = command.split(' ', 2)[2]
+    with open(path, 'wb') as stream:
+        plistlib.dump(data, stream)
+else:
+    raise SystemExit('unsupported test PlistBuddy command')
+PYPLIST
+    }
+  fi
 }
 
 @test "daily args are --auto -q" {
