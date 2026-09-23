@@ -107,14 +107,15 @@ cmd_why() {
 
 # --- doctor --json ---
 cmd_doctor_json() {
-    local score fv fw sip disk host ts
+    local score fv fw sip disk host ts disk_path=/
+    [ ! -d /System/Volumes/Data ] || disk_path=/System/Volumes/Data
     ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     host=$(scutil --get LocalHostName 2>/dev/null || echo unknown)
     score=$(grep -oE 'SCORE:[0-9]+' "$MEISTER_DIR/history.log" 2>/dev/null | tail -1 | cut -d: -f2)
     fv=$(fdesetup status 2>/dev/null | grep -q On && echo true || echo false)
     fw=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | grep -q enabled && echo true || echo false)
     sip=$(csrutil status 2>/dev/null | grep -q disabled && echo false || echo true)
-    disk=$(df -P / | awk 'NR==2{gsub(/%/,"",$5); print $5}')
+    disk=$(df -P "$disk_path" | awk 'NR==2{gsub(/%/,"",$5); print $5}')
     local ai=false
     command -v fm_available >/dev/null 2>&1 && fm_available 2>/dev/null && ai=true
     cat <<EOF

@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterAI - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.30
+# Version: 6.31
 # NEW in v6.25 — LaunchAgent PATH + no /dev/tty spam:
 #  - Prepend /opt/homebrew/bin so brew/mas exist under launchd PATH
 #  - keepcurrent plists set EnvironmentVariables PATH
@@ -119,7 +119,7 @@
 # NEW in v6.7 — diagnose → real autofix (no fake AI shell):
 #  - MeisterAI ai / autofix: deterministic fixes for known WARNs
 #      old brew bottles, orphan LaunchDaemons, unpushed git, firewall,
-#      Time Machine (opens Settings), _Inbox archive
+#      _Inbox archive
 #  - AI text only for remaining issues; prompts list real MeisterAI cmds
 #  - module_brew_age / launchd_orphans can apply fixes (not warn-only)
 #
@@ -230,8 +230,7 @@
 #    when none is configured (lists attached APFS/HFS volumes)
 #  - meister report [N]: run-history table from history.log with per-run counts,
 #    slowest modules, avg/longest duration and error total
-#  - Time Machine module: "not configured" is now a WARN (Mac = single copy)
-#    and lists attached candidate volumes with a `meister backup` hint
+#  - Time Machine monitoring runs only with a configured destination
 #  - XProtect: stale signatures (>14d) now trigger `xprotect update`
 #    (fallback: softwareupdate --background-critical) instead of only warning
 #  - history.log: per-run "top:" field with the 3 slowest modules (INSIGHTS #7)
@@ -581,7 +580,7 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE AUTOFIX_OPEN_TIMEMACHINE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH AUFRAUM_APPLY DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
+    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH AUFRAUM_APPLY DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
     _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
     _STR_KEYS=" RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP AUFRAUM_OPERATOR "
 
@@ -4791,6 +4790,21 @@ module_benchmark() {
 # 7b. EXTRA MODULES (v5.6+)
 #############################
 
+# A failed lint is diagnostic evidence, never authorization to move user settings.
+inspect_preference_plist() {
+    local plist="$1" detail
+    [ -f "$plist" ] || return 0
+    case "$(basename "$plist")" in com.apple.*|Apple.*) return 0 ;; esac
+    if ! detail=$(LC_ALL=C plutil -lint "$plist" 2>&1); then
+        case "$detail" in
+            *"Operation not permitted"*|*"Permission denied"*|*"could not be opened"*)
+                report_add WARN "Preferences: inaccessible $(basename "$plist"); unchanged" ;;
+            *) report_add WARN "Preferences: validation failed for $(basename "$plist"); unchanged, review required" ;;
+        esac
+    fi
+    return 0
+}
+
 module_healer() {
     log INFO "Healer — proactive auto-fixes..."
     local fixed=0
@@ -4843,17 +4857,11 @@ module_healer() {
         done < <(find "$agent_dir" -maxdepth 1 -name "*.plist" 2>/dev/null)
     fi
 
-    # 3. Corrupt user plist files → quarantine
+    # Lint failures include TCC/access errors. Never reset preferences on that basis.
     bw_phase "Healer: linting plists"
-    while IFS= read -r plist; do
-        [ -f "$plist" ] || continue
-        if ! plutil -lint "$plist" >/dev/null 2>&1; then
-            bw_phase "Healer: corrupt $(basename "$plist")"
-            log HEAL "   corrupt plist: $(basename "$plist")"
-            fixed=$((fixed + 1))
-            $DRY_RUN || mv "$plist" "${plist}.bad.$(date +%s)"
-        fi
-    done < <(find "$HOME/Library/Preferences" -maxdepth 1 -name "*.plist" -size +0 2>/dev/null)
+    while IFS= read -r -d '' plist; do
+        inspect_preference_plist "$plist"
+    done < <(find "$HOME/Library/Preferences" -maxdepth 1 -name "*.plist" -size +0 -print0 2>/dev/null)
 
     # 4. Broken casks (app source gone) — auto-uninstall (app is already gone, cask is stale)
     bw_phase "Healer: scanning casks"
@@ -5020,25 +5028,9 @@ tm_candidate_volumes() {
 module_tm_health() {
     log INFO "Checking Time Machine..."
     if ! command_exists tmutil; then log STEP "   tmutil not available"; return 0; fi
-    # NB: `tmutil destinationinfo` exits 0 even with NO destination ("No destinations
-    # configured." on stdout) — the old exit-code check never detected this state.
-    if tmutil destinationinfo 2>&1 | grep -qi "No destinations"; then
-        # No destination = this Mac is a single copy. Surface candidates instead
-        # of a quiet STEP line (Documents alone is 170 GB with no second copy).
-        log WARN "   Time Machine NOT configured — no backup target, Mac is a single copy"
-        report_add WARN "Time Machine: not configured (no backup!) → MeisterAI backup"
-        local candidates; candidates=$(tm_candidate_volumes)
-        if [ -n "$candidates" ]; then
-            log INFO "   Attached volumes usable as TM destination:"
-            echo "$candidates" | while IFS='|' read -r cvol cfree; do
-                log STEP "     $cvol (${cfree} free)"
-            done
-            log STEP "   Set up with: meister backup"
-        else
-            log STEP "   No suitable external volume attached (plug one in, then: meister backup)"
-        fi
-        return 0
-    fi
+    # Backup monitoring is opt-in through an already configured destination.
+    # An absent destination is not a maintenance finding.
+    tmutil destinationinfo 2>/dev/null | grep -q 'Name' || return 0
     local latest; latest=$(tmutil latestbackup 2>/dev/null | tail -1)
     if [ -z "$latest" ]; then
         log WARN "   No Time Machine backups found"
@@ -5392,8 +5384,11 @@ module_node_modules_aged() {
 }
 
 module_system_maintenance() {
+    local periodic_bin
+    periodic_bin=$(command -v periodic 2>/dev/null || true)
     if $DRY_RUN; then
-        report_add WOULD "Run periodic scripts & DNS flush"
+        [ -z "$periodic_bin" ] || report_add WOULD "Run periodic scripts"
+        report_add WOULD "Flush DNS cache"
         return 0
     fi
     if ! sudo_has_ticket; then
@@ -5402,19 +5397,27 @@ module_system_maintenance() {
         return 0
     fi
     local task failed=0
-    for task in daily weekly monthly; do
-        log STEP "   periodic $task..."
-        if ! sudo -n periodic "$task"; then
-            report_add ERROR "System maintenance: periodic $task failed"
-            failed=1
-        fi
-    done
+    if [ -n "$periodic_bin" ]; then
+        for task in daily weekly monthly; do
+            log STEP "   periodic $task..."
+            if ! sudo -n "$periodic_bin" "$task"; then
+                report_add ERROR "System maintenance: periodic $task failed"
+                failed=1
+            fi
+        done
+    else
+        log STEP "   periodic unavailable on this system; skipped"
+    fi
     if ! sudo -n dscacheutil -flushcache; then
         report_add ERROR "System maintenance: DNS cache flush failed"
         failed=1
     fi
     [ "$failed" -eq 0 ] || return 1
-    report_add FIX "Ran periodic scripts & DNS flush"
+    if [ -n "$periodic_bin" ]; then
+        report_add FIX "Ran periodic scripts & DNS flush"
+    else
+        report_add FIX "DNS cache flushed"
+    fi
     return 0
 }
 
@@ -5945,7 +5948,7 @@ compute_score() {
     score=$((score - ${#REPORT_ERRORS[@]} * 8))      # errors hurt most
     score=$((score - ${#REPORT_WARNINGS[@]} * 3))     # warnings moderate
     # Standing security/backup facts weigh heavier than transient warnings
-    printf '%s\n' "${REPORT_WARNINGS[@]}" | grep -qiE 'Time Machine|no backup|single copy' && score=$((score - 12))
+    printf '%s\n' "${REPORT_WARNINGS[@]}" | grep -qiE 'Time Machine' && score=$((score - 12))
     printf '%s\n' "${REPORT_WARNINGS[@]}" | grep -qiE 'XProtect|Gatekeeper|SIP|Firewall' && score=$((score - 6))
     printf '%s\n' "${REPORT_WARNINGS[@]}" | grep -qiE 'persistence|suspicious|VERDAECHTIG' && score=$((score - 6))
     [ "$score" -lt 0 ] && score=0
@@ -8336,8 +8339,6 @@ if [ "${1:-}" = "today" ] || [ "${1:-}" = "brief" ]; then
     # Time Machine
     if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
         echo "  Backup:    Time Machine configured"
-    else
-        echo -e "  Backup:    \033[1;33mTime Machine NOT configured\033[0m"
     fi
     # Pending brew outdated (fast, no upgrade)
     if command_exists brew; then
@@ -8401,7 +8402,9 @@ if [ "${1:-}" = "doctor" ]; then
     _gk=$(spctl --status 2>/dev/null | grep -qi enabled && echo ON || echo OFF)
     [ "$_gk" = "ON" ] && _check ok "Gatekeeper" "enabled" || _check warn "Gatekeeper" "disabled"
     # Disk
-    _du=$(df / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+    _disk_path=/
+    [ ! -d /System/Volumes/Data ] || _disk_path=/System/Volumes/Data
+    _du=$(df "$_disk_path" | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
     if [ "${_du:-0}" -ge 90 ]; then _check bad "Disk" "${_du}% used"
     elif [ "${_du:-0}" -ge 75 ]; then _check warn "Disk" "${_du}% used"
     else _check ok "Disk" "${_du}% used"; fi
@@ -8414,8 +8417,9 @@ if [ "${1:-}" = "doctor" ]; then
         _check warn "Homebrew" "not installed"
     fi
     # Time Machine
-    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then _check ok "Time Machine" "destination set"
-    else _check warn "Time Machine" "not configured (single copy!)"; fi
+    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
+        _check ok "Time Machine" "destination set"
+    fi
     # Touch ID sudo (v6.17: auto-enable on next ensure_sudo when TOUCHID_SUDO=true)
     if touchid_sudo_enabled 2>/dev/null || { [ -f /etc/pam.d/sudo_local ] && grep -qE '^[[:space:]]*auth[[:space:]].*pam_tid' /etc/pam.d/sudo_local 2>/dev/null; }; then
         _check ok "Touch ID sudo" "enabled (pam_tid)"
@@ -8768,27 +8772,6 @@ autofix_known_issues() {
         log STEP "   git: pushed=$pushed dirty_skipped=$dirty_skip"
     else
         log STEP "   Git push skipped (GIT_AUTO_PUSH=${GIT_AUTO_PUSH:-false})"
-    fi
-
-    # 5) Time Machine — cannot invent a disk; open Settings
-    if [ "${AUTOFIX_OPEN_TIMEMACHINE:-true}" = "true" ]; then
-        if ! tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
-            log HEAL "Time Machine not configured → opening Settings..."
-            if $DRY_RUN; then
-                log STEP "   [DRY-RUN] would open Time Machine settings"
-                report_add WOULD "would open Time Machine settings"
-            else
-                open "x-apple.systempreferences:com.apple.Time-Machine-Settings.extension" 2>/dev/null \
-                    || open "x-apple.systempreferences:com.apple.prefs.backup" 2>/dev/null \
-                    || open /System/Library/PreferencePanes/TimeMachine.prefPane 2>/dev/null \
-                    || true
-                log WARN "   Time Machine requires a backup disk"
-                report_add WARN "Time Machine is not configured; choose a backup disk in Settings"
-                skip_count=$((skip_count + 1))
-            fi
-        else
-            log STEP "   Time Machine: destination set"
-        fi
     fi
 
     # 6) _Inbox archive (Documents)
@@ -9647,7 +9630,7 @@ if [ "${1:-}" = "backup" ]; then
         exit 0
     fi
 
-    echo "  No Time Machine destination configured — this Mac is a SINGLE COPY."
+    echo "  Choose a backup destination:"
     echo ""
     _candidates=$(tm_candidate_volumes)
     if [ -z "$_candidates" ]; then
@@ -10174,7 +10157,9 @@ auto_detect() {
 
     # 5. periodic scripts (sudo tasks)
     local daily_log="/var/log/daily.out"
-    if [ -f "$daily_log" ]; then
+    if ! command_exists periodic; then
+        log STEP "   periodic scripts: unavailable on this system → not scheduled"
+    elif [ -f "$daily_log" ]; then
         local daily_age_days=$(( ( $(date +%s) - $(stat -f %m "$daily_log" 2>/dev/null || echo 0) ) / 86400 ))
         if [ "$daily_age_days" -ge "$AUTO_PERIODIC_INTERVAL_DAYS" ]; then
             RUN_SUDO_TASKS=true

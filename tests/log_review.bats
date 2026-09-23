@@ -4,6 +4,7 @@ setup() {
   mkdir -p "$MEISTER_DIR"
   LOGFILE="$MEISTER_DIR/meister.log"
   printf 'run\nrun\nrun\n' > "$MEISTER_DIR/history.log"
+  periodic() { :; }
   DRY_RUN=false
   log() { printf '%s %s\n' "$1" "$2"; }
   bw_phase() { :; }
@@ -132,4 +133,77 @@ load_security_helpers() {
   [[ "$output" == *'WARN macOS Firewall state could not be checked'* ]]
   [[ "$output" == *'WARN XProtect Remediator activity could not be checked'* ]]
   [[ "$output" != *'SUCCESS macOS Security'* && "$output" != *MUTATION* ]]
+}
+
+@test "missing periodic skips scripts and truthfully reports only DNS" {
+  unset -f periodic
+  command() { [ "$*" = '-v periodic' ] && return 1; builtin command "$@"; }
+  sudo_has_ticket() { return 0; }
+  sudo() { echo "$*" >> "$MEISTER_DIR/calls"; }
+  run module_system_maintenance
+  [ "$status" = 0 ]
+  [[ "$output" == *'FIX DNS cache flushed'* ]]
+  [[ "$output" != *'Ran periodic'* ]]
+  [ "$(cat "$MEISTER_DIR/calls")" = '-n dscacheutil -flushcache' ]
+}
+
+@test "missing periodic preview never promises scripts or invokes sudo" {
+  unset -f periodic
+  command() { [ "$*" = '-v periodic' ] && return 1; builtin command "$@"; }
+  DRY_RUN=true
+  sudo() { echo MUTATION; }
+  run module_system_maintenance
+  [ "$status" = 0 ]
+  [[ "$output" == *'WOULD Flush DNS cache'* ]]
+  [[ "$output" != *'periodic scripts'* && "$output" != *MUTATION* ]]
+}
+
+load_preference_inspector() {
+  eval "$(awk '$0=="inspect_preference_plist() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
+}
+
+@test "invalid and inaccessible preferences remain byte-identical without repair claims" {
+  load_preference_inspector
+  local plist="$MEISTER_DIR/example.plist"
+  printf 'invalid settings\n' > "$plist"
+  cp "$plist" "$MEISTER_DIR/original"
+  plutil() { echo 'Unexpected character at line 1'; return 1; }
+  run inspect_preference_plist "$plist"
+  [[ "$output" == *'validation failed'* && "$output" != *FIX* ]]
+  cmp "$plist" "$MEISTER_DIR/original"
+  plutil() { echo 'Operation not permitted'; return 1; }
+  run inspect_preference_plist "$plist"
+  [[ "$output" == *inaccessible* && "$output" != *FIX* ]]
+  cmp "$plist" "$MEISTER_DIR/original"
+  [ "$(find "$MEISTER_DIR" -name '*.bad.*' | wc -l | tr -d ' ')" = 0 ]
+}
+
+@test "Apple preferences are not probed and valid or vanished files are quiet" {
+  load_preference_inspector
+  touch "$MEISTER_DIR/com.apple.test.plist"
+  plutil() { echo PROBED; return 1; }
+  run inspect_preference_plist "$MEISTER_DIR/com.apple.test.plist"
+  [ "$output" = '' ]
+  run inspect_preference_plist "$MEISTER_DIR/missing.plist"
+  [ "$output" = '' ]
+  touch "$MEISTER_DIR/example.plist"
+  plutil() { return 0; }
+  run inspect_preference_plist "$MEISTER_DIR/example.plist"
+  [ "$output" = '' ]
+}
+
+@test "doctor measures writable data volume when present" {
+  source "$BATS_TEST_DIRNAME/../lib/commands/extras.sh"
+  df() {
+    printf '%s\n' "$*" > "$MEISTER_DIR/df-args"
+    printf 'Filesystem Size Used Avail Capacity Mounted\ndisk 100 83 17 83%% /\n'
+  }
+  run cmd_doctor_json
+  [ "$status" = 0 ]
+  [[ "$output" == *'"disk_used_pct": 83'* ]]
+  if [ -d /System/Volumes/Data ]; then
+    [ "$(cat "$MEISTER_DIR/df-args")" = '-P /System/Volumes/Data' ]
+  else
+    [ "$(cat "$MEISTER_DIR/df-args")" = '-P /' ]
+  fi
 }

@@ -22,7 +22,7 @@ PY
 import json,os,pathlib,subprocess,sys
 script=pathlib.Path(sys.argv[1]).resolve(); fixture=pathlib.Path(sys.argv[2])/'fixture'
 state=fixture/'.meister'; state.mkdir(parents=True)
-keys=['AUTOFIX_FIREWALL','AUTOFIX_OLD_BOTTLES','AUTOFIX_ORPHAN_LAUNCHD','AUTOFIX_GIT_PUSH','GIT_AUTO_PUSH','AUTOFIX_OPEN_TIMEMACHINE','AUTOFIX_INBOX_ARCHIVE']
+keys=['AUTOFIX_FIREWALL','AUTOFIX_OLD_BOTTLES','AUTOFIX_ORPHAN_LAUNCHD','AUTOFIX_GIT_PUSH','GIT_AUTO_PUSH','AUTOFIX_INBOX_ARCHIVE']
 (state/'config').write_text(''.join(f'{k}=false\n' for k in keys))
 bindir=fixture/'bin'; bindir.mkdir()
 # A missing AI runtime is an expected, safe no-model fixture; never compile.
