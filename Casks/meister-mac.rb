@@ -1,6 +1,6 @@
 cask "meister-mac" do
-  version "6.26"
-  sha256 "df1a93194ca48662161ec2efb348cb288b6ec718fad2c3b5aedd9879f9ab1f02"
+  version "6.32"
+  sha256 "d9f343f2adbefad7ccff2b2679c4f1aa503b0cf9b6133465c2ea8ce7a8820f07"
 
   url "https://github.com/maf4711/homebrew-meister/releases/download/v#{version}/MeisterAI-macOS.zip"
   name "MeisterAI"
