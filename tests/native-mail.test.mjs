@@ -112,3 +112,18 @@ test('background recovery is bounded and only ever used for reads',async()=>{
  await assert.rejects(broken.invoke({operation:'read'}));assert.equal(recovered,3);
  await assert.rejects(broken.invoke({operation:'read'}));assert.equal(recovered,3);
 });
+
+test('only native content read process timeouts are tagged as skippable',async()=>{
+ const {defaultRunner}=await import('../lib/mail/native-mail.mjs');
+ const timeout=async()=>{throw Object.assign(new Error('private command'),{killed:true,signal:'SIGTERM',code:null});};
+ await assert.rejects(defaultRunner({operation:'read'},timeout),e=>e.code==='MAIL_READ_TIMEOUT'&&!e.message.includes('private'));
+ for(const operation of ['move','identities','accounts']) await assert.rejects(defaultRunner({operation},timeout),e=>e.code!=='MAIL_READ_TIMEOUT');
+ await assert.rejects(defaultRunner({operation:'read'},async()=>{throw Error('other failure');}),e=>e.code!=='MAIL_READ_TIMEOUT');
+});
+
+test('max-buffer and cancellation failures cannot be mistaken for read timeouts',async()=>{
+ const {defaultRunner}=await import('../lib/mail/native-mail.mjs');
+ for(const code of ['ERR_CHILD_PROCESS_STDIO_MAXBUFFER','ABORT_ERR','ENOENT']){
+  await assert.rejects(defaultRunner({operation:'read'},async()=>{throw Object.assign(Error('failure'),{killed:true,signal:'SIGTERM',code});}),e=>e.code!=='MAIL_READ_TIMEOUT');
+ }
+});

@@ -7,9 +7,6 @@ import { join } from 'node:path';
 import { MegasmartEngine, classify, destinationName, durableJSON } from '../lib/mail/engine.mjs';
 
 
-
-
-
 const row = (id, subject = 'Weekly newsletter', sender = 'Garden Weekly <hello@example.com>') => ({ id, subject, sender });
 class FakeMail {
   constructor(rows = [row('1')]) { this.boxes = { INBOX: rows }; this.calls = []; this.mode = ''; }
@@ -117,7 +114,6 @@ test('pagination exposes cap; folder validator blocks path and reserved names', 
   assert.equal(classify(row('1', 'Hello', 'someone@example.com')).action, 'keep');
   assert.equal(classify(row('1', 'Newsletter', 'someone@example.com')).action, 'keep');
 });
-
 test('uncertain move fences every job for the same account and source mailbox', async t => {
   const { engine, mail } = await fixture(t);
   const first = await engine.preview('Personal', 'INBOX');
@@ -141,7 +137,6 @@ test('list envelope provides IMAP stable identity without trusting message body'
   await engine.apply(job.id); await engine.task; assert.equal(job.status, 'completed');
   assert.ok(mail.calls.filter(c => c.name === 'list-messages' && c.args.from).every(c => c.args.from === 'hello@example.com'));
 });
-
 test('German protected compounds and non-inbox sources cannot be auto moved', async t => {
   for (const word of ['Sicherheitswarnung', 'Zahlungsaufforderung', 'Steuerbescheid', 'Arzttermin', 'Gerichtstermin', 'Schulnachricht']) {
     assert.equal(classify(row('1', `Newsletter: ${word}`)).action, 'keep', word);
@@ -472,4 +467,32 @@ test('new previews record the classifier policy namespace for later CLI apply',a
  const f=await localPreviewFixture(t);f.engine.classifier.namespace='meister.mail/v2';
  const job=await f.engine.preview('Personal','INBOX',undefined,'Trash');
  assert.equal(job.policy.classifierVersion,'meister.mail/v2');
+});
+
+test('native preview timeout keeps candidate unverified without stopping the preview',async t=>{
+ const f=await localPreviewFixture(t);
+ f.mail.readMessages=async()=>{throw Object.assign(new Error('timeout'),{code:'MAIL_READ_TIMEOUT'});};
+ const job=await f.engine.preview('Personal','INBOX',undefined,'Trash');
+ const item=job.items[0];assert.equal(item.action,'keep');assert.equal(item.protected,true);
+ assert.equal(item.nativeUnverified,true);assert.equal(item.classification,undefined);
+ assert.equal(item.fingerprint,undefined);assert.equal(item.rfcMessageId,undefined);
+ await assert.rejects(f.engine.edit(job.id,item.id,'move','Trash'),/Protected/);
+ assert.equal(f.mail.mutations().length,0);
+});
+test('unknown native confirmation failures still stop preview',async t=>{
+ const f=await localPreviewFixture(t);f.mail.readMessages=async()=>{throw Error('identity/transport failure');};
+ await assert.rejects(f.engine.preview('Personal','INBOX',undefined,'Trash'),/identity\/transport/);
+ assert.equal(f.engine.jobs.size,0);assert.equal(f.mail.mutations().length,0);
+});
+
+test('failed native confirmation batch does not block successful later pages',async t=>{
+ const rows=Array.from({length:30},(_,i)=>({...row(String(i+1)),dateReceived:new Date(Date.now()-9*86400000).toISOString(),isFlagged:false}));
+ const classifier={async classify(input){return input.map(r=>({id:r.id,category:'newsletter',safeToTrash:true,reason:'fixture'}));}};
+ const previewReader={async readMessages(a,m,ids){return ids.map(id=>({...rows.find(r=>r.id===id),body:'Local content',rfcMessageId:'stable-'+id,localPreview:true}));}};
+ const {engine,mail}=await fixture(t,rows,{classifier,previewReader});mail.boxes.Trash=[];let reads=0;
+ mail.readMessages=async(a,m,ids)=>{if(++reads===1)throw Object.assign(Error('timeout'),{code:'MAIL_READ_TIMEOUT'});return ids.map(id=>({...rows.find(r=>r.id===id),body:'Native content',rfcMessageId:'stable-'+id}));};
+ const job=await engine.preview('Personal','INBOX',undefined,'Trash');
+ assert.equal(job.items.length,30);assert.equal(job.items.filter(i=>i.nativeUnverified).length,25);
+ assert.ok(job.items.slice(0,25).every(i=>i.action==='keep'&&i.protected&&!i.fingerprint&&!i.classification));
+ assert.ok(job.items.slice(25).every(i=>i.action==='move'&&i.fingerprint));assert.equal(reads,2);
 });
