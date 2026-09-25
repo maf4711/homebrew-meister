@@ -5,7 +5,7 @@
 # For auto, optional env gates: ICLOUD_FIX_ENABLED, UNIVERSAL_UPDATES, etc.
 
 # Quick profile whitelist (lean daily)
-PROFILE_QUICK_MODULES="SmartInbox|Healer|Homebrew|App Store|macOS System|Cleanup|Security Suite|Broken Symlinks|Sleep Blockers|Time Machine"
+PROFILE_QUICK_MODULES="SmartInbox|AI Updates|Healer|Homebrew|App Store|macOS System|Cleanup|Security Suite|Broken Symlinks|Sleep Blockers|Time Machine"
 
 # Returns 0 if module $1 should run under current RUN_PROFILE
 module_in_profile() {

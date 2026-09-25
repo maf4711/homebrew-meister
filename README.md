@@ -33,6 +33,27 @@ Every maintenance run produces a summary report with SUCCESS, FIXED, WARN, and E
 
 Run with `meister` (auto-detect) or `meister -a` (all modules).
 
+### AI Updates (always on)
+
+Every maintenance profile (`--auto`, `--quick`, `--deep`, `-a`) runs AI Updates
+before optional modules, even when `UNIVERSAL_UPDATES=false` or the soft run
+budget has expired. `-n` only previews it; read-only commands never update.
+
+Installed AI Homebrew packages get fresh metadata and greedy cask upgrades.
+Known AI npm packages are checked against `latest` in Homebrew and all installed
+nvm prefixes, including major-version upgrades. Native Claude, Grok, Cursor Agent
+and OpenCode use their own updaters. Failed commands retry once, then failures
+and verification mismatches appear in the maintenance report. Each update command
+has a 300-second limit; this required phase can extend Quick runs.
+
+Only installed, recognized clients are updated (catalog in
+`lib/core/ai_updates.sh`); absent clients are not installed. Manually installed
+Claude, ChatGPT, Codex, Cursor and Ollama desktop apps without a managed updater
+are reported as unverified and need an in-app update. Running sessions are not
+terminated. This does not promise that arbitrary future clients or unmanaged
+app copies are current. Homebrew's `gemini` cask is a duplicate-file finder and
+is deliberately excluded; Gemini CLI is `@google/gemini-cli` / `gemini-cli`.
+
 ### Homebrew
 
 Updates Homebrew, upgrades outdated formulae and casks, runs `brew cleanup` and `brew autoremove`. Detects broken installs and attempts repair.

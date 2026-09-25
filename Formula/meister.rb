@@ -8,6 +8,7 @@ class Meister < Formula
 
   depends_on :macos
   depends_on "node"
+  depends_on "coreutils" # bounded AI client updates need timeout on macOS
 
   def install
     bin.install "meister.sh" => "meister"

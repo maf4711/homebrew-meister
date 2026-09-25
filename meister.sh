@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.33
+# Version: 6.34
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -423,6 +423,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/cleanup_tally.sh" ] && . "$MEISTER_LIB_DIR/core/cleanup_tally.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/profiles.sh" ] && . "$MEISTER_LIB_DIR/core/profiles.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/ai_updates.sh" ] && . "$MEISTER_LIB_DIR/core/ai_updates.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/last_json.sh" ] && . "$MEISTER_LIB_DIR/core/last_json.sh"
     # shellcheck source=/dev/null
@@ -10303,7 +10305,7 @@ module_in_profile() {
     case "${RUN_PROFILE:-auto}" in
         quick)
             case "$name" in
-                SmartInbox|Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Time\ Machine)
+                SmartInbox|AI\ Updates|Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Time\ Machine)
                     return 0 ;;
                 *) return 1 ;;
             esac
@@ -10386,7 +10388,7 @@ run_module_if() {
 apply_run_profile
 
 # Modul-Anzahl berechnen (dynamic after profile)
-MODULE_TOTAL=39
+MODULE_TOTAL=40
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 log STEP "   Profile=${RUN_PROFILE:-auto} BREW_UPDATE_MAX_AGE=${BREW_UPDATE_MAX_AGE_SEC:-43200}s"
 
@@ -10400,6 +10402,16 @@ _pf_fix0=${#REPORT_FIXED[@]}; _pf_warn0=${#REPORT_WARNINGS[@]}; _pf_err0=${#REPO
 selfheal_preflight
 module_timer_stop "Preflight"
 ledger_add "Preflight" "$_pf_fix0" "$_pf_warn0" "$_pf_err0" 0
+fi
+
+# Required in every maintenance profile, even when RUN_MAX_SEC was consumed by
+# preflight. Keep read-only commands and dry-run on their existing safe paths.
+if ! $INTERRUPTED; then
+    if command -v module_ai_updates >/dev/null 2>&1; then
+        run_module_safe "AI Updates" module_ai_updates
+    else
+        report_add ERROR "AI Updates: updater module missing; reinstall Meister"
+    fi
 fi
 
 # Local Mail is independent of Internet availability and runs before network maintenance.

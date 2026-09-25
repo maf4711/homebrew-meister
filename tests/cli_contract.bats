@@ -85,6 +85,7 @@ for args in [['--auto'],['--quick'],['--deep'],['-a']]:
  assert r['report_kind']=='execution_plan' and r['dry_run'] and r['status']=='completed',r
  assert r['score'] is None and r['freed_bytes'] is None
  assert r['fix']==r['verified_repair_count']==0 and r['fixes']==r['would_fix']==[]
+ assert 'AI Updates' in r['planned_modules'], r
  assert r['planned_modules'] and all(m['status']=='PLAN' for m in r['modules'])
 assert not (state/'history.log').exists()
 PY
