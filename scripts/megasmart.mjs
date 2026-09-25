@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { localNewsletterHeaders } from '../lib/mail/local-index.mjs';
+import { mailPolicyVersion } from '../lib/mail/fm-classifier.mjs';
 import { KeepCache } from '../lib/mail/keep-cache.mjs';
 import { MegasmartEngine } from '../lib/mail/engine.mjs';
 import { lockState, jobs, desktopFence, lockDesktop, savedKeepDecisions } from '../lib/mail/state.mjs';
@@ -123,7 +124,7 @@ export async function main(args = process.argv.slice(2)) {
     }
     if (mutating) {
       if (interrupted || job.hasMore) throw new Error('Unvollständiger oder abgebrochener Plan wird nicht angewendet');
-      if (job.policy?.classifier !== 'apple-fm') throw new Error('Alter Plan ohne Apple-FM-Prüfung; eine neue preview erstellen');
+      if (job.policy?.classifier !== 'apple-fm' || job.policy.classifierVersion !== mailPolicyVersion) throw new Error('Alter Plan ohne aktuelle Apple-FM-Prüfung; eine neue preview erstellen');
       await desktopFence();
       await engine.apply(job.id); await engine.task;
     }

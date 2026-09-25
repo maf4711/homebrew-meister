@@ -467,3 +467,9 @@ test('unavailable local content is explicitly kept without native reads or model
  assert.equal(f.reads(),0);assert.equal(f.calls.length,0);assert.equal(job.items[0].localUnavailable,true);
  assert.equal(job.items[0].action,'keep');assert.equal(job.items[0].protected,true);assert.equal(job.items[0].fingerprint,undefined);
 });
+
+test('new previews record the classifier policy namespace for later CLI apply',async t=>{
+ const f=await localPreviewFixture(t);f.engine.classifier.namespace='meister.mail/v2';
+ const job=await f.engine.preview('Personal','INBOX',undefined,'Trash');
+ assert.equal(job.policy.classifierVersion,'meister.mail/v2');
+});

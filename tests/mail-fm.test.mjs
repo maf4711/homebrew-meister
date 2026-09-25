@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MailClassifier, runClassifierProcess } from '../lib/mail/fm-classifier.mjs';
 const row = { id: 'm1', subject: 'News', sender: 'news@example.test', body: 'Complete mail body' };
-const envelope = results => ({ model: 'apple-on-device', policyVersion: 'meister.mail/v1', results });
+const envelope = results => ({ model: 'apple-on-device', policyVersion: 'meister.mail/v3', results });
 const decision = { id: 'm1', category: 'newsletter', safeToTrash: true, reason: 'Bulk informational newsletter.' };
 test('one successful runtime preflight is reused while every classification still invokes the guarded helper', async () => {
   const { classifier, calls } = fixture();
@@ -15,7 +15,7 @@ function fixture(output = envelope([decision])) {
   const calls = [];
   const runner = async (file, args, options) => {
     calls.push({ file, args, options });
-    if (args[0] === '--check') return { stdout: JSON.stringify({ available: 'true', model: 'apple-on-device', policyVersion: 'meister.mail/v1' }) };
+    if (args[0] === '--check') return { stdout: JSON.stringify({ available: 'true', model: 'apple-on-device', policyVersion: 'meister.mail/v3' }) };
     return { stdout: typeof output === 'string' ? output : JSON.stringify(output) };
   };
   return { classifier: new MailClassifier({ runner, helperPath: '/test/classifier' }), calls };
@@ -46,7 +46,7 @@ test('malformed, missing, duplicate and invented result IDs all fail closed', as
 test('unavailable model has no fallback or classification call', async () => {
   let calls = 0;
   const classifier = new MailClassifier({ helperPath: '/test/classifier', runner: async () => {
-    calls++; return { stdout: JSON.stringify({ available: false, model: 'apple-on-device', policyVersion: 'meister.mail/v1' }) };
+    calls++; return { stdout: JSON.stringify({ available: false, model: 'apple-on-device', policyVersion: 'meister.mail/v3' }) };
   } });
   await assert.rejects(classifier.classify([row]), /unavailable/); assert.equal(calls, 1);
 });
@@ -54,7 +54,7 @@ test('25 complete bodies are handled independently without truncation or shared 
   const rows = Array.from({ length: 25 }, (_, i) => ({ ...row, id: String(i), body: 'body '.repeat(1000) }));
   let checks = 0, classifications = 0;
   const classifier = new MailClassifier({ helperPath: '/test/classifier', runner: async (file, args, options) => {
-    if (args[0] === '--check') { checks++; return { stdout: JSON.stringify({ available: true, model: 'apple-on-device', policyVersion: 'meister.mail/v1' }) }; }
+    if (args[0] === '--check') { checks++; return { stdout: JSON.stringify({ available: true, model: 'apple-on-device', policyVersion: 'meister.mail/v3' }) }; }
     const input = JSON.parse(options.input); assert.ok(input.rows.length <= 4);
     assert.ok(input.rows.every(r => r.body === rows[0].body)); classifications++;
     return { stdout: JSON.stringify(envelope(input.rows.map(r => ({ ...decision, id: r.id })))) };
@@ -67,7 +67,7 @@ test('uncertain context failure is returned only as keep', async () => {
   await assert.rejects(fixture(envelope([{ ...output, safeToTrash: true }])).classifier.classify([row]));
 });
 
-const available = { stdout: JSON.stringify({ available: true, model: 'apple-on-device', policyVersion: 'meister.mail/v1' }) };
+const available = { stdout: JSON.stringify({ available: true, model: 'apple-on-device', policyVersion: 'meister.mail/v3' }) };
 const manyRows = count => Array.from({ length: count }, (_, i) => ({ ...row, id: String(i) }));
 const responseFor = input => ({ stdout: JSON.stringify(envelope(JSON.parse(input).rows.map(r => ({ ...decision, id: r.id })))) });
 const tick = () => new Promise(resolve => setImmediate(resolve));

@@ -63,3 +63,25 @@ test('newsletter move decisions never cross message IDs or enter the content cac
  const row=entry('first');await cache.classify([row]);await cache.classify([{...row,id:'second'}]);await cache.classify([row]);
  assert.equal(calls,3);assert.equal(cache.hits,0);cache.close();
 });
+
+test('classifier policy change bypasses old KEEP without deleting previous cache',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'meister-keep-policy-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const row=entry('one');const legacy=new KeepCache(keepModel,dir);await legacy.classify([row]);legacy.close();
+ let calls=0;const next=new KeepCache({...keepModel,cacheNamespace:'meister.mail/v2',async classify(rows){calls++;return keepModel.classify(rows);}},dir);
+ await next.classify([row]);await next.classify([row]);assert.equal(calls,1);next.close();
+ const changed=new KeepCache({...keepModel,cacheNamespace:'meister.mail/v3',async classify(rows){calls++;return keepModel.classify(rows);}},dir);
+ await changed.classify([row]);assert.equal(calls,2);changed.close();
+});
+test('uncertain and transient generation failures are re-evaluated on subsequent runs',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'meister-keep-uncertain-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ let calls=0;const model={cacheNamespace:'meister.mail/v2',async classify(rows){calls++;return rows.map(r=>({id:r.id,category:'uncertain',safeToTrash:false,reason:'Model could not classify'}));}};
+ const first=new KeepCache(model,dir);await first.classify([entry('one')]);first.close();
+ const second=new KeepCache(model,dir);await second.classify([entry('one')]);assert.equal(calls,2);assert.equal(second.hits,0);second.close();
+});
+
+test('existing uncertain content row upgrades to definitive KEEP and then hits',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'meister-keep-upgrade-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ let calls=0;const cache=new KeepCache({...keepModel,cacheNamespace:'meister.mail/v2',async classify(rows){calls++;return keepModel.classify(rows);}},dir);
+ await cache.load();const row=entry('one');cache.insert.run(cache.contentKey(row),'uncertain');
+ await cache.classify([row]);await cache.classify([row]);assert.equal(calls,1);assert.equal(cache.hits,1);cache.close();
+});

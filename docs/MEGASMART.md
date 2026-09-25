@@ -114,3 +114,17 @@ second FM request; they remain KEEP without a stale local move classification.
 
 Recap: Local CLI processing uses bounded concurrency and exact-content KEEP reuse;
 only independently verified messages can move.
+
+## Classification policy v3
+
+Apple Foundation Models uses its on-device contentTagging adapter. A disposable
+newsletter requires newsletter category, no protected retention reason and an
+explicit disposable disposition. Normal bulk greetings and optional unsubscribe,
+browser and shopping links alone are not obligations. Obvious model-manipulation
+attempts and empty attachment references can only produce KEEP.
+
+KEEP cache keys include the policy version; uncertain results are re-evaluated.
+CLI apply requires a fresh plan made with the current classifier version.
+
+Recap: Native verification still gates every move; classification never empties
+trash or sends mail.
