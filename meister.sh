@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.32
+# Version: 6.33
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -403,6 +403,16 @@ _meister_resolve_lib() {
     return 1
 }
 MEISTER_LIB_DIR="$(_meister_resolve_lib || true)"
+# Mail commands own their lifecycle: no maintenance, sudo, GUI or daemon startup.
+case "${1:-}" in
+    megasmart|smartinbox)
+        shift
+        [ -f "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" ] || { echo "Megasmart CLI files missing" >&2; exit 69; }
+        command -v node >/dev/null 2>&1 || { echo "Megasmart requires Node 22.13+" >&2; exit 69; }
+        export MEISTER_DIR
+        exec node "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" "$@"
+        ;;
+esac
 MEISTER_LIB_LOADED=false
 if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
@@ -10293,7 +10303,7 @@ module_in_profile() {
     case "${RUN_PROFILE:-auto}" in
         quick)
             case "$name" in
-                Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Time\ Machine)
+                SmartInbox|Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Time\ Machine)
                     return 0 ;;
                 *) return 1 ;;
             esac
@@ -10323,6 +10333,27 @@ module_in_profile() {
 }
 
 fi
+
+# Always enabled by default; the offline Mail module never opens AufRaum.
+module_megasmart() {
+    [ "${MEGASMART_ENABLED:-true}" = "true" ] || { report_add OK "SmartInbox explicitly disabled"; return 0; }
+    local output rc=0 counts moved unavailable
+    output=$(node "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" run --json) || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log WARN "SmartInbox nicht abgeschlossen (Apple FM / Mail prüfen)"
+        report_add WARN "SmartInbox nicht abgeschlossen; Fehlerdetails siehe Ausgabe"
+        return 0
+    fi
+    counts=$(printf '%s' "$output" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="completed"; m=x["moved"]; u=x.get("unavailable",0); assert type(m) is int and type(u) is int and m>=0 and u>=0; print(m,u)') || {
+        report_add WARN "SmartInbox Ergebnis nicht bestätigt"; return 0;
+    }
+    read -r moved unavailable <<< "$counts"
+    if [ "$moved" -gt 0 ]; then report_add FIX "SmartInbox: $moved Newsletter verifiziert in den Papierkorb verschoben"
+    elif [ "$unavailable" -eq 0 ]; then report_add OK "SmartInbox: geprüft, keine freigegebene Verschiebung"; fi
+    if [ "$unavailable" -gt 0 ]; then
+        report_add WARN "SmartInbox: $unavailable Inhalte lokal nicht vollständig; ungeklärt und unverändert behalten"
+    fi
+}
 
 run_module_if() {
     local name="$1" func="$2"
@@ -10355,7 +10386,7 @@ run_module_if() {
 apply_run_profile
 
 # Modul-Anzahl berechnen (dynamic after profile)
-MODULE_TOTAL=38
+MODULE_TOTAL=39
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 log STEP "   Profile=${RUN_PROFILE:-auto} BREW_UPDATE_MAX_AGE=${BREW_UPDATE_MAX_AGE_SEC:-43200}s"
 
@@ -10370,6 +10401,9 @@ selfheal_preflight
 module_timer_stop "Preflight"
 ledger_add "Preflight" "$_pf_fix0" "$_pf_warn0" "$_pf_err0" 0
 fi
+
+# Local Mail is independent of Internet availability and runs before network maintenance.
+run_module_if "SmartInbox" module_megasmart
 
 if $DRY_RUN || check_net; then
     # v6.8: always-on upkeep — deterministic autofix every run

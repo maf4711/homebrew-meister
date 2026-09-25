@@ -7,6 +7,7 @@ class Meister < Formula
   version "6.32"
 
   depends_on :macos
+  depends_on "node"
 
   def install
     bin.install "meister.sh" => "meister"

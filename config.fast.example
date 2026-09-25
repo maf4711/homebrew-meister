@@ -72,3 +72,7 @@ MEISTER_OLLAMA_NUM_PREDICT=1024
 
 # Bounded diagnostics need the final answer, not an internal reasoning trace.
 MEISTER_OLLAMA_THINK="false"
+
+# SmartInbox runs on every maintenance profile by default, using local Apple FM.
+# Keeps protected/uncertain mail; moves approved newsletters older than seven days.
+MEGASMART_ENABLED=true
