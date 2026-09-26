@@ -85,3 +85,37 @@ test('existing uncertain content row upgrades to definitive KEEP and then hits',
  await cache.load();const row=entry('one');cache.insert.run(cache.contentKey(row),'uncertain');
  await cache.classify([row]);await cache.classify([row]);assert.equal(calls,1);assert.equal(cache.hits,1);cache.close();
 });
+
+
+test('fresh count spans pages while cached KEEP bypasses exhausted limits', async t => {
+ const dir=await mkdtemp(join(tmpdir(),'meister-keep-budget-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const seed=new KeepCache(keepModel,dir);await seed.classify([entry('cached')]);seed.close();
+ const calls=[],events=[];const cache=new KeepCache({...keepModel,async classify(rows){calls.push(rows.map(r=>r.id));return keepModel.classify(rows);}},dir,{maxFresh:3,onProgress:event=>events.push(event)});
+ const first=await cache.classify(['a','b','c','d'].map(entry));
+ assert.deepEqual(calls,[['a','b'],['c']]);assert.equal(first[0].attempted,true);assert.equal(first[3].deferred,true);assert.equal(first[3].safeToTrash,false);
+ const second=await cache.classify(['cached','e'].map(entry));assert.equal(second[0].cached,true);assert.equal(second[1].deferred,true);
+ assert.deepEqual(cache.stats,{fresh:3,completed:3,deferred:2,cacheHits:1});assert.equal(events.at(-1).type,'deferred');cache.close();
+ const reopened=new KeepCache(keepModel,dir,{maxFresh:2});await reopened.classify(['d','e'].map(entry));assert.equal(reopened.stats.fresh,2);reopened.close();
+});
+test('soft time budget drains one pair and starts no new calls after expiry', async t => {
+ const dir=await mkdtemp(join(tmpdir(),'meister-keep-time-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ let clock=10;const calls=[];
+ const cache=new KeepCache({...keepModel,async classify(rows){calls.push(rows.map(r=>r.id));clock+=90;return keepModel.classify(rows);}},dir,{budgetMs:50,now:()=>clock});
+ const result=await cache.classify(['a','b','c'].map(entry));assert.deepEqual(calls,[['a','b']]);assert.equal(result[2].deferred,true);
+ const next=await cache.classify(['a','d'].map(entry));assert.equal(next[0].cached,true);assert.equal(next[1].deferred,true);assert.equal(calls.length,1);cache.close();
+});
+test('zero time budget never calls model and errors propagate without caching', async t => {
+ const dir=await mkdtemp(join(tmpdir(),'meister-keep-errors-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const failure=new Error('real model failure');let calls=0;
+ const model={async classify(){calls++;throw failure;}};
+ const skipped=new KeepCache(model,dir,{budgetMs:0,now:()=>0});assert.equal((await skipped.classify([entry('one')]))[0].deferred,true);assert.equal(calls,0);skipped.close();
+ const failing=new KeepCache(model,dir,{maxFresh:2});await assert.rejects(failing.classify([entry('one')]),error=>error===failure);assert.equal(failing.stats.fresh,1);assert.equal(failing.stats.completed,0);failing.close();
+ const retry=new KeepCache(keepModel,dir);await retry.classify([entry('one')]);assert.equal(retry.stats.fresh,1);retry.close();
+});
+test('invalid later chunk leaves the entire page uncached and ignores model markers', async t => {
+ const dir=await mkdtemp(join(tmpdir(),'meister-keep-chunk-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ let calls=0;const cache=new KeepCache({async classify(rows){calls++;return calls===1?keepModel.classify(rows):[{id:'foreign',category:'personal',safeToTrash:false}];}},dir,{maxFresh:3});
+ await assert.rejects(cache.classify(['a','b','c'].map(entry)),/Incomplete/);cache.close();
+ const retry=new KeepCache({async classify(rows){return (await keepModel.classify(rows)).map(row=>({...row,cached:true,deferred:true,attempted:false}));}},dir,{maxFresh:3});
+ const result=await retry.classify(['a','b','c'].map(entry));assert.equal(retry.stats.fresh,3);assert.equal(result[0].attempted,true);assert.equal(result[0].cached,undefined);assert.equal(result[0].deferred,undefined);retry.close();
+});
