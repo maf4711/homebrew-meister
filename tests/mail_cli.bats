@@ -5,7 +5,8 @@
       run env MEISTER_DIR="$BATS_TEST_TMPDIR/state" bash "$BATS_TEST_DIRNAME/../$twin" "$alias" --help
       [ "$status" -eq 0 ]
       [[ "$output" == *"Kein direkter IMAP-Zugang"* ]]
-      run env MEISTER_DIR="$BATS_TEST_TMPDIR/state" bash "$BATS_TEST_DIRNAME/../$twin" "$alias" status --json
+      # Node 22 emits its SQLite notice on stderr; JSON is a stdout contract.
+      run --separate-stderr env MEISTER_DIR="$BATS_TEST_TMPDIR/state" bash "$BATS_TEST_DIRNAME/../$twin" "$alias" status --json
       [ "$status" -eq 0 ]
       [[ "$output" == '{"jobs":[]}' ]]
     done
