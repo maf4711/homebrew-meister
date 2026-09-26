@@ -142,3 +142,32 @@ SH
   [ "$(head -1 "$CALLS")" = sudo ]
   [ "$(grep -c sudo "$CALLS")" = 1 ]
 }
+
+@test "failed updater logs operation and exact retry exit without raw output" {
+  client() { echo 'PRIVATE_UPDATER_OUTPUT'; return 23; }
+  run ai_update_attempt client update
+  [ "$status" = 23 ]
+  [[ "$output" == *'client update failed (exit 23); retrying once'* ]]
+  [[ "$output" == *'failed after retry (exit 23)'* ]]
+  [[ "$output" != *'PRIVATE_UPDATER_OUTPUT'* ]]
+}
+@test "client failure reaches AI-Heal log even when report ledger is silent" {
+  REPORTS=""
+  report_add() { REPORTS="$REPORTS $*"; }
+  client() { return 1; }
+  run ai_update_native specific-client client update
+  [ "$status" = 1 ]
+  [[ "$output" == *'ERROR AI Updates: specific-client update/verification failed'* ]]
+}
+
+@test "ownership follows installed artifact even when bundle suggests another cask" {
+  mkdir -p "$BATS_TEST_TMPDIR/ChatGPT.app" "$BATS_TEST_TMPDIR/Other.app"
+  ln -s "$BATS_TEST_TMPDIR/ChatGPT.app" "$BATS_TEST_TMPDIR/Managed.app"
+  brew() {
+    [ "$*" = 'list --cask chatgpt' ] || return 1
+    echo "$BATS_TEST_TMPDIR/Managed.app"
+  }
+  ai_brew_owns_installed_app "$BATS_TEST_TMPDIR/ChatGPT.app" $'codex\nchatgpt'
+  run ai_brew_owns_installed_app "$BATS_TEST_TMPDIR/Other.app" chatgpt
+  [ "$status" = 1 ]
+}
