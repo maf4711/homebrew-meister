@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createProgressReporter } from '../lib/mail/progress.mjs';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -16,6 +17,8 @@ export function parse(args) {
   while (input.length) {
     const key = input.shift();
     if (['--help', '-h'].includes(key)) options.command = 'help';
+    else if (key === '--maintenance') options.maintenance = true;
+    else if (key === '--full') options.full = true;
     else if (key === '--json') options.json = true;
     else if (['--dry-run', '-n'].includes(key)) options.dry = true;
     else if (['--account', '--mailbox', '--trash'].includes(key)) {
@@ -38,6 +41,8 @@ const help = `MeisterAI megasmart | smartinbox [Befehl] [Optionen]
   apply JOB            Gespeicherten Plan prüfen und ausführen
   reconcile JOB        Ungewisses Ergebnis lesend prüfen; niemals blind wiederholen
   status [JOB]         Gespeicherten Verlauf lesen; kein Mail-Zugriff
+  --maintenance        32 neue FM-Prüfungen / 60s Budget; offene Nachrichten später prüfen
+  --full               Vollständige Prüfung ohne Wartungsbudget
   --account NAME --mailbox INBOX --trash NAME --json --dry-run
 Vorschau nur aus vollständigen lokalen Inhalten; Unlesbares bleibt ungeklärt erhalten.
 Kein direkter IMAP-Zugang, keine AufRaum-GUI, kein Hintergrundzeitplan.
@@ -49,8 +54,9 @@ function summary(job) {
     kept: job.items.filter(i => i.action === 'keep').length,
     unavailable: job.items.filter(i => i.localUnavailable || i.nativeUnverified).length,
     nativeUnverified: job.items.filter(i => i.nativeUnverified).length,
-    fmClassified: job.items.filter(i => i.classification).length,
-    fmUncertain: job.items.filter(i => i.classification?.category === 'uncertain').length,
+    deferred: job.items.filter(i => i.deferred).length,
+    fmClassified: job.items.filter(i => i.classification && !i.deferred).length,
+    fmUncertain: job.items.filter(i => i.classification?.category === 'uncertain' && !i.deferred).length,
     moved: job.items.filter(i => i.status === 'moved').length,
     uncertain: job.items.filter(i => i.status === 'moving').length, hasMore: job.hasMore, error: job.error };
 }
@@ -62,7 +68,7 @@ export async function main(args = process.argv.slice(2)) {
   const directory = join(stateRoot, 'mail');
   const emit = value => {
     console.log(JSON.stringify(value, null, o.json ? 0 : 2));
-    if (!o.json) console.log('Recap: ' + (value.status === 'completed' ? `Lauf abgeschlossen; ${value.unavailable ?? 0} nicht lokal lesbare Inhalte bleiben ungeklärt erhalten.` : 'Nur bestätigte Verschiebungen zählen; keine wiederkehrende Automatik.'));
+    if (!o.json) console.log('Recap: ' + (value.status === 'completed' ? `Lauf abgeschlossen; ${value.deferred ?? 0} zur späteren Modellprüfung zurückgestellt; ${value.unavailable ?? 0} nicht lokal lesbare Inhalte bleiben ungeklärt erhalten.` : 'Nur bestätigte Verschiebungen zählen; keine wiederkehrende Automatik.'));
   };
   if (o.command === 'status') {
     const records = await jobs(directory);
@@ -77,19 +83,27 @@ export async function main(args = process.argv.slice(2)) {
   const release = await lockState(directory);
   let releaseDesktop;
   let engine; let classifier; let interrupted = false;
+  let latestProgress; let latestProgressAt = 0;
+  const bounded = o.maintenance && !o.full;
+  const progressReporter = createProgressReporter();
   const interrupt = () => { interrupted = true; if (engine?.running) engine.cancellations.add(engine.running); };
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
   try {
     if (mutating) releaseDesktop = await lockDesktop();
     const onProgress = progress => {
       if (interrupted) throw new Error('Abgebrochen; gespeicherten Jobstatus prüfen.');
-      const timing = progress.elapsedMs === undefined ? '' : ` | ${Math.round(progress.elapsedMs / 1000)}s, Mail ${Math.round(progress.readMs / 1000)}s, FM ${Math.round(progress.modelMs / 1000)}s (überlappend)`;
-      const local = progress.localReads === undefined ? '' : `, ${progress.localReads} lokal gelesen, ${progress.unavailableReads ?? 0} lokal nicht vollständig`;
-      console.error(`${progress.phase}: ${progress.checked ?? progress.moved}/${progress.total}${timing}${local}`);
+      latestProgress = progress; latestProgressAt = performance.now();
+      progressReporter.update(progress);
     };
     if (['preview', 'run'].includes(o.command)) {
       const { MailClassifier } = await import('../lib/mail/fm-classifier.mjs');
-      classifier = new KeepCache(new MailClassifier({ cacheDir: join(directory, 'fm') }), directory);
+      classifier = new KeepCache(new MailClassifier({ cacheDir: join(directory, 'fm') }), directory, {
+        ...(bounded ? { maxFresh: 32, budgetMs: 60000 } : {}),
+        onProgress: stats => {
+          if (interrupted) throw new Error('Abgebrochen; gespeicherten Jobstatus prüfen.');
+          if (latestProgress) progressReporter.update({ ...latestProgress, elapsedMs: latestProgress.elapsedMs === undefined ? undefined : latestProgress.elapsedMs + performance.now() - latestProgressAt, modelStats: stats });
+        },
+      });
       await classifier.check(); await classifier.load();
     }
     let previewReader;
@@ -102,7 +116,7 @@ export async function main(args = process.argv.slice(2)) {
       if (previewReader) await previewReader.configure(account, mailbox, listing);
       return listing;
     };
-    engine = new MegasmartEngine(mail, directory, { localHeaders, classifier, previewReader, onProgress });
+    engine = new MegasmartEngine(mail, directory, { localHeaders, classifier, previewReader, onProgress, rotatePreview: bounded });
     await engine.initialize();
     engine.decisions = { ...await savedKeepDecisions(), ...engine.decisions };
     if (o.command === 'reconcile') { emit(summary(await engine.reconcile(o.job))); return; }
@@ -129,9 +143,10 @@ export async function main(args = process.argv.slice(2)) {
       await desktopFence();
       await engine.apply(job.id); await engine.task;
     }
-    emit({ ...summary(job), modelKeepCacheHits: classifier?.hits ?? 0, localContent: previewReader?.stats });
+    emit({ ...summary(job), modelKeepCacheHits: classifier?.hits ?? 0, modelWork: classifier?.stats, localContent: previewReader?.stats });
     if (mutating && job.status !== 'completed') process.exitCode = 1;
   } finally {
+    progressReporter.close();
     process.off('SIGINT', interrupt); process.off('SIGTERM', interrupt);
     try { classifier?.close(); }
     finally { try { if (releaseDesktop) await releaseDesktop(); } finally { await release(); } }

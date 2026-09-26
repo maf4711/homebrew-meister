@@ -31,7 +31,7 @@
 import subprocess,sys
 source=open(sys.argv[1]).read()
 function='module_megasmart() {'+source.split('module_megasmart() {',1)[1].split('\n}\n',1)[0]+'\n}'
-for result,code,expected in [('{"status":"completed","moved":3}',0,'FIX'),('{"status":"failed","moved":0}',1,'WARN'),('{"status":"applying","moved":0}',0,'WARN'),('{"status":"completed","moved":0,"unavailable":7}',0,'WARN'),('{"status":"completed","moved":3,"unavailable":2}',0,'FIX\nWARN')]:
+for result,code,expected in [('{"status":"completed","moved":3}',0,'FIX'),('{"status":"failed","moved":0}',1,'WARN'),('{"status":"applying","moved":0}',0,'WARN'),('{"status":"completed","moved":0,"unavailable":7}',0,'WARN'),('{"status":"completed","moved":3,"unavailable":2}',0,'FIX\nWARN'),('{"status":"completed","moved":0,"deferred":12}',0,'WARN')]:
  script='''report_add() { printf '%s\\n' "$1"; }
 log() { :; }
 MEISTER_LIB_DIR=/unused

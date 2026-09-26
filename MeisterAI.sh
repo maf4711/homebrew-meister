@@ -10390,19 +10390,22 @@ fi
 # Always enabled by default; the offline Mail module never opens AufRaum.
 module_megasmart() {
     [ "${MEGASMART_ENABLED:-true}" = "true" ] || { report_add OK "SmartInbox explicitly disabled"; return 0; }
-    local output rc=0 counts moved unavailable
-    output=$(node "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" run --json) || rc=$?
+    local output rc=0 counts moved unavailable deferred
+    output=$(node "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" run --maintenance --json) || rc=$?
     if [ "$rc" -ne 0 ]; then
         log WARN "SmartInbox nicht abgeschlossen (Apple FM / Mail prüfen)"
         report_add WARN "SmartInbox nicht abgeschlossen; Fehlerdetails siehe Ausgabe"
         return 0
     fi
-    counts=$(printf '%s' "$output" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="completed"; m=x["moved"]; u=x.get("unavailable",0); assert type(m) is int and type(u) is int and m>=0 and u>=0; print(m,u)') || {
+    counts=$(printf '%s' "$output" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="completed"; m=x["moved"]; u=x.get("unavailable",0); d=x.get("deferred",0); assert all(type(v) is int and v>=0 for v in (m,u,d)); print(m,u,d)') || {
         report_add WARN "SmartInbox Ergebnis nicht bestätigt"; return 0;
     }
-    read -r moved unavailable <<< "$counts"
+    read -r moved unavailable deferred <<< "$counts"
     if [ "$moved" -gt 0 ]; then report_add FIX "SmartInbox: $moved Newsletter verifiziert in den Papierkorb verschoben"
-    elif [ "$unavailable" -eq 0 ]; then report_add OK "SmartInbox: geprüft, keine freigegebene Verschiebung"; fi
+    elif [ "$unavailable" -eq 0 ] && [ "$deferred" -eq 0 ]; then report_add OK "SmartInbox: geprüft, keine freigegebene Verschiebung"; fi
+    if [ "$deferred" -gt 0 ]; then
+        report_add WARN "SmartInbox: $deferred Modellprüfungen zurückgestellt; nächste Wartung setzt fort"
+    fi
     if [ "$unavailable" -gt 0 ]; then
         report_add WARN "SmartInbox: $unavailable Inhalte lokal nicht vollständig; ungeklärt und unverändert behalten"
     fi

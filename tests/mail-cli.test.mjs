@@ -18,3 +18,9 @@ test('exclusive process lock refuses a second runner and read-only status is ind
  const release=await lockState(dir);await assert.rejects(lockState(dir),/run.lock/);
  assert.deepEqual(await jobs(dir),[]);await release();const again=await lockState(dir);await again();
 });
+
+test('maintenance budget and explicit full mode are opt-in parser flags',()=>{
+ assert.equal(parse(['run','--maintenance']).maintenance,true);
+ assert.equal(parse(['run','--maintenance','--full']).full,true);
+ assert.equal(parse(['preview']).maintenance,undefined);
+});
