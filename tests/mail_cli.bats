@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+setup() { bats_require_minimum_version 1.5.0; }
 @test "mail aliases route help and status without a maintenance run" {
   for twin in MeisterAI.sh meister.sh; do
     for alias in megasmart smartinbox; do
