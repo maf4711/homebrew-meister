@@ -4,7 +4,7 @@
 FORMULA="${BATS_TEST_DIRNAME}/../Formula/meister.rb"
 
 @test "formula installs the Apple CLI as MeisterAI" {
-  grep -q 'bin.install apple_source => "MeisterAI"' "$FORMULA"
+  grep -q 'libexec.install apple_source => "MeisterAI"' "$FORMULA"
 }
 
 @test "formula does not install a meisterSiri command alias" {
@@ -19,7 +19,7 @@ FORMULA="${BATS_TEST_DIRNAME}/../Formula/meister.rb"
 }
 
 @test "formula test probes MeisterAI not meisterSiri" {
-  grep -q 'bin}/MeisterAI --version' "$FORMULA"
+  grep -q 'libexec}/MeisterAI --version' "$FORMULA"
   if grep -n 'bin}/meisterSiri' "$FORMULA"; then
     echo "formula test still probes meisterSiri" >&2
     return 1

@@ -12,7 +12,7 @@ for tool in shellcheck bats python3 node; do
 done
 
 echo "=== shellcheck ==="
-shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh
+shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh scripts/homebrew-launcher.sh
 
 echo "=== bash -n twins ==="
 bash -n MeisterAI.sh
@@ -27,6 +27,9 @@ bats tests/
 
 echo "=== local Mail CLI tests ==="
 node --test tests/*mail*.test.mjs
+
+echo "=== Homebrew startup tests ==="
+python3 -m unittest discover -s tests -p test_startup_update.py
 
 echo "=== FM evaluation harness ==="
 python3 -m unittest discover -s tests -p 'test_fm*.py'

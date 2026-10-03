@@ -427,3 +427,17 @@ Runs on the configured schedule (default: weekly). The LaunchAgent is installed 
 GPL-3.0
 
 Ollama backend configuration and verification: [docs/OLLAMA.md](docs/OLLAMA.md).
+
+### Update before every Homebrew CLI start (6.36)
+
+`meister`, `MeisterAI` and `meisterAI` run `brew update` followed by a targeted
+`brew upgrade --formula maf4711/meister/meister` before starting the current
+installed runtime. Arguments and the runtime exit status are preserved. Update
+messages go to stderr, leaving JSON output on stdout intact. If an update fails,
+the command stops without starting maintenance. This also applies to help,
+version, GUI and scheduled invocations through the public Homebrew commands.
+An already current version is not reinstalled. Automatic install cleanup is
+disabled for this step to retain files used by running processes.
+
+The formula stores the internal runtime in `libexec`; direct source checkout
+execution and Homebrew's sandboxed formula tests do not update Homebrew.

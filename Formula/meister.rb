@@ -11,14 +11,22 @@ class Meister < Formula
   depends_on "coreutils" # bounded AI client updates need timeout on macOS
 
   def install
-    bin.install "meister.sh" => "meister"
+    libexec.install "meister.sh" => "meister"
     # Published 6.25 archives predate the rename; keep their checksum valid.
     apple_source = File.exist?("MeisterAI.sh") ? "MeisterAI.sh" : "meisterSiri.sh"
-    bin.install apple_source => "MeisterAI"
+    libexec.install apple_source => "MeisterAI"
     if apple_source != "MeisterAI.sh"
-      inreplace bin/"MeisterAI", "MeisterSiri", "MeisterAI"
-      inreplace bin/"MeisterAI", "meisterSiri", "MeisterAI"
+      inreplace libexec/"MeisterAI", "MeisterSiri", "MeisterAI"
+      inreplace libexec/"MeisterAI", "meisterSiri", "MeisterAI"
     end
+    # Public commands update first; runtime files stay outside PATH to avoid recursion.
+    launcher = File.read("scripts/homebrew-launcher.sh").gsub("@HOMEBREW_PREFIX@", HOMEBREW_PREFIX.to_s)
+    %w[meister MeisterAI].each do |command|
+      (bin/command).write launcher
+      (bin/command).chmod 0755
+    end
+    # Case-insensitive APFS already resolves this spelling.
+    bin.install_symlink "MeisterAI" => "meisterAI" unless (bin/"meisterAI").exist?
     doc.install "config.fast.example" if File.exist?("config.fast.example")
     doc.install "AGENTS.md" if File.exist?("AGENTS.md")
     doc.install "docs/PRODUCT.md" if File.exist?("docs/PRODUCT.md")
@@ -71,9 +79,9 @@ class Meister < Formula
   end
 
   test do
-    assert_match "meister", shell_output("#{bin}/meister -h 2>&1", 0)
-    assert_match "MeisterAI", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
-    assert_match "6.", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
+    assert_match "meister", shell_output("#{libexec}/meister -h 2>&1", 0)
+    assert_match "MeisterAI", shell_output("#{libexec}/MeisterAI --version 2>&1", 0)
+    assert_match "6.", shell_output("#{libexec}/MeisterAI --version 2>&1", 0)
     refute_path_exists bin/"meisterSiri"
   end
 end
