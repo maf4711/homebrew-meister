@@ -401,6 +401,37 @@ test('native full run uses batched contents and identity-only verification throu
  assert.equal(mail.calls.some(c=>['get-message','list-messages','search-messages'].includes(c.name)),false);
 });
 
+test('bounded verified subset moves exactly its planned rows and rechecks current flags', async t => {
+  for (const changedFlag of [false, true]) {
+    const rows = Array.from({ length: 3 }, (_, n) => ({ ...row(String(n + 1)),
+      dateReceived: '2020-01-01T00:00:00Z', isFlagged: false }));
+    const { engine, mail } = await fixture(t, rows, {
+      previewRowLimit: 2, rotatePreview: true,
+      classifier: { async classify(batch) { return batch.map(r => ({ id: r.id, category: 'newsletter', safeToTrash: true })); } },
+      localHeaders: async () => ({ messages: rows.map(r => ({ ...r })), hasMore: false, source: 'local-mail-index' }),
+      previewReader: { async readMessages(a, b, ids) { return ids.map(id => ({ ...rows[Number(id) - 1],
+        body: 'Weekly roundup', rfcMessageId: 'stable-' + id, localPreview: true })); } },
+    });
+    mail.boxes.Trash = [];
+    mail.readMessages = async (a, m, ids) => ids.map(id => ({ ...mail.boxes[m].find(r => r.id === id),
+      body: 'Weekly roundup', rfcMessageId: 'stable-' + id }));
+    mail.identityRows = async (a, m) => mail.boxes[m].map(r => ({ row: { id: r.id }, rfc: 'stable-' + r.id }));
+    const job = await engine.preview('Personal', 'INBOX', undefined, 'Trash');
+    assert.equal(job.unscanned, 1); assert.equal(job.hasMore, false); assert.equal(job.previewComplete, false);
+    assert.equal(job.items.filter(i => i.action === 'move').length, 2);
+    if (changedFlag) mail.boxes.INBOX[0].isFlagged = true;
+    await engine.apply(job.id); await engine.task;
+    if (changedFlag) {
+      assert.equal(job.status, 'failed'); assert.equal(mail.mutations().length, 0);
+    } else {
+      assert.equal(job.status, 'completed');
+      assert.deepEqual(mail.boxes.INBOX.map(r => r.id), ['3']);
+      assert.deepEqual(mail.boxes.Trash.map(r => r.id), ['1', '2']);
+      assert.ok(job.items.every(i => i.status === 'moved' && i.fingerprint && i.rfcMessageId));
+    }
+  }
+});
+
 async function localPreviewFixture(t, { nativeBody = 'Native garden news', nativeRFC = 'stable-1', nativeFlag = false, nativeSender, nativeSubject, firstMove = true, secondMove = true } = {}) {
  const current={...row('1','Garden news'),dateReceived:new Date(Date.now()-9*86400000).toISOString(),isFlagged:false};
  const calls=[];

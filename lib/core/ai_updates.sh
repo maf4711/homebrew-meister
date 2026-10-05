@@ -59,6 +59,18 @@ ai_update_native() {
     return 1
 }
 
+# The public starter execs this runtime, preserving its PID. Only its successful
+# refresh/cache check can avoid another metadata refresh in this invocation.
+ai_brew_metadata_current() {
+    [ "${MEISTER_BREW_UPDATE_PID:-}" = "$$" ] || return 1
+    [[ "${MEISTER_BREW_UPDATE_AT:-}" =~ ^[0-9]{1,10}$ ]] || return 1
+    local age ttl="${BREW_UPDATE_MAX_AGE_SEC:-43200}"
+    [[ "$ttl" =~ ^[0-9]{1,10}$ ]] || return 1
+    age=$(( $(date +%s) - 10#$MEISTER_BREW_UPDATE_AT ))
+    [ "$age" -ge 0 ] || return 1
+    [ "${MEISTER_BREW_UPDATE_FRESH:-false}" = true ] || [ "$age" -lt "$((10#$ttl))" ]
+}
+
 ai_update_brew() {
     local kind installed token outdated failed=0 sudo_checked=false
     command -v brew >/dev/null 2>&1 || return 0
@@ -66,11 +78,21 @@ ai_update_brew() {
         log STEP "[DRY-RUN] AI Updates: refresh Homebrew; upgrade installed AI clients (--greedy)"
         return 0
     fi
-    # Do not inherit daily metadata TTL or skip auto-updating casks.
-    if ! ai_update_attempt brew update; then
-        ai_update_error "AI Updates: Homebrew metadata refresh failed"
-        return 1
+    if ai_brew_metadata_current; then
+        log STEP "AI Updates: reuse successful Homebrew metadata check from this invocation"
+    else
+        if ! ai_update_attempt brew update; then
+            ai_update_error "AI Updates: Homebrew metadata refresh failed"
+            return 1
+        fi
+        MEISTER_BREW_UPDATE_PID="$$"
+        MEISTER_BREW_UPDATE_AT=$(date +%s)
+        MEISTER_BREW_UPDATE_FRESH=true
+        if [ -n "${MEISTER_DIR:-}" ] && [ -d "$MEISTER_DIR" ]; then
+            printf '%s\n' "$MEISTER_BREW_UPDATE_AT" > "$MEISTER_DIR/brew_last_update" 2>/dev/null || :
+        fi
     fi
+    export HOMEBREW_NO_AUTO_UPDATE=1
     for kind in cask formula; do
         if ! installed=$(timeout 60 brew list "--$kind" 2>/dev/null); then
             ai_update_error "AI Updates: cannot enumerate Homebrew $kind clients"
@@ -203,8 +225,9 @@ module_ai_updates() {
     ai_update_brew || failed=1
     for npm_bin in "$(command -v npm 2>/dev/null)" /opt/homebrew/bin/npm /usr/local/bin/npm "$HOME"/.nvm/versions/node/*/bin/npm; do
         [ -x "$npm_bin" ] || continue
-        case "$seen" in *"|$npm_bin|"*) continue ;; esac
-        seen="$seen$npm_bin|"
+        resolved=$(realpath "$npm_bin" 2>/dev/null) || resolved="$npm_bin"
+        case "$seen" in *"|$resolved|"*) continue ;; esac
+        seen="$seen$resolved|"
         ai_update_npm "$npm_bin" || failed=1
     done
     # Known native install locations. Package-manager copies stay with owner.

@@ -150,6 +150,17 @@ test('progress separates actual FM work, cached KEEP and deferred work', () => {
   o.reporter.close();
 });
 
+test('paused traversal prints its reason immediately with model stats present', () => {
+  const o = output();
+  const progress = { phase: 'preview', checked: 500, total: 13424,
+    modelStats: { fresh: 20, completed: 20, cacheHits: 0, deferred: 0 } };
+  o.reporter.update(progress);
+  o.reporter.update({ ...progress, paused: true, activity: 'Wartungsbudget erreicht; nächste Durchsicht setzt fort' });
+  assert.equal(o.writes.length, 2);
+  assert.match(o.writes.at(-1), /500\/13424.*Wartungsbudget erreicht.*FM 20\/20/);
+  o.reporter.close();
+});
+
 test('continuation follows the next message when earlier inbox rows disappear', async t => {
   const directory=await mkdtemp(join(tmpdir(),'meister-cursor-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   let rows=Array.from({length:5},(_,n)=>({id:String(n+1),subject:'Weekly newsletter',sender:'news@example.test',dateReceived:'2020-01-01T00:00:00Z',isFlagged:false}));
@@ -164,4 +175,120 @@ test('continuation follows the next message when earlier inbox rows disappear', 
   engine.classifier=new KeepCache(model,directory,{maxFresh:2});
   await engine.preview('Fixture','INBOX',undefined,'Trash');engine.classifier.close();
   assert.deepEqual(attempted,['1','2','3','4']);
+});
+
+function traversalFixture({ count = 13424, ...options } = {}) {
+  const rows = Array.from({ length: count }, (_, n) => ({ id: String(n + 1), subject: 'Weekly newsletter',
+    sender: 'news@example.test', dateReceived: '2020-01-01T00:00:00Z', isFlagged: false }));
+  const readIDs = [];
+  const engine = new MegasmartEngine({ call: async () => ({ mailboxes: [{ name: 'Trash' }] }) }, '/unused', {
+    persist: async () => {}, rotatePreview: true,
+    localHeaders: async () => ({ messages: rows, hasMore: false, headersScanned: rows.length }),
+    previewReader: { readMessages: async (a, b, ids) => {
+      readIDs.push(...ids);
+      return ids.map(id => ({ ...rows[Number(id) - 1], body: '', rfcMessageId: '', localPreview: true, localUnavailable: true }));
+    } }, ...options,
+  });
+  return { engine, rows, readIDs };
+}
+
+test('daily traversal caps body reads and resumes unavailable-only pages', async () => {
+  const { engine, readIDs } = traversalFixture({ previewRowLimit: 500 });
+  const first = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
+  assert.equal(first.scanned, 500);
+  assert.equal(first.unscanned, 12924);
+  assert.equal(first.previewComplete, false);
+  assert.equal(first.hasMore, false); // The complete header inventory was discovered.
+  assert.equal(first.nextPreviewMessageID, '501');
+  assert.equal(readIDs.length, 500);
+  assert.ok(first.items.every(i => i.action === 'keep' && !i.fingerprint));
+  const second = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
+  assert.equal(second.items[0].messageID, '501');
+  assert.equal(second.nextPreviewMessageID, '1001');
+});
+
+test('preview deadline includes header discovery and does not read after expiry', async () => {
+  let clock = 0;
+  const { engine, rows, readIDs } = traversalFixture({ previewBudgetMs: 60, now: () => clock });
+  engine.localHeaders = async () => { clock = 61; return { messages: rows, hasMore: false }; };
+  const job = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
+  assert.equal(job.scanned, 0); assert.equal(job.unscanned, rows.length);
+  assert.equal(job.nextPreviewMessageID, '1'); assert.equal(readIDs.length, 0);
+});
+
+test('daily model exhaustion stops traversal and retains earliest deferred anchor', async () => {
+  const { engine, rows, readIDs } = traversalFixture({ count: 1000, previewRowLimit: 500 });
+  engine.previewReader.readMessages = async (a, b, ids) => {
+    readIDs.push(...ids);
+    return ids.map(id => ({ ...rows[Number(id) - 1], body: 'Weekly roundup', rfcMessageId: id + '@example.test', localPreview: true }));
+  };
+  let exhausted = false;
+  engine.classifier = {
+    namespace: 'fixture', budgetExhausted: () => exhausted,
+    async classify(batch) {
+      exhausted = true;
+      return batch.map((r, n) => ({ id: r.id, category: 'other', safeToTrash: false,
+        ...(n === 2 ? { deferred: true } : n < 2 ? { attempted: true } : { cached: true }) }));
+    },
+  };
+  const job = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
+  assert.equal(job.scanned, 100); assert.equal(job.unscanned, 900);
+  assert.equal(job.nextPreviewMessageID, '3');
+  assert.ok(readIDs.length <= 200); // At most one already admitted read-ahead page drains.
+});
+
+test('full traversal still inspects all headers and bounded values are validated', async () => {
+  const { engine, readIDs } = traversalFixture({ count: 600 });
+  const job = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
+  assert.equal(job.scanned, 600); assert.equal(job.unscanned, 0); assert.equal(job.previewComplete, true);
+  assert.equal(readIDs.length, 600);
+  for (const previewRowLimit of [0, -1, 1.5, NaN]) assert.throws(() => new MegasmartEngine({}, '', { previewRowLimit }), /row limit/);
+  for (const previewBudgetMs of [-1, NaN]) assert.throws(() => new MegasmartEngine({}, '', { previewBudgetMs }), /time budget/);
+});
+
+test('header preparation and FM admission share the whole preview deadline', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'meister-shared-budget-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let clock = 0;
+  const admissions = [];
+  const cache = new KeepCache({ async classify(batch) {
+    admissions.push(clock); clock += 6000;
+    return batch.map(row => ({ id: row.id, category: 'uncertain', safeToTrash: false }));
+  } }, directory, { maxFresh: 32, budgetMs: 60000, now: () => clock });
+  t.after(() => cache.close());
+  const { engine, rows } = traversalFixture({ count: 1000, previewRowLimit: 500,
+    previewBudgetMs: 60000, now: () => clock, classifier: cache });
+  engine.localHeaders = async () => { clock = 50000; return { messages: rows, hasMore: false }; };
+  engine.previewReader.readMessages = async (a, b, ids) => ids.map(id => ({ ...rows[Number(id) - 1],
+    body: 'Weekly roundup', rfcMessageId: id + '@example.test', localPreview: true }));
+  const job = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
+  assert.deepEqual(admissions, [50000, 56000]);
+  assert.equal(clock, 62000); assert.equal(cache.stats.fresh, 4);
+  assert.equal(job.nextPreviewMessageID, '5'); assert.equal(job.unscanned, 900);
+});
+
+test('changed native contents receive model capacity and continuation makes progress', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'meister-native-budget-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const admissions = [];
+  const { engine, rows } = traversalFixture({ count: 4 });
+  engine.previewReader.readMessages = async (a, b, ids) => ids.map(id => ({ ...rows[Number(id) - 1],
+    body: 'Local weekly roundup', rfcMessageId: id + '@example.test', localPreview: true }));
+  engine.mail.readMessages = async (a, b, ids) => ids.map(id => ({ ...rows[Number(id) - 1],
+    body: 'Native weekly roundup', rfcMessageId: id + '@example.test' }));
+  const model = { cacheNamespace: 'fixture', async classify(batch) {
+    admissions.push(...batch.map(r => [r.id, r.body]));
+    return batch.map(r => ({ id: r.id, category: 'newsletter', safeToTrash: true }));
+  } };
+  for (let run = 0; run < 3; run++) {
+    const cache = new KeepCache(model, directory, { maxFresh: 2 });
+    engine.classifier = cache;
+    const job = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
+    cache.close();
+    const moves = job.items.filter(i => i.action === 'move');
+    assert.equal(moves.length, 1); assert.equal(moves[0].messageID, String(run + 1));
+    assert.ok(moves[0].fingerprint && moves[0].rfcMessageId);
+    assert.equal(job.nextPreviewMessageID, String(run + 2));
+  }
+  assert.deepEqual(admissions, ['1', '2', '3'].flatMap(id => [[id, 'Local weekly roundup'], [id, 'Native weekly roundup']]));
 });

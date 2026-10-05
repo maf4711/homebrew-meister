@@ -41,7 +41,7 @@ const help = `MeisterAI megasmart | smartinbox [Befehl] [Optionen]
   apply JOB            Gespeicherten Plan prüfen und ausführen
   reconcile JOB        Ungewisses Ergebnis lesend prüfen; niemals blind wiederholen
   status [JOB]         Gespeicherten Verlauf lesen; kein Mail-Zugriff
-  --maintenance        32 neue FM-Prüfungen / 60s Budget; offene Nachrichten später prüfen
+  --maintenance        Bis 500 Nachrichten / 32 neue FM-Prüfungen / 60s weiches Durchsichtbudget
   --full               Vollständige Prüfung ohne Wartungsbudget
   --account NAME --mailbox INBOX --trash NAME --json --dry-run
 Vorschau nur aus vollständigen lokalen Inhalten; Unlesbares bleibt ungeklärt erhalten.
@@ -55,6 +55,7 @@ function summary(job) {
     unavailable: job.items.filter(i => i.localUnavailable || i.nativeUnverified).length,
     nativeUnverified: job.items.filter(i => i.nativeUnverified).length,
     deferred: job.items.filter(i => i.deferred).length,
+    unscanned: job.unscanned ?? 0, previewComplete: job.previewComplete ?? !job.hasMore,
     fmClassified: job.items.filter(i => i.classification && !i.deferred).length,
     fmUncertain: job.items.filter(i => i.classification?.category === 'uncertain' && !i.deferred).length,
     moved: job.items.filter(i => i.status === 'moved').length,
@@ -68,7 +69,7 @@ export async function main(args = process.argv.slice(2)) {
   const directory = join(stateRoot, 'mail');
   const emit = value => {
     console.log(JSON.stringify(value, null, o.json ? 0 : 2));
-    if (!o.json) console.log('Recap: ' + (value.status === 'completed' ? `Lauf abgeschlossen; ${value.deferred ?? 0} zur späteren Modellprüfung zurückgestellt; ${value.unavailable ?? 0} nicht lokal lesbare Inhalte bleiben ungeklärt erhalten.` : 'Nur bestätigte Verschiebungen zählen; keine wiederkehrende Automatik.'));
+    if (!o.json) console.log('Recap: ' + (value.status === 'completed' ? `Ausführung abgeschlossen; ${value.unscanned ?? 0} Nachrichten noch nicht durchgesehen; ${value.deferred ?? 0} Modellprüfungen zurückgestellt; ${value.unavailable ?? 0} nicht lokal lesbare Inhalte bleiben ungeklärt erhalten.` : 'Nur bestätigte Verschiebungen zählen; keine wiederkehrende Automatik.'));
   };
   if (o.command === 'status') {
     const records = await jobs(directory);
@@ -116,7 +117,8 @@ export async function main(args = process.argv.slice(2)) {
       if (previewReader) await previewReader.configure(account, mailbox, listing);
       return listing;
     };
-    engine = new MegasmartEngine(mail, directory, { localHeaders, classifier, previewReader, onProgress, rotatePreview: bounded });
+    engine = new MegasmartEngine(mail, directory, { localHeaders, classifier, previewReader, onProgress, rotatePreview: bounded,
+      ...(bounded ? { previewRowLimit: 500, previewBudgetMs: 60000 } : {}) });
     await engine.initialize();
     engine.decisions = { ...await savedKeepDecisions(), ...engine.decisions };
     if (o.command === 'reconcile') { emit(summary(await engine.reconcile(o.job))); return; }

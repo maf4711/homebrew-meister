@@ -2,6 +2,9 @@
 
 A normal `MeisterAI` maintenance invocation runs SmartInbox by default in quick,
 auto, deep and all profiles. It runs locally before network-dependent modules.
+Maintenance bounds traversal to 500 messages and 32 fresh model classifications,
+with a 60-second soft preview budget starting before header/file preparation.
+Explicit `megasmart run` or `--maintenance --full` performs the full traversal.
 `MeisterAI -n` only includes it in the execution plan; it does not read Mail or
 invoke the model. An explicit `MEGASMART_ENABLED=false` configuration opts out.
 The twin `meister` shares the Mail module, which still uses Apple Foundation
@@ -51,7 +54,7 @@ Automation permission and read access to the local Mail index (Full Disk Access)
 
 Each scoped message read fetches its metadata and complete body as one Mail
 properties record, avoiding seven separate property requests. Mailbox discovery
-reads names without counting every mailbox. Reads of the next 25-message page overlap current classification. A shared native
+reads names without counting every mailbox. Reads of the next 100-header page overlap current classification; body batches remain capped at 25. A shared native
 queue serializes move-candidate confirmations and verification reads. Local file
 decoding and the two FM workers remain parallel. At most
 two pages are resident, one native read and two model processes are active.
@@ -83,8 +86,20 @@ token count is calculated once per batch instead of once per message. Jobs are w
 message bodies are not persisted. `--json` keeps stdout machine-readable, with
 progress on stderr. Preview progress includes elapsed time and overlapping Mail/FM
 stage durations, so these durations must not be added together. Results distinguish
-`headersScanned`, `fmClassified`, `kept` and `unavailable`; completion does not imply
-that unavailable contents were classified.
+`headersScanned`, `scanned`, `unscanned`, `previewComplete`, `deferred`,
+`fmClassified`, `kept` and `unavailable`. Completion describes verified execution
+of the prepared subset; it does not claim that unscanned or unavailable contents
+were classified. A genuinely incomplete header inventory still prevents apply.
+
+The daily cursor retains the first deferred message, including a deferred native
+confirmation. Otherwise it advances beyond the completed page, even if every
+local body is unavailable. Small groups finish native confirmation before more
+local candidates use the model budget. This prevents repeated local checks from
+starving changed native contents. A stable next-message ID survives deletion of
+earlier inbox rows; a numeric offset is the fallback. At most one admitted
+read-ahead page and one active model pair drain at the deadline. Native move
+confirmation, verification and preflight can extend total module time beyond
+the soft preview budget.
 
 Only one CLI process owns the Mail journal at a time. Mutation also holds the
 actual AufRaum bridge lock, preventing the desktop helper from starting concurrently. An existing AufRaum helper or

@@ -3,6 +3,7 @@ setup() {
   source "$BATS_TEST_DIRNAME/../lib/core/ai_updates.sh"
   source "$BATS_TEST_DIRNAME/../lib/core/profiles.sh"
   DRY_RUN=false
+  unset MEISTER_BREW_UPDATE_PID MEISTER_BREW_UPDATE_AT MEISTER_BREW_UPDATE_FRESH
   log() { echo "$*"; }
   report_add() { echo "$*"; }
   timeout() { shift; "$@"; }
@@ -141,6 +142,48 @@ SH
   ai_update_brew
   [ "$(head -1 "$CALLS")" = sudo ]
   [ "$(grep -c sudo "$CALLS")" = 1 ]
+}
+
+@test "AI Updates reuses launcher metadata but still verifies every client" {
+  export CALLS="$BATS_TEST_TMPDIR/calls"
+  MEISTER_BREW_UPDATE_PID=$$
+  MEISTER_BREW_UPDATE_AT=$(date +%s)
+  MEISTER_BREW_UPDATE_FRESH=true
+  BREW_UPDATE_MAX_AGE_SEC=0
+  brew() {
+    echo "$*" >> "$CALLS"
+    case "$*" in 'list --formula') echo ollama ;; esac
+  }
+  ai_update_brew
+  ! grep -q '^update$' "$CALLS"
+  grep -q 'upgrade --formula ollama' "$CALLS"
+  grep -q 'outdated --formula ollama' "$CALLS"
+  [ "$HOMEBREW_NO_AUTO_UPDATE" = 1 ]
+}
+
+@test "old PID and future timestamp cannot suppress a fresh metadata check" {
+  export CALLS="$BATS_TEST_TMPDIR/calls"
+  brew() { echo "$*" >> "$CALLS"; }
+  MEISTER_BREW_UPDATE_PID=invalid
+  MEISTER_BREW_UPDATE_AT=$(date +%s)
+  MEISTER_BREW_UPDATE_FRESH=true
+  ai_update_brew
+  MEISTER_BREW_UPDATE_PID=$$
+  MEISTER_BREW_UPDATE_AT=$(( $(date +%s) + 1000 ))
+  ai_update_brew
+  [ "$(grep -c '^update$' "$CALLS")" = 2 ]
+}
+
+@test "source runtime refreshes only once even in deep profile" {
+  export CALLS="$BATS_TEST_TMPDIR/calls"
+  MEISTER_DIR="$BATS_TEST_TMPDIR"
+  BREW_UPDATE_MAX_AGE_SEC=0
+  brew() { echo "$*" >> "$CALLS"; }
+  ai_update_brew
+  ai_update_brew
+  [ "$(grep -c '^update$' "$CALLS")" = 1 ]
+  [ -s "$MEISTER_DIR/brew_last_update" ]
+  ai_brew_metadata_current
 }
 
 @test "failed updater logs operation and exact retry exit without raw output" {

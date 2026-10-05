@@ -39,7 +39,10 @@ Every maintenance profile (`--auto`, `--quick`, `--deep`, `-a`) runs AI Updates
 before optional modules, even when `UNIVERSAL_UPDATES=false` or the soft run
 budget has expired. `-n` only previews it; read-only commands never update.
 
-Installed AI Homebrew packages get fresh metadata and greedy cask upgrades.
+Installed AI Homebrew packages reuse this invocation's successful metadata check
+and still receive greedy cask upgrades and version verification. Direct source
+runs refresh metadata once. The public starter's default freshness interval is
+12 hours; `--deep`, `-a` or `BREW_UPDATE_MAX_AGE_SEC=0` force a new check.
 Known AI npm packages are checked against `latest` in Homebrew and all installed
 nvm prefixes, including major-version upgrades. Native Claude, Grok, Cursor Agent
 and OpenCode use their own updaters. Failed commands retry once, then failures
@@ -428,16 +431,31 @@ GPL-3.0
 
 Ollama backend configuration and verification: [docs/OLLAMA.md](docs/OLLAMA.md).
 
-### Update before every Homebrew CLI start (6.36)
+### Homebrew startup freshness
 
-`meister`, `MeisterAI` and `meisterAI` run `brew update` followed by a targeted
-`brew upgrade --formula maf4711/meister/meister` before starting the current
-installed runtime. Arguments and the runtime exit status are preserved. Update
+`meister`, `MeisterAI` and `meisterAI` cache a successful `brew update` and targeted
+`brew upgrade --formula maf4711/meister/meister` for 12 hours by default. Cached
+starts resolve the current installed runtime through Homebrew's `opt/meister`
+path without spawning Homebrew. On expiry or a missing runtime, both update
+steps run again. `--deep`, `-a` (including combined short flags) and a configured
+`BREW_UPDATE_MAX_AGE_SEC=0` force a check. The interval is parsed from
+`~/.meister/config` without executing it. This changes v6.36's per-start refresh
+policy; set the interval to zero to retain that frequency.
+
+Arguments and the runtime exit status are preserved. Update
 messages go to stderr, leaving JSON output on stdout intact. If an update fails,
 the command stops without starting maintenance. This also applies to help,
 version, GUI and scheduled invocations through the public Homebrew commands.
 An already current version is not reinstalled. Automatic install cleanup is
 disabled for this step to retain files used by running processes.
 
+Only successful update/upgrade checks create `~/.meister/brew_launcher_last_update`;
+future, zero or malformed timestamps force a new check. Within an invocation,
+the launcher, AI Updates and Homebrew maintenance share their successful metadata
+check, including deep runs. AI clients are still checked through their owners.
+
 The formula stores the internal runtime in `libexec`; direct source checkout
 execution and Homebrew's sandboxed formula tests do not update Homebrew.
+
+Recap: Daily starts reuse a successful check for 12 hours; deep/all refresh once;
+SmartInbox caps daily traversal and continues unfinished work at the next run.
