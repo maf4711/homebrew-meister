@@ -1,5 +1,8 @@
 # MeisterAI: Start und SmartInbox optimieren
 
+Historischer Prüfstand vom 4. Oktober 2026, vor dem Release v6.37.
+Die Quellen-Hashes beziehen sich auf diesen Entwicklungsstand.
+
 Die Änderungen liegen auf `codex/meister-performance-20261004` im isolierten
 Worktree `/Users/a321/Developer/.worktrees/meister-performance-20261004`.
 Ausgangsbasis ist der saubere Homebrew-Tap-Stand `2b014b8` mit v6.36.
