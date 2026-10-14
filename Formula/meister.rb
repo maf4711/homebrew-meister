@@ -1,22 +1,32 @@
 class Meister < Formula
   desc "macOS Maintenance, Self-Healing & Dotfiles Sync (meister + MeisterAI)"
   homepage "https://github.com/maf4711/homebrew-meister"
-  url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v6.32.tar.gz"
-  sha256 "c5843361f1dd6ee383ef8b9ffabbc428bd92258a56474a751318f1f40e6029eb"
+  url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v6.37.tar.gz"
+  sha256 "39dea74de4bfc01bba798fea7cc0f7a00cdad21adde5afc7906e194d41f1b680"
   license "GPL-3.0-only"
-  version "6.32"
+  version "6.37"
 
   depends_on :macos
+  depends_on "node"
+  depends_on "coreutils" # bounded AI client updates need timeout on macOS
 
   def install
-    bin.install "meister.sh" => "meister"
+    libexec.install "meister.sh" => "meister"
     # Published 6.25 archives predate the rename; keep their checksum valid.
     apple_source = File.exist?("MeisterAI.sh") ? "MeisterAI.sh" : "meisterSiri.sh"
-    bin.install apple_source => "MeisterAI"
+    libexec.install apple_source => "MeisterAI"
     if apple_source != "MeisterAI.sh"
-      inreplace bin/"MeisterAI", "MeisterSiri", "MeisterAI"
-      inreplace bin/"MeisterAI", "meisterSiri", "MeisterAI"
+      inreplace libexec/"MeisterAI", "MeisterSiri", "MeisterAI"
+      inreplace libexec/"MeisterAI", "meisterSiri", "MeisterAI"
     end
+    # Public commands update first; runtime files stay outside PATH to avoid recursion.
+    launcher = File.read("scripts/homebrew-launcher.sh").gsub("@HOMEBREW_PREFIX@", HOMEBREW_PREFIX.to_s)
+    %w[meister MeisterAI].each do |command|
+      (bin/command).write launcher
+      (bin/command).chmod 0755
+    end
+    # Case-insensitive APFS already resolves this spelling.
+    bin.install_symlink "MeisterAI" => "meisterAI" unless (bin/"meisterAI").exist?
     doc.install "config.fast.example" if File.exist?("config.fast.example")
     doc.install "AGENTS.md" if File.exist?("AGENTS.md")
     doc.install "docs/PRODUCT.md" if File.exist?("docs/PRODUCT.md")
@@ -69,9 +79,9 @@ class Meister < Formula
   end
 
   test do
-    assert_match "meister", shell_output("#{bin}/meister -h 2>&1", 0)
-    assert_match "MeisterAI", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
-    assert_match "6.", shell_output("#{bin}/MeisterAI --version 2>&1", 0)
+    assert_match "meister", shell_output("#{libexec}/meister -h 2>&1", 0)
+    assert_match "MeisterAI", shell_output("#{libexec}/MeisterAI --version 2>&1", 0)
+    assert_match "6.", shell_output("#{libexec}/MeisterAI --version 2>&1", 0)
     refute_path_exists bin/"meisterSiri"
   end
 end

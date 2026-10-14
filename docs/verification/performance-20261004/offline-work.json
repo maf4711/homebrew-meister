@@ -1,0 +1,82 @@
+{
+  "fixtureOnly": true,
+  "note": "Work counts and stub timing only; real Mail/FM end-to-end latency is unmeasured.",
+  "sourceHashes": {
+    "baseline": {
+      "lib/mail/engine.mjs": "afa4f9766b310326c38f08f87af788ece497c77f6d812b5c4a6ad446e1f8a20e",
+      "lib/mail/state.mjs": "6886f135e445a66f845bf1b35b716a37302b046420fa8889440979f70c5b0494",
+      "lib/mail/keep-cache.mjs": "965c1c2856b8d75a994a6d6c475eb1055bfccd2ea6b534f881eec2aa44c07524",
+      "lib/mail/pipeline.mjs": "96f56abf0036e3113a3161e39786effdb3cad40855816027c169ee5e64f275db",
+      "lib/mail/progress.mjs": "38410f506c4d0c8f432b3e9b3fe2da12e6a504b7489297b53dd82fc94478d56c",
+      "scripts/megasmart.mjs": "ac1ae5e5dceb0847e9b8a4233651f9108716f299a996640791c24069fc436560",
+      "scripts/homebrew-launcher.sh": "5615332c53c3cd5b51fc913fc17bcd191d88361d9283e91ebea98eda2dade8de",
+      "lib/core/ai_updates.sh": "390eae747a68c43ffb03b3ec45f202663b354133d5daa4237f1f0bc2d95accbc",
+      "MeisterAI.sh": "43b764761c60e77d98d6cda3bed7da90e36ab8d7c26206de5fa094ae4b2199c3",
+      "meister.sh": "482a7ae1e87690759423a665deaec31cf8596d9039d97b4678854bdcd8101c05"
+    },
+    "candidate": {
+      "lib/mail/engine.mjs": "306b4af0a5b80bc22cc4dcbda019a97d40052a55e231ee6429f6b31efe914405",
+      "lib/mail/state.mjs": "3952154024a2a39b675fdd8b4d5ee278b8e8cb58b30331f018e4b1ccc80f7fed",
+      "lib/mail/keep-cache.mjs": "64a70077188cc68e78a75469ac1c05c56a9eb48478fcd21b236a3d9560bd6cbe",
+      "lib/mail/pipeline.mjs": "f5f44ec3da09f21de0a414ab3f5301d0f85bb8366e32bf2c02f93f49ca951490",
+      "lib/mail/progress.mjs": "1f8412da4152d23f3d56cb38b2607a29e84589d790ad708c5d8f224809b28f51",
+      "scripts/megasmart.mjs": "f42a1becea527e42ce491d9bfc156a676623430127ad5359cd4a216aed294d97",
+      "scripts/homebrew-launcher.sh": "fa3f709367bbe39166f141b09b2346b280800239422540a6d7852330e42e6ce2",
+      "lib/core/ai_updates.sh": "1bed200610156b20e0fa4873163dca9011ebcc8bc33cc79823caf2f044e6ebc7",
+      "MeisterAI.sh": "ce5f8d849a68f5e8250c3505a844cd374933320f799f6a9ab375ea061dad54bd",
+      "meister.sh": "fd353812493473c8a21a8642ff150b36a30fa847cae67a650a38c05c92746e6d"
+    }
+  },
+  "results": {
+    "unavailable": {
+      "baseline": {
+        "headers": 13424,
+        "scanned": 13424,
+        "unscanned": 0,
+        "readRows": 13424,
+        "readBatches": 537,
+        "nativeReads": 0,
+        "modelRows": 0,
+        "fixtureWallMs": 36.47,
+        "nextMessageID": "1"
+      },
+      "candidate": {
+        "headers": 13424,
+        "scanned": 500,
+        "unscanned": 12924,
+        "readRows": 500,
+        "readBatches": 20,
+        "nativeReads": 0,
+        "modelRows": 0,
+        "fixtureWallMs": 4.93,
+        "nextMessageID": "501"
+      },
+      "bodyWorkReductionPercent": 96.28
+    },
+    "mixed": {
+      "baseline": {
+        "headers": 13424,
+        "scanned": 13424,
+        "unscanned": 0,
+        "readRows": 13424,
+        "readBatches": 537,
+        "nativeReads": 0,
+        "modelRows": 32,
+        "fixtureWallMs": 47.23,
+        "nextMessageID": "801"
+      },
+      "candidate": {
+        "headers": 13424,
+        "scanned": 500,
+        "unscanned": 12924,
+        "readRows": 500,
+        "readBatches": 20,
+        "nativeReads": 0,
+        "modelRows": 20,
+        "fixtureWallMs": 6.29,
+        "nextMessageID": "501"
+      },
+      "bodyWorkReductionPercent": 96.28
+    }
+  }
+}

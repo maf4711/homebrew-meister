@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-for tool in shellcheck bats python3; do
+for tool in shellcheck bats python3 node; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "ERROR: $tool is required. Install shellcheck, bats-core and python3 before running checks." >&2
     exit 1
@@ -12,7 +12,7 @@ for tool in shellcheck bats python3; do
 done
 
 echo "=== shellcheck ==="
-shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh
+shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh scripts/homebrew-launcher.sh
 
 echo "=== bash -n twins ==="
 bash -n MeisterAI.sh
@@ -24,6 +24,12 @@ bash scripts/sync-twins.sh --check
 
 echo "=== bats ==="
 bats tests/
+
+echo "=== local Mail CLI tests ==="
+node --test tests/*mail*.test.mjs
+
+echo "=== Homebrew startup tests ==="
+python3 -m unittest discover -s tests -p test_startup_update.py
 
 echo "=== FM evaluation harness ==="
 python3 -m unittest discover -s tests -p 'test_fm*.py'

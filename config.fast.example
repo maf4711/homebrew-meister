@@ -5,6 +5,8 @@
 # RUN_PROFILE=auto
 
 # Homebrew: skip update if last run was within 12 hours (0 = always update)
+# The public starter uses this interval for metadata plus the Meister upgrade.
+# --deep / -a force a fresh check; modules reuse it within the same invocation.
 BREW_UPDATE_MAX_AGE_SEC=43200
 BREW_UPDATE_TIMEOUT_SEC=300
 BREW_UPGRADE_TIMEOUT_SEC=600
@@ -72,3 +74,7 @@ MEISTER_OLLAMA_NUM_PREDICT=1024
 
 # Bounded diagnostics need the final answer, not an internal reasoning trace.
 MEISTER_OLLAMA_THINK="false"
+
+# SmartInbox runs on every maintenance profile by default, using local Apple FM.
+# Keeps protected/uncertain mail; moves approved newsletters older than seven days.
+MEGASMART_ENABLED=true
