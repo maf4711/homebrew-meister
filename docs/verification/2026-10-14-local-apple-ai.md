@@ -113,9 +113,17 @@ Die dokumentierten Konfigurationsschlüssel `FM_HEAL_MODEL` und
   installierten 6.37-CLI-Dateien übertragen. Alle sieben Routingtests bestehen
   auch gegen den tatsächlich installierten Apple-Parser; beide Skripte bestehen
   die Bash-Syntaxprüfung.
-- Die Quellcodekorrektur liegt uncommitted in `homebrew-meister`; fremde Änderungen
-  wurden erhalten. Kein Release oder Push. Eine spätere Homebrew-Neuinstallation
-  kann den lokalen Installationsfix überschreiben, solange er nicht veröffentlicht ist.
+- Bei der Erstprüfung wurde die Korrektur zunächst lokal angewendet; andere
+  Änderungen im Checkout wurden erhalten. Release 6.38 übernimmt dieselbe
+  Parser-Korrektur samt Regressionstests in das reguläre Homebrew-Paket.
+  Die Modellstandards und Benutzerkonfiguration bleiben unverändert.
 
 Sicherungen, Hash-Beleg und vollständiges Prüfprotokoll liegen unter
 `/private/tmp/meisterai-local-ai-audit-20261014-evidence/`.
+
+## Release-Prüfung 6.38
+
+Nach Zusammenführung mit dem aktuellen Remote-Stand 6.37 wurde die gesamte
+Prüfsuite erneut auf dem isolierten Release-Kandidaten ausgeführt: 209 Bats-,
+124 Node- und 35 Python-Tests sowie 24 Offline-Modellfälle bestanden.
+ShellCheck, Bash-Syntax und Twin-Parität waren ebenfalls erfolgreich.
