@@ -33,7 +33,7 @@ setup() { bats_require_minimum_version 1.5.0; }
 import subprocess,sys
 source=open(sys.argv[1]).read()
 function='module_megasmart() {'+source.split('module_megasmart() {',1)[1].split('\n}\n',1)[0]+'\n}'
-for result,code,expected in [('{"status":"completed","moved":3}',0,'FIX'),('{"status":"failed","moved":0}',1,'WARN'),('{"status":"applying","moved":0}',0,'WARN'),('{"status":"completed","moved":0,"unavailable":7}',0,'WARN'),('{"status":"completed","moved":3,"unavailable":2}',0,'FIX\nWARN'),('{"status":"completed","moved":0,"deferred":12}',0,'WARN'),('{"status":"completed","moved":0,"unscanned":12924}',0,'WARN'),('{"status":"completed","moved":3,"unscanned":12924}',0,'FIX\nWARN')]:
+for result,code,expected in [('{"status":"completed","moved":3}',0,'FIX'),('{"status":"failed","moved":0}',1,'WARN'),('{"status":"applying","moved":0}',0,'WARN'),('{"status":"completed","moved":0,"unavailable":7}',0,'WARN'),('{"status":"completed","moved":3,"unavailable":2}',0,'FIX\nWARN'),('{"status":"completed","moved":0,"deferred":12}',0,''),('{"status":"completed","moved":0,"unscanned":12924}',0,''),('{"status":"completed","moved":3,"unscanned":12924}',0,'FIX'),('{"status":"completed","moved":0,"unavailable":255,"partialUnavailable":255}',0,'WARN'),('{"status":"completed","moved":0,"unavailable":256,"partialUnavailable":255}',0,'WARN\nWARN'),('{"status":"completed","moved":0,"unavailable":1,"partialUnavailable":2}',0,'WARN')]:
  script='''report_add() { printf '%s\\n' "$1"; }
 log() { :; }
 MEISTER_LIB_DIR=/unused
@@ -42,5 +42,27 @@ node() { printf '%s' '''+repr(result)+'''; return '''+str(code)+'''; }
  run=subprocess.run(['bash','-c',script],text=True,capture_output=True)
  assert run.returncode==0,(run.stdout,run.stderr)
  assert run.stdout.strip()==expected,(run.stdout,run.stderr)
+PY
+}
+@test "SmartInbox labels normal continuation and partial storage without claiming a complete content review" {
+  python3 - "$BATS_TEST_DIRNAME/../MeisterAI.sh" <<'PY'
+import subprocess,sys
+source=open(sys.argv[1]).read()
+function='module_megasmart() {'+source.split('module_megasmart() {',1)[1].split('\n}\n',1)[0]+'\n}'
+result='{"status":"completed","moved":0,"unavailable":256,"partialUnavailable":255,"unscannedThisRun":16176,"coverage":{"neverAttempted":4445}}'
+script='''report_add() { printf '%s: %s\\n' "$1" "$2"; }
+log() { printf '%s: %s\\n' "$1" "$2"; }
+MEISTER_LIB_DIR=/unused
+node() { printf '%s' '''+repr(result)+'''; }
+'''+function+'\nmodule_megasmart\n'
+run=subprocess.run(['bash','-c',script],text=True,capture_output=True)
+assert run.returncode==0,(run.stdout,run.stderr)
+assert '16176 Nachrichten in diesem Lauf nicht durchgesehen' in run.stdout,run.stdout
+assert '4445 Nachrichten unter aktueller Richtlinie noch nie durchlaufen' in run.stdout,run.stdout
+assert '255 Nachrichten mit partieller lokaler Mail-Ablage nicht vollständig ausgewertet' in run.stdout,run.stdout
+assert 'ungeklärt und geschützt behalten' in run.stdout,run.stdout
+assert 'WARN: SmartInbox: 1 Inhalte lokal unlesbar oder unbestätigt' in run.stdout,run.stdout
+assert run.stdout.count('WARN:')==2,run.stdout
+assert 'report_add OK' not in function,function
 PY
 }

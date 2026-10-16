@@ -3,6 +3,7 @@ import { createProgressReporter } from '../lib/mail/progress.mjs';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { access } from 'node:fs/promises';
 import { localNewsletterHeaders } from '../lib/mail/local-index.mjs';
 import { mailPolicyVersion } from '../lib/mail/fm-classifier.mjs';
 import { KeepCache } from '../lib/mail/keep-cache.mjs';
@@ -13,7 +14,7 @@ export function parse(args) {
   const options = { command: 'run', mailbox: 'INBOX', json: false };
   const input = [...args];
   if (input[0] && !input[0].startsWith('-')) options.command = input.shift();
-  if (['apply', 'reconcile', 'status'].includes(options.command) && input[0] && !input[0].startsWith('-')) options.job = input.shift();
+  if (['apply', 'reconcile', 'status', 'inspect'].includes(options.command) && input[0] && !input[0].startsWith('-')) options.job = input.shift();
   while (input.length) {
     const key = input.shift();
     if (['--help', '-h'].includes(key)) options.command = 'help';
@@ -21,13 +22,19 @@ export function parse(args) {
     else if (key === '--full') options.full = true;
     else if (key === '--json') options.json = true;
     else if (['--dry-run', '-n'].includes(key)) options.dry = true;
+    else if (['--limit', '--offset'].includes(key)) {
+      if (!/^\d+$/.test(input[0] ?? '')) throw new Error(`Ungültiger Wert: ${key}`);
+      options[key.slice(2)] = Number(input.shift());
+    }
     else if (['--account', '--mailbox', '--trash'].includes(key)) {
       if (!input[0] || input[0].startsWith('-') || /[\x00-\x1f]/.test(input[0])) throw new Error(`Wert fehlt: ${key}`);
       options[key.slice(2)] = input.shift();
     } else throw new Error(`Unbekanntes Argument: ${key}`);
   }
-  if (!['scan', 'preview', 'run', 'apply', 'reconcile', 'status', 'help'].includes(options.command)) throw new Error('Unbekannter Mail-Befehl');
-  if (['apply', 'reconcile'].includes(options.command) && !options.job) throw new Error('Job-ID erforderlich');
+  if (!['scan', 'preview', 'run', 'apply', 'reconcile', 'status', 'inspect', 'help'].includes(options.command)) throw new Error('Unbekannter Mail-Befehl');
+  if (['apply', 'reconcile', 'inspect'].includes(options.command) && !options.job) throw new Error('Job-ID erforderlich');
+  if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100) || options.offset !== undefined && !Number.isSafeInteger(options.offset)) throw new Error('Ungültige Diagnosegrenze');
+  if (options.command !== 'inspect' && (options.limit !== undefined || options.offset !== undefined)) throw new Error('Diagnosegrenzen nur mit inspect');
   if (options.job && !/^[a-f0-9-]{36}$/.test(options.job)) throw new Error('Ungültige Job-ID');
   if (!/^(inbox|posteingang)$/i.test(options.mailbox)) throw new Error('Nur ein ausdrücklich gewählter Posteingang ist erlaubt');
   if (options.dry && ['apply', 'reconcile'].includes(options.command)) options.command = 'status';
@@ -40,22 +47,29 @@ const help = `MeisterAI megasmart | smartinbox [Befehl] [Optionen]
   run                  Standard: Apple FM prüft Inhalte; alte Newsletter in vorhandenen Papierkorb verschieben
   apply JOB            Gespeicherten Plan prüfen und ausführen
   reconcile JOB        Ungewisses Ergebnis lesend prüfen; niemals blind wiederholen
+  inspect JOB          Unlesbare Einträge eines Jobs lesend diagnostizieren; keine Freigabe zum Verschieben
+  --limit N --offset N Diagnose: 1–100 Einträge (Standard 25), Fortsetzung über nextOffset
+                       60s weiches Budget; native Einzelabfrage höchstens 15s
   status [JOB]         Gespeicherten Verlauf lesen; kein Mail-Zugriff
   --maintenance        Bis 500 Nachrichten / 32 neue FM-Prüfungen / 60s weiches Durchsichtbudget
   --full               Vollständige Prüfung ohne Wartungsbudget
   --account NAME --mailbox INBOX --trash NAME --json --dry-run
 Vorschau nur aus vollständigen lokalen Inhalten; Unlesbares bleibt ungeklärt erhalten.
+inspect kann Mail Inhalte laden lassen; Anhänge bleiben unbestätigt und geschützt.
+Diagnose stoppen: SIGINT oder Datei MEISTER_DIR/mail/inspect.stop (Standard ~/.meister).
 Kein direkter IMAP-Zugang, keine AufRaum-GUI, kein Hintergrundzeitplan.
 Apple Mail startet bei Bedarf im Hintergrund. Terminal braucht Automation und lokalen Mail-Dateizugriff.
 Recap: Newsletter älter als sieben Tage; Wichtiges und Unklares behalten; Papierkorb nie leeren.`;
-function summary(job) {
+export function summary(job) {
   return { id: job.id, status: job.status, account: job.account, scanned: job.scanned, headersScanned: job.headersScanned ?? job.scanned,
     planned: job.items.filter(i => i.action === 'move').length,
     kept: job.items.filter(i => i.action === 'keep').length,
     unavailable: job.items.filter(i => i.localUnavailable || i.nativeUnverified).length,
+    partialUnavailable: job.items.filter(i => i.localUnavailable && i.localUnavailableReason === 'partial-emlx').length,
     nativeUnverified: job.items.filter(i => i.nativeUnverified).length,
     deferred: job.items.filter(i => i.deferred).length,
-    unscanned: job.unscanned ?? 0, previewComplete: job.previewComplete ?? !job.hasMore,
+    unscanned: job.unscanned ?? 0, unscannedThisRun: job.unscanned ?? 0, coverage: job.coverage,
+    previewComplete: job.previewComplete ?? !job.hasMore,
     fmClassified: job.items.filter(i => i.classification && !i.deferred).length,
     fmUncertain: job.items.filter(i => i.classification?.category === 'uncertain' && !i.deferred).length,
     moved: job.items.filter(i => i.status === 'moved').length,
@@ -69,7 +83,7 @@ export async function main(args = process.argv.slice(2)) {
   const directory = join(stateRoot, 'mail');
   const emit = value => {
     console.log(JSON.stringify(value, null, o.json ? 0 : 2));
-    if (!o.json) console.log('Recap: ' + (value.status === 'completed' ? `Ausführung abgeschlossen; ${value.unscanned ?? 0} Nachrichten noch nicht durchgesehen; ${value.deferred ?? 0} Modellprüfungen zurückgestellt; ${value.unavailable ?? 0} nicht lokal lesbare Inhalte bleiben ungeklärt erhalten.` : 'Nur bestätigte Verschiebungen zählen; keine wiederkehrende Automatik.'));
+    if (!o.json) console.log('Recap: ' + (value.status === 'completed' ? `Ausführung abgeschlossen; ${value.unscannedThisRun ?? 0} Nachrichten in diesem Lauf nicht durchgesehen; ${value.deferred ?? 0} Modellprüfungen zurückgestellt; ${value.unavailable ?? 0} nicht vollständig lokal auswertbare Inhalte bleiben ungeklärt erhalten.` : value.status === 'inspection' ? 'Nur lesend diagnostiziert; lesbarer Nachrichtentext bestätigt keine vollständigen Anhänge und erlaubt keine Verschiebung.' : 'Nur bestätigte Verschiebungen zählen; keine wiederkehrende Automatik.'));
   };
   if (o.command === 'status') {
     const records = await jobs(directory);
@@ -78,7 +92,8 @@ export async function main(args = process.argv.slice(2)) {
     emit({ jobs: selected.map(summary) }); return;
   }
   const { NativeMail, recoverMailInBackground } = await import('../lib/mail/native-mail.mjs');
-  const mail = new NativeMail({ recover: recoverMailInBackground });
+  const inspectionOptions = o.command === 'inspect' ? { runner: (await import('../lib/mail/inspect.mjs')).inspectionRunner } : {};
+  const mail = new NativeMail({ recover: recoverMailInBackground, ...inspectionOptions });
   const mutating = ['run', 'apply'].includes(o.command);
   if (mutating) await desktopFence();
   const release = await lockState(directory);
@@ -96,6 +111,22 @@ export async function main(args = process.argv.slice(2)) {
       latestProgress = progress; latestProgressAt = performance.now();
       progressReporter.update(progress);
     };
+    if (o.command === 'inspect') {
+      const job = (await jobs(directory)).find(job => job.id === o.job);
+      if (!job) throw new Error('Job nicht gefunden');
+      if (o.account && o.account !== job.account) throw new Error('Diagnosekonto passt nicht zum Job');
+      const { LocalContentReader } = await import('../lib/mail/local-content.mjs');
+      const { inspectUnavailable } = await import('../lib/mail/inspect.mjs');
+      const listing = await localNewsletterHeaders(job.account, job.mailbox, new Date(Date.now() - 7 * 86400000).toISOString(), true);
+      const shouldStop = async () => {
+        if (interrupted) return true;
+        try { await access(join(directory, 'inspect.stop')); return true; }
+        catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+      };
+      emit(await inspectUnavailable({ job, listing, reader: new LocalContentReader({ nativeMail: mail }), nativeMail: mail,
+        limit: o.limit, offset: o.offset, shouldStop }));
+      return;
+    }
     if (['preview', 'run'].includes(o.command)) {
       const { MailClassifier } = await import('../lib/mail/fm-classifier.mjs');
       classifier = new KeepCache(new MailClassifier({ cacheDir: join(directory, 'fm') }), directory, {

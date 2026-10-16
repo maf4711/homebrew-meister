@@ -9,7 +9,7 @@ setup() {
   log() { printf '%s %s\n' "$1" "$2"; }
   bw_phase() { :; }
   report_add() { printf '%s %s\n' "$1" "$2"; }
-  for fn in log_analysis module_sleep_blockers module_system_maintenance; do
+  for fn in log_analysis sleep_intentional_caffeinate module_sleep_blockers module_system_maintenance; do
     eval "$(awk -v name="$fn" '$0==name"() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
   done
 }
@@ -206,4 +206,117 @@ load_preference_inspector() {
   else
     [ "$(cat "$MEISTER_DIR/df-args")" = '-P /' ]
   fi
+}
+
+@test "sleep query failure remains visible instead of claiming no blockers" {
+  pmset() { echo 'assertion service unavailable' >&2; return 1; }
+  run module_sleep_blockers
+  [[ "$output" == *'WARN Sleep assertions could not be checked'* ]]
+  [[ "$output" == *'assertion service unavailable'* ]]
+  [[ "$output" != *'No processes blocking sleep'* ]]
+}
+
+@test "sleep assertions beyond first ten are still checked" {
+  pmset() {
+    local i
+    for i in {1..12}; do
+      printf ' pid %s(powerd): [0x000] 00:00:10 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"\n' "$i"
+    done
+    printf ' pid 999(zz-user-job): [0x000] 00:00:01 PreventSystemSleep named: "user job"\n'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'1 sleep blocker(s) active: zz-user-job'* ]]
+}
+
+@test "brief sync and Siri assertions stay informational" {
+  pmset() {
+    printf '%s\n' \
+      ' pid 1(AddressBookSourceSync): [0x000] 00:00:20 PreventUserIdleSystemSleep named: "Address Book Source Sync"' \
+      ' pid 2(corespeechd): [0x000] 00:06:32 PreventSystemSleep named: "com.apple.corespeech.powerassertion"'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'brief system activity'* ]]
+  [[ "$output" != *WARN* ]]
+}
+
+@test "persistent Siri and unfamiliar system assertions remain warnings" {
+  pmset() {
+    printf '%s\n' \
+      ' pid 2(corespeechd): [0x000] 00:30:00 PreventSystemSleep named: "com.apple.corespeech.powerassertion"' \
+      ' pid 3(runningboardd): [0x000] 00:00:20 PreventSystemSleep named: "app<com.example.unknown>"' \
+      ' pid 4(coreaudiod): [0x000] 00:00:20 PreventSystemSleep named: "unknown"'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'3 sleep blocker(s) active: corespeechd, runningboardd, coreaudiod'* ]]
+}
+
+@test "missing assertion duration cannot suppress Siri warning" {
+  pmset() { echo ' pid 2(corespeechd): PreventSystemSleep named: "com.apple.corespeech.powerassertion"'; }
+  run module_sleep_blockers
+  [[ "$output" == *'1 sleep blocker(s) active: corespeechd'* ]]
+}
+
+@test "intentional caffeinate requires exact live process and matching KeepAlive launchd ownership" {
+  pmset() { echo ' pid 2295(caffeinate): [0x000] 20:00:00 PreventSystemSleep named: "caffeinate command-line tool"'; }
+  ps() { echo '/usr/bin/caffeinate -i -m -s'; }
+  launchctl() {
+    printf '%s\n' 'state = running' 'program = /usr/bin/caffeinate' 'pid = 2295' 'properties = keepalive | runatload'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'intentional awake state: ai.openclaw.caffeinate (KeepAlive verified)'* ]]
+  [[ "$output" != *WARN* ]]
+  launchctl() {
+    printf '%s\n' 'state = running' 'program = /usr/bin/caffeinate' 'pid = 2296' 'properties = keepalive | runatload'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'1 sleep blocker(s) active: caffeinate'* ]]
+}
+
+@test "unverified caffeinate is never blanket ignored" {
+  pmset() { echo ' pid 2295(caffeinate): [0x000] 00:00:01 PreventSystemSleep named: "caffeinate command-line tool"'; }
+  ps() { echo '/usr/bin/caffeinate -i -m -s'; }
+  launchctl() { return 1; }
+  run module_sleep_blockers
+  [[ "$output" == *'1 sleep blocker(s) active: caffeinate'* ]]
+  ps() { echo '/tmp/caffeinate -i -m -s'; }
+  launchctl() {
+    printf '%s\n' 'state = running' 'program = /usr/bin/caffeinate' 'pid = 2295' 'properties = keepalive | runatload'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'1 sleep blocker(s) active: caffeinate'* ]]
+}
+
+@test "observed brief RunningBoard account storage assertions stay informational" {
+  pmset() {
+    printf '%s\n' \
+      ' pid 651(runningboardd): [0x000] 00:00:00 PreventUserIdleSystemSleep named: "osservice<com.apple.appleaccountd(505)>651-74193-13806:com.apple.CFNetwork.StorageDB"' \
+      ' pid 651(runningboardd): [0x001] 00:00:00 PreventUserIdleSystemSleep named: "osservice<com.apple.FeatureAccessAgent(505)>651-74102-13802:com.apple.CFNetwork.StorageDB"' \
+      ' pid 651(runningboardd): [0x002] 00:29:59 PreventUserIdleSystemSleep named: "osservice<com.apple.akd(505)>651-74098-13800:com.apple.CFNetwork.StorageDB"'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'brief Apple account storage activity'* ]]
+  [[ "$output" != *WARN* ]]
+}
+
+@test "persistent RunningBoard account storage assertions still warn" {
+  pmset() {
+    printf '%s\n' ' pid 651(runningboardd): [0x000] 00:30:00 PreventUserIdleSystemSleep named: "osservice<com.apple.appleaccountd(505)>651-74193-13806:com.apple.CFNetwork.StorageDB"'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'1 sleep blocker(s) active: runningboardd'* ]]
+  [[ "$output" != *'brief Apple account storage activity'* ]]
+}
+
+@test "RunningBoard exception requires known service exact storage suffix and measured age" {
+  local assertion
+  for assertion in \
+    '00:00:00 PreventUserIdleSystemSleep named: "osservice<com.apple.unknown(505)>651-74193-13806:com.apple.CFNetwork.StorageDB"' \
+    '00:00:00 PreventUserIdleSystemSleep named: "osservice<com.apple.appleaccountd(505)>651-74193-13806:com.apple.OtherOperation"' \
+    '00:00:00 PreventUserIdleSystemSleep named: "osservice<com.apple.appleaccountd(505)>651-74193-13806:com.apple.CFNetwork.StorageDB.extra"' \
+    'PreventUserIdleSystemSleep named: "osservice<com.apple.appleaccountd(505)>651-74193-13806:com.apple.CFNetwork.StorageDB"'; do
+    pmset() { printf ' pid 651(runningboardd): [0x000] %s\n' "$assertion"; }
+    run module_sleep_blockers
+    [[ "$output" == *'1 sleep blocker(s) active: runningboardd'* ]]
+    [[ "$output" != *'brief Apple account storage activity'* ]]
+  done
 }

@@ -110,5 +110,31 @@ test('strict local preview never fetches missing or partial contents through App
  const rows=await f.reader.readMessages('iCloud','INBOX',['1','2']);
  assert.equal(rows[0].localPreview,true);assert.equal(rows[1].localUnavailable,true);
  assert.equal(rows[1].body,'');assert.equal(rows[1].rfcMessageId,'');assert.equal(f.calls.length,0);
+ assert.equal(rows[1].localUnavailableReason,'partial-emlx');
  assert.deepEqual(f.reader.stats,{localReads:1,nativeFallbackReads:0,unavailableReads:1});
+});
+
+test('ASCII header folding matches without accepting changed Unicode, subject or RFC identity', async t => {
+  const f = await fixture(t, ['1','2','3','4','5']); f.reader.nativeFallback = false;
+  await f.write('1', simple('1').replace('Weekly news', 'Weekly\r\n \t news'));
+  await f.write('2', simple('2').replace('Weekly news', 'Weekly\u00a0news'));
+  await f.write('3', simple('3').replace('Weekly news', 'Weekly new'));
+  await f.write('4', simple('4').replace('Weekly news', 'Weekly\r\n news').replace('mail4@', 'wrong@'));
+  f.listing.messages[4].subject = 'Café';
+  await f.write('5', simple('5').replace('Weekly news', 'Cafe\u0301'));
+  await f.configure(); const rows = await f.reader.readMessages('iCloud','INBOX',['1','2','3','4','5']);
+  assert.equal(rows[0].localUnavailable, undefined); assert.equal(rows[0].subject, 'Weekly news');
+  assert.ok(rows.slice(1).every(row => row.localUnavailable && row.localUnavailableReason === 'identity-mismatch'));
+  assert.equal(f.calls.length, 0);
+});
+
+test('partial files, absent files, unsupported attachments and identity mismatches remain distinguishable and protected', async t => {
+  const f = await fixture(t, ['1','2','3','4']); f.reader.nativeFallback = false;
+  await f.write('1', simple('1'), '', '1.partial.emlx');
+  await f.write('3', header('3', 'Content-Type: text/plain\r\nContent-Disposition: attachment\r\n\r\n') + 'attachment text');
+  await f.write('4', simple('4').replace('mail4@', 'wrong@'));
+  await f.configure(); const rows = await f.reader.readMessages('iCloud','INBOX',['1','2','3','4']);
+  assert.deepEqual(rows.map(row => row.localUnavailableReason), ['partial-emlx','missing-or-ambiguous-local-file','incomplete-or-unsupported-mime','identity-mismatch']);
+  assert.ok(rows.every(row => row.localUnavailable && row.body === '' && row.rfcMessageId === ''));
+  assert.equal(f.calls.length, 0);
 });

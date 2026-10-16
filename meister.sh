@@ -5394,33 +5394,76 @@ module_system_maintenance() {
     return 0
 }
 
+# Treat only a verified, deliberately persistent LaunchAgent as intentional wakefulness.
+# A process called caffeinate alone is insufficient evidence.
+sleep_intentional_caffeinate() {
+    local pid="$1" job process
+    process=$(ps -ww -p "$pid" -o args= 2>/dev/null) || return 1
+    [ "$process" = "/usr/bin/caffeinate -i -m -s" ] || return 1
+    job=$(launchctl print "gui/$(id -u)/ai.openclaw.caffeinate" 2>/dev/null) || return 1
+    printf '%s\n' "$job" | awk -v expected_pid="$pid" '
+        $1=="pid" && $2=="=" && $3==expected_pid {pid_ok=1}
+        $1=="program" && $2=="=" && $3=="/usr/bin/caffeinate" {program_ok=1}
+        $1=="state" && $2=="=" && $3=="running" {running=1}
+        $1=="properties" && /(^|[ |])keepalive([ |]|$)/ {keepalive=1}
+        END {exit !(pid_ok && program_ok && running && keepalive)}'
+}
+
 module_sleep_blockers() {
     log INFO "Sleep assertions (what keeps Mac awake)..."
     bw_phase "Sleep: querying assertions"
-    local assertions
-    assertions=$(pmset -g assertions 2>/dev/null | awk '/PreventUserIdleSystemSleep|PreventSystemSleep/ && / pid /' | sort -u | head -10)
+    local raw assertions
+    if ! raw=$(pmset -g assertions 2>&1); then
+        log WARN "   Cannot query sleep assertions: $raw"
+        report_add WARN "Sleep assertions could not be checked"
+        return 0
+    fi
+    assertions=$(printf '%s\n' "$raw" | awk '/PreventUserIdleSystemSleep|PreventSystemSleep/ && / pid /' | sort -u)
     if [ -z "$assertions" ]; then
         log STEP "   No processes blocking sleep"
         return 0
     fi
-    local n=0 names="" seen_names="|" pid name
+    local n=0 names="" seen_names="|" pid name line duration seconds reason intentional_pid=""
     while IFS= read -r line; do
         [ -z "$line" ] && continue
-        pid=$(echo "$line" | grep -oE 'pid [0-9]+' | awk '{print $2}')
-        name=$(echo "$line" | grep -oE 'pid [0-9]+\([^)]+\)' | sed 's/.*(\(.*\))/\1/')
+        pid=$(printf '%s\n' "$line" | grep -oE 'pid [0-9]+' | awk '{print $2}')
+        name=$(printf '%s\n' "$line" | grep -oE 'pid [0-9]+\([^)]+\)' | sed 's/.*(\(.*\))/\1/')
         [ -z "$name" ] && [ -n "$pid" ] && name=$(ps -p "$pid" -o comm= 2>/dev/null)
         [ -z "$name" ] && name="pid${pid:-?}"
-        case "$name" in
-            powerd|coreaudiod|loginwindow|WindowServer|kernel_task|UserEventAgent) continue ;;
+        duration=$(printf '%s\n' "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+:[0-9][0-9]:[0-9][0-9]$/) {print $i;exit}}')
+        seconds=$(printf '%s\n' "$duration" | awk -F: 'NF==3 {print $1*3600+$2*60+$3}')
+        reason=""
+        case "$name:$line" in
+            powerd:*'named: "Powerd - Prevent sleep while display is on"'*)
+                reason="display is on" ;;
+            AddressBookSourceSync:*'named: "Address Book Source Sync"'*|corespeechd:*'named: "com.apple.corespeech.powerassertion"'*)
+                if [ -n "$seconds" ] && [ "$seconds" -lt 1800 ]; then
+                    reason="brief system activity ($duration; warning at 30 minutes)"
+                fi ;;
+            runningboardd:*)
+                # These observed account services briefly hold CFNetwork storage assertions.
+                # Keep all other RunningBoard clients and persistent operations visible.
+                if [ -n "$seconds" ] && [ "$seconds" -lt 1800 ] && printf '%s\n' "$line" | grep -Eq 'named: "osservice<com\.apple\.(appleaccountd|FeatureAccessAgent|akd)\([0-9]+\)>[0-9]+-[0-9]+-[0-9]+:com\.apple\.CFNetwork\.StorageDB"'; then
+                    reason="brief Apple account storage activity ($duration; warning at 30 minutes)"
+                fi ;;
+            caffeinate:*)
+                if [ "$intentional_pid" = "$pid" ] || sleep_intentional_caffeinate "$pid"; then
+                    intentional_pid="$pid"
+                    reason="intentional awake state: ai.openclaw.caffeinate (KeepAlive verified)"
+                fi ;;
         esac
-        log STEP "     pid $pid ($name) — blocking sleep"
+        if [ -n "$reason" ]; then
+            log STEP "     pid $pid ($name) — $reason"
+            continue
+        fi
+        log STEP "     pid $pid ($name) — blocking sleep${duration:+ for $duration}"
         case "$seen_names" in
             *"|$name|"*) ;;
             *) seen_names="${seen_names}${name}|"; names="${names:+$names, }$name"; n=$((n + 1)) ;;
         esac
     done <<< "$assertions"
     if [ "$n" -eq 0 ]; then
-        log STEP "   Only system daemons hold sleep assertions (ignored)"
+        log STEP "   Sleep assertions accounted for; details above"
         return 0
     fi
     report_add WARN "$n sleep blocker(s) active: $names"
@@ -5467,6 +5510,59 @@ module_dsstore_cleanup() {
     return 0
 }
 
+# Capture listing errors as failure, even when the trailing sort succeeds.
+docs_order_root_entries() {
+    (
+        set -o pipefail
+        find "$1" -mindepth 1 -maxdepth 1 ! -name ".*" -exec /bin/bash -c '
+            for item do
+                name=${item##*/}
+                case "$name" in
+                    *"
+"*) printf "%s\n" "Docs baseline does not support newline-containing names; review manually" >&2; exit 1 ;;
+                esac
+                printf "%s\n" "$name"
+            done
+        ' bash {} + | LC_ALL=C sort
+    )
+}
+
+docs_order_write_baseline() {
+    local entries="$1" baseline="$2" pending
+    pending=$(mktemp "${baseline}.pending.XXXXXX") || return 1
+    if { [ -z "$entries" ] || printf '%s\n' "$entries"; } > "$pending" && mv -f "$pending" "$baseline"; then
+        return 0
+    fi
+    rm -f "$pending"
+    return 1
+}
+
+# Explicit acceptance requires the caller's reviewed list to match a fresh scan.
+# Never call this automatically from maintenance; keep the previous baseline.
+docs_order_accept_baseline() {
+    local reviewed_file="$1" entries reviewed baseline="$MEISTER_DIR/docs_order.baseline" backup
+    reviewed=$(cat "$reviewed_file") || { report_add ERROR "Docs baseline: reviewed list could not be read"; return 1; }
+    entries=$(docs_order_root_entries "$DOCS_ORDER_ROOT") || { report_add WARN "Docs baseline: root entries could not be checked"; return 1; }
+    [ "$reviewed" = "$entries" ] || { report_add WARN "Docs baseline: root differs from the reviewed list; review again"; return 1; }
+    if $DRY_RUN; then
+        report_add WOULD "Accept reviewed Documents baseline"
+        return 0
+    fi
+    if [ -e "$baseline" ]; then
+        backup=$(mktemp "${baseline}.backup.XXXXXX") || return 1
+        if ! cp -p "$baseline" "$backup"; then
+            rm -f "$backup"
+            report_add ERROR "Docs baseline: backup failed; baseline unchanged"
+            return 1
+        fi
+    fi
+    if ! docs_order_write_baseline "$entries" "$baseline"; then
+        report_add ERROR "Docs baseline: write failed"
+        return 1
+    fi
+    report_add FIX "Accepted reviewed Documents baseline${backup:+ (previous baseline: $backup)}"
+}
+
 # v5.21: Order check for DOCS_ORDER_ROOT (default ~/Documents)
 module_docs_order() {
     $DOCS_ORDER_ENABLED || { log STEP "Docs order check disabled"; return 0; }
@@ -5477,7 +5573,11 @@ module_docs_order() {
     # 1) Empty iCloud ghost folders ("X 2", "X 3") at root — before baseline
     #    check so removed ghosts never show up as new entries
     bw_phase "Docs: ghost folders"
-    local ghosts; ghosts=$(find "$root" -mindepth 1 -maxdepth 1 -type d -name "* [2-9]" -empty 2>/dev/null)
+    local ghosts
+    if ! ghosts=$(find "$root" -mindepth 1 -maxdepth 1 -type d -name "* [2-9]" -empty 2>/dev/null); then
+        report_add WARN "Docs order: ghost folders could not be checked in $root"
+        return 0
+    fi
     if [ -n "$ghosts" ]; then
         local gcount; gcount=$(printf '%s\n' "$ghosts" | wc -l | tr -d ' ')
         if $DOCS_ORDER_GHOST_CLEAN && ! $DRY_RUN; then
@@ -5498,23 +5598,37 @@ module_docs_order() {
     # 2) Root strangers: top-level entries vs learned baseline
     bw_phase "Docs: root entries"
     local baseline="$MEISTER_DIR/docs_order.baseline"
-    local entries; entries=$(find "$root" -mindepth 1 -maxdepth 1 ! -name ".*" 2>/dev/null | sed 's|.*/||' | sort)
-    if [ ! -f "$baseline" ]; then
-        printf '%s\n' "$entries" > "$baseline"
-        log STEP "   Baseline learned: $(printf '%s\n' "$entries" | wc -l | tr -d ' ') top-level entries → $baseline"
+    local entries
+    if ! entries=$(docs_order_root_entries "$root"); then
+        report_add WARN "Docs order: root entries could not be checked in $root"
+        return 0
+    fi
+    if [ ! -e "$baseline" ]; then
+        if $DRY_RUN; then
+            report_add WOULD "Learn initial Documents baseline"
+        elif docs_order_write_baseline "$entries" "$baseline"; then
+            log STEP "   Baseline learned: $(printf '%s\n' "$entries" | awk 'NF {n++} END {print n+0}') top-level entries → $baseline"
+        else
+            report_add ERROR "Docs order: baseline could not be written"
+            return 0
+        fi
     else
-        local new_entries
-        new_entries=$(printf '%s\n' "$entries" | while IFS= read -r e; do
+        local new_entries="" e baseline_entries
+        if ! baseline_entries=$(cat "$baseline"); then
+            report_add WARN "Docs order: baseline could not be read; comparison skipped"
+            return 0
+        fi
+        while IFS= read -r e; do
             [ -z "$e" ] && continue
-            grep -qxF "$e" "$baseline" && continue
+            grep -qxF -- "$e" <<< "$baseline_entries" && continue
             [ -n "$DOCS_ORDER_KNOWN" ] && [[ "|$DOCS_ORDER_KNOWN|" == *"|$e|"* ]] && continue
-            printf '%s\n' "$e"
-        done)
+            new_entries="${new_entries}${new_entries:+$'\n'}$e"
+        done <<< "$entries"
         if [ -n "$new_entries" ]; then
             local ncount; ncount=$(printf '%s\n' "$new_entries" | wc -l | tr -d ' ')
             log WARN "   ${ncount} new top-level entries (not in baseline):"
             printf '%s\n' "$new_entries" | head -10 | while IFS= read -r e; do log STEP "     + $e"; done
-            log STEP "   Accept: delete $baseline (re-learn) or add to DOCS_ORDER_KNOWN"
+            log STEP "   Review entries before accepting a new baseline or adding names to DOCS_ORDER_KNOWN"
             report_add WARN "${ncount} new entries in $(basename "$root") root"
         else
             log STEP "   Root entries match baseline"
@@ -5525,7 +5639,10 @@ module_docs_order() {
     local inbox="$root/_Inbox"
     if [ -d "$inbox" ]; then
         local unsorted
-        unsorted=$(find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' ')
+        if ! unsorted=$(set -o pipefail; find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' '); then
+            report_add WARN "Docs order: _Inbox contents could not be checked"
+            return 0
+        fi
         if [ "${unsorted:-0}" -gt 0 ]; then
             log STEP "   _Inbox: ${unsorted} unsorted files"
             if command -v aufraum_hook_inbox >/dev/null 2>&1; then
@@ -5533,11 +5650,15 @@ module_docs_order() {
             fi
             if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
                 local days="${AUTOFIX_INBOX_DAYS:-14}"
-                local arch="$inbox/_Archive/$(date +%Y-%m)"
+                local arch
+                arch="$inbox/_Archive/$(date +%Y-%m)"
                 local moved=0
                 if $DRY_RUN; then
                     local would
-                    would=$(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' ')
+                    if ! would=$(set -o pipefail; find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' '); then
+                        report_add WARN "Docs order: _Inbox archive candidates could not be checked"
+                        return 0
+                    fi
                     log STEP "   [DRY-RUN] would archive ${would} files older than ${days}d → _Archive/"
                     report_add WOULD "_Inbox: archive ${would} files >${days}d"
                 else
@@ -5570,11 +5691,14 @@ module_docs_order() {
     if $DOCS_ORDER_DATALESS_SCAN; then
         bw_phase "Docs: dataless scan"
         local scan
-        scan=$(find "$root" -type f -not -path "*/.git/*" -print0 2>/dev/null \
-            | xargs -0 stat -f "%b%t%z%t%l%t%N" 2>/dev/null \
+        if ! scan=$(set -o pipefail; find "$root" -type f -not -path "*/.git/*" -print0 2>/dev/null \
+            | xargs -0 /bin/sh -c '[ "$#" -eq 0 ] || stat -f "%b%t%z%t%l%t%N" "$@"' sh 2>/dev/null \
             | awk -F'\t' '$3==65535 {print "STUB\t" $4}
                           $1==0 && $2>0 {n++; sz+=$2}
-                          END {printf "SUM\t%d\t%.1f\n", n, sz/1e9}')
+                          END {printf "SUM\t%d\t%.1f\n", n, sz/1e9}'); then
+            report_add WARN "Docs order: local file content could not be fully checked"
+            return 0
+        fi
         local stubs; stubs=$(printf '%s\n' "$scan" | awk -F'\t' '$1=="STUB" {print $2}')
         local dl_count; dl_count=$(printf '%s\n' "$scan" | awk -F'\t' '$1=="SUM" {print $2}')
         local dl_gb; dl_gb=$(printf '%s\n' "$scan" | awk -F'\t' '$1=="SUM" {print $3}')
@@ -10341,28 +10465,34 @@ fi
 
 # Always enabled by default; the offline Mail module never opens AufRaum.
 module_megasmart() {
-    [ "${MEGASMART_ENABLED:-true}" = "true" ] || { report_add OK "SmartInbox explicitly disabled"; return 0; }
-    local output rc=0 counts moved unavailable deferred unscanned
+    [ "${MEGASMART_ENABLED:-true}" = "true" ] || { report_add SUCCESS "SmartInbox explicitly disabled"; return 0; }
+    local output rc=0 counts moved unavailable deferred unscanned partial never_attempted
     output=$(node "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" run --maintenance --json) || rc=$?
     if [ "$rc" -ne 0 ]; then
         log WARN "SmartInbox nicht abgeschlossen (Apple FM / Mail prüfen)"
         report_add WARN "SmartInbox nicht abgeschlossen; Fehlerdetails siehe Ausgabe"
         return 0
     fi
-    counts=$(printf '%s' "$output" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="completed"; m=x["moved"]; u=x.get("unavailable",0); d=x.get("deferred",0); s=x.get("unscanned",0); assert all(type(v) is int and v>=0 for v in (m,u,d,s)); print(m,u,d,s)') || {
+    counts=$(printf '%s' "$output" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="completed"; m=x["moved"]; u=x.get("unavailable",0); d=x.get("deferred",0); s=x.get("unscannedThisRun",x.get("unscanned",0)); p=x.get("partialUnavailable",0); n=x.get("coverage",{}).get("neverAttempted",-1); assert all(type(v) is int and v>=0 for v in (m,u,d,s,p)); assert p<=u and type(n) is int and n>=-1; print(m,u,d,s,p,n)') || {
         report_add WARN "SmartInbox Ergebnis nicht bestätigt"; return 0;
     }
-    read -r moved unavailable deferred unscanned <<< "$counts"
+    read -r moved unavailable deferred unscanned partial never_attempted <<< "$counts"
     if [ "$moved" -gt 0 ]; then report_add FIX "SmartInbox: $moved Newsletter verifiziert in den Papierkorb verschoben"
-    elif [ "$unavailable" -eq 0 ] && [ "$deferred" -eq 0 ] && [ "$unscanned" -eq 0 ]; then report_add OK "SmartInbox: geprüft, keine freigegebene Verschiebung"; fi
+    elif [ "$unavailable" -eq 0 ] && [ "$deferred" -eq 0 ] && [ "$unscanned" -eq 0 ]; then report_add SUCCESS "SmartInbox: geprüft, keine freigegebene Verschiebung"; fi
     if [ "$unscanned" -gt 0 ]; then
-        report_add WARN "SmartInbox: $unscanned Nachrichten noch nicht durchgesehen; nächste Wartung setzt fort"
+        log STEP "SmartInbox: $unscanned Nachrichten in diesem Lauf nicht durchgesehen (Wartungsbudget); Fortsetzung gespeichert"
+    fi
+    if [ "$never_attempted" -ge 0 ]; then
+        log STEP "SmartInbox: im aktuellen Bestand $never_attempted Nachrichten unter aktueller Richtlinie noch nie durchlaufen; Durchlauf bedeutet keine vollständige Inhaltsprüfung"
     fi
     if [ "$deferred" -gt 0 ]; then
-        report_add WARN "SmartInbox: $deferred Modellprüfungen zurückgestellt; nächste Wartung setzt fort"
+        log STEP "SmartInbox: $deferred Modellprüfungen zurückgestellt (Wartungsbudget); geschützt bis zur Prüfung"
     fi
-    if [ "$unavailable" -gt 0 ]; then
-        report_add WARN "SmartInbox: $unavailable Inhalte lokal nicht vollständig; ungeklärt und unverändert behalten"
+    if [ "$partial" -gt 0 ]; then
+        report_add WARN "SmartInbox: $partial Nachrichten mit partieller lokaler Mail-Ablage nicht vollständig ausgewertet; ungeklärt und geschützt behalten"
+    fi
+    if [ "$unavailable" -gt "$partial" ]; then
+        report_add WARN "SmartInbox: $((unavailable - partial)) Inhalte lokal unlesbar oder unbestätigt; ungeklärt und unverändert behalten (inspect JOB für Diagnose)"
     fi
 }
 

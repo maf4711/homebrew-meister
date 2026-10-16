@@ -197,6 +197,9 @@ test('daily traversal caps body reads and resumes unavailable-only pages', async
   const first = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
   assert.equal(first.scanned, 500);
   assert.equal(first.unscanned, 12924);
+  assert.equal(first.coverage.attempted, 500);
+  assert.equal(first.coverage.neverAttempted, 12924);
+  assert.equal(first.coverage.unavailable, 500);
   assert.equal(first.previewComplete, false);
   assert.equal(first.hasMore, false); // The complete header inventory was discovered.
   assert.equal(first.nextPreviewMessageID, '501');
@@ -205,6 +208,10 @@ test('daily traversal caps body reads and resumes unavailable-only pages', async
   const second = await engine.preview('Fixture', 'INBOX', undefined, 'Trash');
   assert.equal(second.items[0].messageID, '501');
   assert.equal(second.nextPreviewMessageID, '1001');
+  assert.equal(second.unscanned, 12924); // Per-run count is not cumulative.
+  assert.equal(second.coverage.attempted, 1000);
+  assert.equal(second.coverage.neverAttempted, 12424);
+  assert.equal(second.coverage.unavailable, 1000);
 });
 
 test('preview deadline includes header discovery and does not read after expiry', async () => {

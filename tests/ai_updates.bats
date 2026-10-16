@@ -214,3 +214,155 @@ SH
   run ai_brew_owns_installed_app "$BATS_TEST_TMPDIR/Other.app" chatgpt
   [ "$status" = 1 ]
 }
+
+# Exercise the real JSON validation while replacing only platform/network tools.
+claude_desktop_fixture() {
+  CLAUDE_APP="$BATS_TEST_TMPDIR/Claude native.app"
+  mkdir -p "$CLAUDE_APP/Contents"
+  touch "$CLAUDE_APP/Contents/Info.plist"
+  CLAUDE_INSTALLED=2.37337.1
+  CLAUDE_FEED='{"currentRelease":"2.37337.1","releases":[{"version":"2.37337.1","updateTo":{"version":"2.37337.1"}}]}'
+  CLAUDE_SIGNATURE_STATUS=0
+  CLAUDE_NETWORK_STATUS=0
+  export CALLS="$BATS_TEST_TMPDIR/claude-calls"
+  touch "$CALLS"
+  /usr/libexec/PlistBuddy() {
+    [ "$3" = "$CLAUDE_APP/Contents/Info.plist" ] || return 1
+    case "$2" in
+      'Print :CFBundleIdentifier') echo com.anthropic.claudefordesktop ;;
+      'Print :CFBundleShortVersionString') printf '%s\n' "$CLAUDE_INSTALLED" ;;
+      *) return 1 ;;
+    esac
+  }
+  /usr/bin/codesign() {
+    printf 'codesign %s\n' "$*" >> "$CALLS"
+    return "$CLAUDE_SIGNATURE_STATUS"
+  }
+  /usr/bin/curl() {
+    printf 'curl %s\n' "$*" >> "$CALLS"
+    printf '%s' "$CLAUDE_FEED"
+    return "$CLAUDE_NETWORK_STATUS"
+  }
+  ai_update_attempt() { echo UNEXPECTED_MUTATING_UPDATER; return 1; }
+  brew() { [ "$*" = 'list --cask' ]; }
+}
+
+@test "native Claude current version is signature verified and checked without an updater" {
+  claude_desktop_fixture
+  run ai_check_claude_desktop "$CLAUDE_APP"
+  [ "$status" = 0 ]
+  [[ "$output" == *'SUCCESS AI Updates: Claude native.app 2.37337.1 current (Anthropic release feed; signature verified)'* ]]
+  [[ "$output" != *'UNEXPECTED_MUTATING_UPDATER'* ]]
+  grep -q -- '--verify --deep --strict' "$CALLS"
+  grep -Fq -- '=anchor apple generic and identifier "com.anthropic.claudefordesktop" and certificate leaf[subject.OU] = "Q6L2SF6YDW"' "$CALLS"
+  grep -q -- '--connect-timeout 10 --max-time 20 --max-filesize 1048576' "$CALLS"
+  grep -q '^curl --disable ' "$CALLS"
+  grep -Fq 'https://downloads.claude.ai/releases/darwin/universal/RELEASES.json' "$CALLS"
+  ! grep -Eq -- '--location|--insecure|--output|--upload-file|--data' "$CALLS"
+}
+
+@test "native Claude older or unrecognized newer versions require the app updater" {
+  claude_desktop_fixture
+  for CLAUDE_INSTALLED in 2.37336.0 2.37338.0; do
+    run ai_check_claude_desktop "$CLAUDE_APP"
+    [ "$status" = 1 ]
+    [[ "$output" == *"WARN AI Updates: Claude native.app $CLAUDE_INSTALLED differs from Anthropic current 2.37337.1; check for updates in the app"* ]]
+    [[ "$output" != *'SUCCESS'* ]]
+    [[ "$output" != *'UNEXPECTED_MUTATING_UPDATER'* ]]
+  done
+}
+
+@test "native Claude signature failure stops before network and never claims current" {
+  claude_desktop_fixture
+  CLAUDE_SIGNATURE_STATUS=1
+  run ai_check_claude_desktop "$CLAUDE_APP"
+  [ "$status" = 1 ]
+  [[ "$output" == *'WARN'*'Anthropic signature verification failed'* ]]
+  [[ "$output" != *'SUCCESS'* ]]
+  ! grep -q '^curl ' "$CALLS"
+}
+
+@test "native Claude offline feed cannot turn a cached or partial response into success" {
+  claude_desktop_fixture
+  CLAUDE_NETWORK_STATUS=28
+  run ai_check_claude_desktop "$CLAUDE_APP"
+  [ "$status" = 1 ]
+  [[ "$output" == *'WARN'*'Anthropic release feed unavailable'* ]]
+  [[ "$output" != *'SUCCESS'* ]]
+}
+
+@test "native Claude rejects malformed missing inconsistent and invalid release versions" {
+  claude_desktop_fixture
+  for CLAUDE_FEED in \
+    '<html>unavailable</html>' \
+    '[]' \
+    '{}' \
+    '{"currentRelease":"2.37337.1","releases":[]}' \
+    '{"currentRelease":"2.37337.1","releases":{}}' \
+    '{"currentRelease":"2.37337.1","releases":[null]}' \
+    '{"currentRelease":true,"releases":[]}' \
+    '{"currentRelease":"2.0.0","currentRelease":"2.37337.1","releases":[{"version":"2.37337.1","updateTo":{"version":"2.37337.1"}}]}' \
+    '{"currentRelease":"2.37337.1","releases":[{"version":"2.37336.1"}]}' \
+    '{"currentRelease":"2.37337.1","releases":[{"version":"2.37337.1","updateTo":{"version":"2.0.0"}}]}' \
+    '{"currentRelease":"2.37337.1<script>","releases":[{"version":"2.37337.1<script>"}]}' ; do
+    run ai_check_claude_desktop "$CLAUDE_APP"
+    [ "$status" = 1 ]
+    [[ "$output" == *'WARN'*'Anthropic release feed invalid'* ]]
+    [[ "$output" != *'SUCCESS'* ]]
+  done
+}
+
+@test "native Claude unreadable or malformed installed version cannot claim current" {
+  claude_desktop_fixture
+  for CLAUDE_INSTALLED in '' 2.37337 2.37337.1suffix; do
+    run ai_check_claude_desktop "$CLAUDE_APP"
+    [ "$status" = 1 ]
+    [[ "$output" == *'WARN'*'installed version unavailable or invalid'* ]]
+    [[ "$output" != *'SUCCESS'* ]]
+    ! grep -q '^curl ' "$CALLS"
+  done
+}
+
+@test "unmanaged apps routes native Claude through verified check and preserves other warnings" {
+  claude_desktop_fixture
+  OTHER_APP="$BATS_TEST_TMPDIR/ChatGPT.app"
+  mkdir -p "$OTHER_APP/Contents"
+  touch "$OTHER_APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy() {
+    if [ "$3" = "$CLAUDE_APP/Contents/Info.plist" ]; then
+      case "$2" in
+        'Print :CFBundleIdentifier') echo com.anthropic.claudefordesktop ;;
+        'Print :CFBundleShortVersionString') echo "$CLAUDE_INSTALLED" ;;
+      esac
+    elif [ "$3" = "$OTHER_APP/Contents/Info.plist" ] && [ "$2" = 'Print :CFBundleIdentifier' ]; then
+      echo com.openai.chat
+    else
+      return 1
+    fi
+  }
+  run ai_update_unmanaged_app "$CLAUDE_APP" ''
+  [ "$status" = 0 ]
+  [[ "$output" == *'SUCCESS AI Updates: Claude native.app 2.37337.1 current'* ]]
+  [[ "$output" != *'Claude native.app (com.anthropic.claudefordesktop) has no verified unattended updater'* ]]
+  run ai_update_unmanaged_app "$OTHER_APP" ''
+  [ "$status" = 1 ]
+  [[ "$output" == *'WARN AI Updates: ChatGPT.app (com.openai.chat) has no verified unattended updater; update in the app'* ]]
+}
+
+@test "Homebrew managed Claude bypasses native release checks" {
+  claude_desktop_fixture
+  ai_brew_owns_installed_app() { [ "$1" = "$CLAUDE_APP" ]; }
+  run ai_update_unmanaged_app "$CLAUDE_APP" claude
+  [ "$status" = 0 ]
+  [ ! -s "$CALLS" ]
+  [[ "$output" != *'WARN'* ]]
+}
+
+@test "native Claude dry run neither verifies nor contacts the vendor" {
+  claude_desktop_fixture
+  DRY_RUN=true
+  run ai_check_claude_desktop "$CLAUDE_APP"
+  [ "$status" = 0 ]
+  [ ! -s "$CALLS" ]
+  [[ "$output" != *'SUCCESS'* ]]
+}

@@ -24,3 +24,12 @@ test('maintenance budget and explicit full mode are opt-in parser flags',()=>{
  assert.equal(parse(['run','--maintenance','--full']).full,true);
  assert.equal(parse(['preview']).maintenance,undefined);
 });
+test('inspection is explicitly scoped to a saved job with bounded continuation', () => {
+ const id = 'a'.repeat(36);
+ assert.equal(parse(['inspect',id,'--limit','25','--offset','50']).command,'inspect');
+ assert.equal(parse(['inspect',id,'--dry-run']).command,'inspect');
+ assert.throws(()=>parse(['inspect']),/Job/);
+ assert.throws(()=>parse(['inspect',id,'--limit','101']),/Diagnose/);
+ assert.throws(()=>parse(['inspect',id,'--offset','-1']),/Wert/);
+ assert.throws(()=>parse(['run','--limit','25']),/inspect/);
+});

@@ -194,23 +194,91 @@ ai_brew_owns_installed_app() {
     return 1
 }
 
-# Native desktop installers do not expose a supported unattended updater.
+# Claude's native installation retains its updater; the public release feed
+# permits a read-only version check. Never migrate ownership or invoke an updater.
+ai_check_claude_desktop() {
+    local app="$1" label="${1##*/}" installed feed current
+    ${DRY_RUN:-false} && return 0
+    if ! timeout 30 /usr/bin/codesign --verify --deep --strict --test-requirement \
+        '=anchor apple generic and identifier "com.anthropic.claudefordesktop" and certificate leaf[subject.OU] = "Q6L2SF6YDW"' \
+        "$app" >/dev/null 2>&1; then
+        report_add WARN "AI Updates: $label Anthropic signature verification failed; current version unverified"
+        return 1
+    fi
+    if ! installed=$(timeout 10 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null) ||
+        [[ ! "$installed" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){2}$ ]]; then
+        report_add WARN "AI Updates: $label installed version unavailable or invalid; check for updates in the app"
+        return 1
+    fi
+    if ! feed=$(timeout 25 /usr/bin/curl --disable --fail --silent --show-error --proto '=https' \
+        --connect-timeout 10 --max-time 20 --max-filesize 1048576 \
+        'https://downloads.claude.ai/releases/darwin/universal/RELEASES.json' 2>/dev/null); then
+        report_add WARN "AI Updates: $label Anthropic release feed unavailable; current version unverified"
+        return 1
+    fi
+    # Require a valid current release and its matching update record. Unexpected
+    # schema, duplicate JSON keys or partial responses must never mean current.
+    if ! current=$(printf '%s' "$feed" | timeout 10 python3 -c '
+import json, re, sys
+def unique_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+try:
+    feed = json.load(sys.stdin, object_pairs_hook=unique_keys)
+    if not isinstance(feed, dict):
+        raise ValueError("invalid feed")
+    current = feed.get("currentRelease")
+    releases = feed.get("releases")
+    if not isinstance(current, str) or not re.fullmatch(r"[0-9]{1,9}(\.[0-9]{1,9}){2}", current):
+        raise ValueError("invalid version")
+    if not isinstance(releases, list) or not all(isinstance(item, dict) for item in releases):
+        raise ValueError("invalid releases")
+    if not any(item.get("version") == current and isinstance(item.get("updateTo"), dict)
+               and item["updateTo"].get("version") == current for item in releases):
+        raise ValueError("missing current release")
+    print(current)
+except (ValueError, TypeError):
+    sys.exit(1)
+' 2>/dev/null); then
+        report_add WARN "AI Updates: $label Anthropic release feed invalid; current version unverified"
+        return 1
+    fi
+    if [ "$installed" != "$current" ]; then
+        report_add WARN "AI Updates: $label $installed differs from Anthropic current $current; check for updates in the app"
+        return 1
+    fi
+    report_add SUCCESS "AI Updates: $label $installed current (Anthropic release feed; signature verified)"
+}
+
 # Identify bundles, not display names (a renamed Codex app can be ChatGPT.app).
+ai_update_unmanaged_app() {
+    local app="$1" installed="$2" bundle
+    ${DRY_RUN:-false} && return 0
+    [ -f "$app/Contents/Info.plist" ] || return 0
+    bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null) || return 0
+    case "$bundle" in
+        com.anthropic.claudefordesktop|com.openai.chat|com.openai.codex|com.electron.ollama|com.todesktop.230313mzl4w4u92) : ;;
+        *) return 0 ;;
+    esac
+    ai_brew_owns_installed_app "$app" "$installed" && return 0
+    if [ "$bundle" = com.anthropic.claudefordesktop ]; then
+        ai_check_claude_desktop "$app"
+        return $?
+    fi
+    report_add WARN "AI Updates: ${app##*/} ($bundle) has no verified unattended updater; update in the app"
+    return 1
+}
+
 ai_update_unmanaged_apps() {
-    local app bundle installed failed=0
+    local app installed failed=0
     ${DRY_RUN:-false} && return 0
     installed=$(timeout 60 brew list --cask 2>/dev/null) || installed=""
     for app in /Applications/*.app "$HOME"/Applications/*.app; do
-        [ -f "$app/Contents/Info.plist" ] || continue
-        bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null) || continue
-        case "$bundle" in
-            com.anthropic.claudefordesktop|com.openai.chat|com.openai.codex|com.electron.ollama|com.todesktop.230313mzl4w4u92) : ;;
-            *) continue ;;
-        esac
-        if ! ai_brew_owns_installed_app "$app" "$installed"; then
-            report_add WARN "AI Updates: ${app##*/} ($bundle) has no verified unattended updater; update in the app"
-            failed=1
-        fi
+        ai_update_unmanaged_app "$app" "$installed" || failed=1
     done
     return "$failed"
 }
