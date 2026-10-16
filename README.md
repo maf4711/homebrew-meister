@@ -1,10 +1,5 @@
 # Meister
 
-SmartInbox is now a default maintenance module: local Apple Foundation Models
-classifies old mail before verified trash moves. `MeisterAI -n` remains a plan
-only; `MeisterAI megasmart scan` is the fast read-only header scan.
-See [Mail CLI details](docs/MEGASMART.md) for prerequisites, commands and safeguards.
-
 **macOS Maintenance, Self-Healing & Dotfiles Sync**
 
 One command to keep your Mac healthy, your configs synced, and your network monitored.
@@ -457,5 +452,4 @@ check, including deep runs. AI clients are still checked through their owners.
 The formula stores the internal runtime in `libexec`; direct source checkout
 execution and Homebrew's sandboxed formula tests do not update Homebrew.
 
-Recap: Daily starts reuse a successful check for 12 hours; deep/all refresh once;
-SmartInbox caps daily traversal and continues unfinished work at the next run.
+Recap: Daily starts reuse a successful check for 12 hours; deep/all refresh once.

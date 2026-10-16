@@ -6,7 +6,7 @@ cd "$ROOT"
 
 for tool in shellcheck bats python3 node; do
   if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "ERROR: $tool is required. Install shellcheck, bats-core and python3 before running checks." >&2
+    echo "ERROR: $tool is required. Install shellcheck, bats-core, python3 and node before running checks." >&2
     exit 1
   fi
 done
@@ -24,9 +24,6 @@ bash scripts/sync-twins.sh --check
 
 echo "=== bats ==="
 bats tests/
-
-echo "=== local Mail CLI tests ==="
-node --test tests/*mail*.test.mjs
 
 echo "=== Homebrew startup tests ==="
 python3 -m unittest discover -s tests -p test_startup_update.py

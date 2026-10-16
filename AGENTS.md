@@ -98,8 +98,7 @@ MeisterAI autofix       # nur deterministische Fixes
 meister ai / meister autofix   # gleich (nach Sync)
 ```
 
-Fixes: alte brew bottles, orphan LaunchDaemons, git push (clean), Firewall on,
-Time Machine Settings öffnen, _Inbox Archive (>N Tage).
+Fixes: alte brew bottles, orphan LaunchDaemons, git push (clean), Firewall on.
 
 ## v6.13 lib layout + quality gate
 

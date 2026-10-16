@@ -45,7 +45,7 @@ struct MaintenanceView: View {
                         ActionCard(title: "AI + Autofix", detail: "Echte Fixes, dann Rest-Diagnose", systemImage: "brain.head.profile", accent: .green) {
                             app.runCommand(["ai"])
                         }
-                        ActionCard(title: "Autofix only", detail: "Bottles, Orphans, Git-Push, FW, Inbox", systemImage: "wand.and.stars") {
+                        ActionCard(title: "Autofix only", detail: "Bottles, Orphans, Git-Push, FW", systemImage: "wand.and.stars") {
                             app.runCommand(["autofix"])
                         }
                         ActionCard(title: "Selftest", detail: "CLI Smoke-Tests", systemImage: "checkmark.seal.fill") {

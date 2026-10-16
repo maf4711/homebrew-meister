@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterAI - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.39
+# Version: 6.40
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -44,7 +44,6 @@
 # NEW in v6.20 — close daily-runner loops (MeisterAI is the product):
 #  - Git: GIT_AUTO_PUSH=false stops Autofix push (not only the Git module);
 #    .meister-nopush / git config meister.nopush honored in Autofix
-#  - AufRaum: _Inbox WARN runs apply --dry (live only if AUFRAUM_APPLY=true)
 #  - LaunchAgent -I: daily MeisterAI --auto -q + weekly --deep -q;
 #    retires legacy com.meister.maintenance (meister2026.sh)
 # NEW in v6.19 — brew upgrade no longer looks frozen / hangs on GUI casks:
@@ -124,8 +123,7 @@
 #
 # NEW in v6.7 — diagnose → real autofix (no fake AI shell):
 #  - MeisterAI ai / autofix: deterministic fixes for known WARNs
-#      old brew bottles, orphan LaunchDaemons, unpushed git, firewall,
-#      _Inbox archive
+#      old brew bottles, orphan LaunchDaemons, unpushed git, firewall
 #  - AI text only for remaining issues; prompts list real MeisterAI cmds
 #  - module_brew_age / launchd_orphans can apply fixes (not warn-only)
 #
@@ -265,8 +263,8 @@
 # NEW in v5.21:
 #  - Docs Order: new module module_docs_order — order check for ~/Documents:
 #    root strangers (unknown top-level entries), empty iCloud ghost folders
-#    ("X 2"/"X 3", cleanup config-gated), corrupt stubs (65535 links), unsorted
-#    _Inbox files, dataless stats (content only in iCloud → backup warning).
+#    ("X 2"/"X 3", cleanup config-gated), corrupt stubs (65535 links),
+#    dataless stats (content only in iCloud → backup warning).
 #    Config: DOCS_ORDER_* in ~/.meister/config
 #
 # NEW in v5.20:
@@ -403,16 +401,6 @@ _meister_resolve_lib() {
     return 1
 }
 MEISTER_LIB_DIR="$(_meister_resolve_lib || true)"
-# Mail commands own their lifecycle: no maintenance, sudo, GUI or daemon startup.
-case "${1:-}" in
-    megasmart|smartinbox)
-        shift
-        [ -f "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" ] || { echo "Megasmart CLI files missing" >&2; exit 69; }
-        command -v node >/dev/null 2>&1 || { echo "Megasmart requires Node 22.13+" >&2; exit 69; }
-        export MEISTER_DIR
-        exec node "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" "$@"
-        ;;
-esac
 MEISTER_LIB_LOADED=false
 if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
@@ -442,8 +430,6 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/homebrew_share.sh" ] && . "$MEISTER_LIB_DIR/core/homebrew_share.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/git_push_policy.sh" ] && . "$MEISTER_LIB_DIR/core/git_push_policy.sh"
-    # shellcheck source=/dev/null
-    [ -f "$MEISTER_LIB_DIR/core/aufraum_hook.sh" ] && . "$MEISTER_LIB_DIR/core/aufraum_hook.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/launchagent_keepcurrent.sh" ] && . "$MEISTER_LIB_DIR/core/launchagent_keepcurrent.sh"
     # shellcheck source=/dev/null
@@ -563,7 +549,6 @@ SELFHEAL_PERF_AUTO=true            # Auto-apply performance optimizations
 # Git Repo Management (via -G Flag enabled)
 GIT_AUTO_PUSH=false                         # enable in config if wanted
 AUTOFIX_GIT_PUSH=true                       # Autofix push still requires GIT_AUTO_PUSH=true
-AUFRAUM_APPLY=false                         # Inbox: dry-run only unless true
 GIT_REPO_SEARCH_PATHS="$HOME/Documents $HOME/Developer"  # Search paths for repos
 GIT_REPO_MAXDEPTH=5                         # Max depth for repo search
 # GIT_BACKUP_DIR/RETENTION/EXCLUDE removed (v0.09) - GitHub is the backup
@@ -600,9 +585,9 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL AUTOFIX_INBOX_ARCHIVE UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH AUFRAUM_APPLY DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
-    _NUM_KEYS=" AUTOFIX_INBOX_DAYS BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
-    _STR_KEYS=" FM_HEAL_MODEL FM_DIAGNOSE_MODEL RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP AUFRAUM_OPERATOR "
+    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
+    _NUM_KEYS=" BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
+    _STR_KEYS=" FM_HEAL_MODEL FM_DIAGNOSE_MODEL RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP "
 
     while IFS='=' read -r key value; do
         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
@@ -5686,59 +5671,7 @@ module_docs_order() {
         fi
     fi
 
-    # 3) _Inbox: unsorted files — autofix archives files older than AUTOFIX_INBOX_DAYS
-    local inbox="$root/_Inbox"
-    if [ -d "$inbox" ]; then
-        local unsorted
-        if ! unsorted=$(set -o pipefail; find "$inbox" -type f ! -name ".*" ! -name "_HIER*" 2>/dev/null | wc -l | tr -d ' '); then
-            report_add WARN "Docs order: _Inbox contents could not be checked"
-            return 0
-        fi
-        if [ "${unsorted:-0}" -gt 0 ]; then
-            log STEP "   _Inbox: ${unsorted} unsorted files"
-            if command -v aufraum_hook_inbox >/dev/null 2>&1; then
-                aufraum_hook_inbox "$inbox" "$unsorted"
-            fi
-            if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
-                local days="${AUTOFIX_INBOX_DAYS:-14}"
-                local arch
-                arch="$inbox/_Archive/$(date +%Y-%m)"
-                local moved=0
-                if $DRY_RUN; then
-                    local would
-                    if ! would=$(set -o pipefail; find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' '); then
-                        report_add WARN "Docs order: _Inbox archive candidates could not be checked"
-                        return 0
-                    fi
-                    log STEP "   [DRY-RUN] would archive ${would} files older than ${days}d → _Archive/"
-                    report_add WOULD "_Inbox: archive ${would} files >${days}d"
-                else
-                    mkdir -p "$arch"
-                    while IFS= read -r f; do
-                        [ -f "$f" ] || continue
-                        mv "$f" "$arch/" 2>/dev/null && moved=$((moved + 1))
-                    done < <(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null)
-                    if [ "$moved" -gt 0 ]; then
-                        log FIX "   Archived ${moved} _Inbox files (older than ${days}d) → $arch"
-                        report_add FIX "_Inbox: archived ${moved} files (>${days}d)"
-                    else
-                        log STEP "   No _Inbox files older than ${days}d to archive (${unsorted} newer remain)"
-                        if [ "${AUFRAUM_APPLY:-false}" = true ]; then
-                            report_add WARN "_Inbox: ${unsorted} unsorted files (all <${days}d)"
-                        else
-                            log STEP "   _Inbox: ${unsorted} files <${days}d (AufRaum apply off — not scored)"
-                        fi
-                    fi
-                fi
-            else
-                log STEP "   _Inbox: ${unsorted} unsorted (archive autofix off)"
-            fi
-        else
-            log STEP "   _Inbox empty"
-        fi
-    fi
-
-    # 4) Full-tree pass: dataless files (content only in iCloud) + corrupt stubs (65535 links)
+    # 3) Full-tree pass: dataless files (content only in iCloud) + corrupt stubs (65535 links)
     if $DOCS_ORDER_DATALESS_SCAN; then
         bw_phase "Docs: dataless scan"
         local scan
@@ -8922,36 +8855,6 @@ autofix_known_issues() {
         log STEP "   Git push skipped (GIT_AUTO_PUSH=${GIT_AUTO_PUSH:-false})"
     fi
 
-    # 6) _Inbox archive (Documents)
-    if [ "${AUTOFIX_INBOX_ARCHIVE:-true}" = "true" ]; then
-        local root="${DOCS_ORDER_ROOT:-$HOME/Documents}"
-        local inbox="$root/_Inbox"
-        local days="${AUTOFIX_INBOX_DAYS:-14}"
-        if [ -d "$inbox" ]; then
-            local arch="$inbox/_Archive/$(date +%Y-%m)"
-            local moved=0
-            if $DRY_RUN; then
-                local would
-                would=$(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null | wc -l | tr -d ' ')
-                log STEP "   [DRY-RUN] would archive ${would} _Inbox files >${days}d"
-                report_add WOULD "would archive ${would} _Inbox files >${days}d"
-            else
-                mkdir -p "$arch"
-                while IFS= read -r f; do
-                    [ -f "$f" ] || continue
-                    mv "$f" "$arch/" 2>/dev/null && moved=$((moved + 1))
-                done < <(find "$inbox" -maxdepth 1 -type f ! -name ".*" -mtime +"$days" 2>/dev/null)
-                if [ "$moved" -gt 0 ]; then
-                    log FIX "   Archived $moved _Inbox files → $arch"
-                    report_add FIX "   Archived $moved _Inbox files → $arch"
-                    fix_count=$((fix_count + 1))
-                else
-                    log STEP "   _Inbox: nothing older than ${days}d to archive"
-                fi
-            fi
-        fi
-    fi
-
     echo ""
     if $DRY_RUN; then
         echo "  Autofix preview: ${#REPORT_WOULD_FIX[@]} proposed · no repairs executed"
@@ -10187,7 +10090,7 @@ TOOLS:
   MeisterAI ai usage     Was hat Apple Intelligence / Ollama wann gemacht?
   MeisterAI ai-log       Alias für ai usage
   MeisterAI ai --diagnose-only   AI only (no autofix)
-  MeisterAI autofix      Deterministic fixes (bottles, orphans, git push, FW, inbox)
+  MeisterAI autofix      Deterministic fixes (bottles, orphans, git push, FW)
 
 SECURITY:
   MeisterAI pkg <file>   Inspect .pkg BEFORE install: signature, payload, scripts
@@ -10252,6 +10155,13 @@ HELPEOF
     \?) log ERROR "Unknown option: -$OPTARG"; exit 1 ;;
   esac
 done
+
+# Reject unhandled commands before auto-detection or any maintenance side effects.
+shift "$((OPTIND - 1))"
+if [ "$#" -gt 0 ]; then
+    printf '[ERROR] Unknown command or argument: %s (see MeisterAI -h)\n' "$1" >&2
+    exit 64
+fi
 
 MANUAL_FLAGS_SET=false
 $CLEAN_XCODE && MANUAL_FLAGS_SET=true
@@ -10483,7 +10393,7 @@ module_in_profile() {
     case "${RUN_PROFILE:-auto}" in
         quick)
             case "$name" in
-                SmartInbox|AI\ Updates|Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Time\ Machine)
+                AI\ Updates|Healer|Homebrew|App\ Store|macOS\ System|Cleanup|Security\ Suite|Broken\ Symlinks|Sleep\ Blockers|Time\ Machine)
                     return 0 ;;
                 *) return 1 ;;
             esac
@@ -10513,39 +10423,6 @@ module_in_profile() {
 }
 
 fi
-
-# Always enabled by default; the offline Mail module never opens AufRaum.
-module_megasmart() {
-    [ "${MEGASMART_ENABLED:-true}" = "true" ] || { report_add SUCCESS "SmartInbox explicitly disabled"; return 0; }
-    local output rc=0 counts moved unavailable deferred unscanned partial never_attempted
-    output=$(node "${MEISTER_LIB_DIR}/../scripts/megasmart.mjs" run --maintenance --json) || rc=$?
-    if [ "$rc" -ne 0 ]; then
-        log WARN "SmartInbox nicht abgeschlossen (Apple FM / Mail prüfen)"
-        report_add WARN "SmartInbox nicht abgeschlossen; Fehlerdetails siehe Ausgabe"
-        return 0
-    fi
-    counts=$(printf '%s' "$output" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="completed"; m=x["moved"]; u=x.get("unavailable",0); d=x.get("deferred",0); s=x.get("unscannedThisRun",x.get("unscanned",0)); p=x.get("partialUnavailable",0); n=x.get("coverage",{}).get("neverAttempted",-1); assert all(type(v) is int and v>=0 for v in (m,u,d,s,p)); assert p<=u and type(n) is int and n>=-1; print(m,u,d,s,p,n)') || {
-        report_add WARN "SmartInbox Ergebnis nicht bestätigt"; return 0;
-    }
-    read -r moved unavailable deferred unscanned partial never_attempted <<< "$counts"
-    if [ "$moved" -gt 0 ]; then report_add FIX "SmartInbox: $moved Newsletter verifiziert in den Papierkorb verschoben"
-    elif [ "$unavailable" -eq 0 ] && [ "$deferred" -eq 0 ] && [ "$unscanned" -eq 0 ]; then report_add SUCCESS "SmartInbox: geprüft, keine freigegebene Verschiebung"; fi
-    if [ "$unscanned" -gt 0 ]; then
-        log STEP "SmartInbox: $unscanned Nachrichten in diesem Lauf nicht durchgesehen (Wartungsbudget); Fortsetzung gespeichert"
-    fi
-    if [ "$never_attempted" -ge 0 ]; then
-        log STEP "SmartInbox: im aktuellen Bestand $never_attempted Nachrichten unter aktueller Richtlinie noch nie durchlaufen; Durchlauf bedeutet keine vollständige Inhaltsprüfung"
-    fi
-    if [ "$deferred" -gt 0 ]; then
-        log STEP "SmartInbox: $deferred Modellprüfungen zurückgestellt (Wartungsbudget); geschützt bis zur Prüfung"
-    fi
-    if [ "$partial" -gt 0 ]; then
-        report_add WARN "SmartInbox: $partial Nachrichten mit partieller lokaler Mail-Ablage nicht vollständig ausgewertet; ungeklärt und geschützt behalten"
-    fi
-    if [ "$unavailable" -gt "$partial" ]; then
-        report_add WARN "SmartInbox: $((unavailable - partial)) Inhalte lokal unlesbar oder unbestätigt; ungeklärt und unverändert behalten (inspect JOB für Diagnose)"
-    fi
-}
 
 run_module_if() {
     local name="$1" func="$2"
@@ -10603,9 +10480,6 @@ if ! $INTERRUPTED; then
         report_add ERROR "AI Updates: updater module missing; reinstall Meister"
     fi
 fi
-
-# Local Mail is independent of Internet availability and runs before network maintenance.
-run_module_if "SmartInbox" module_megasmart
 
 if $DRY_RUN || check_net; then
     # v6.8: always-on upkeep — deterministic autofix every run

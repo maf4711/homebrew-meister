@@ -1,5 +1,7 @@
 # MeisterAI: Start und SmartInbox optimieren
 
+> Historical v6.37 measurements. Inbox cleanup was removed in v6.40; the Mail commands and benchmark referenced below no longer exist.
+
 Historischer Prüfstand vom 4. Oktober 2026, vor dem Release v6.37.
 Die Quellen-Hashes beziehen sich auf diesen Entwicklungsstand.
 

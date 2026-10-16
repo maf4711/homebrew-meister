@@ -30,9 +30,6 @@ SELFHEAL_GIT_AUTOCOMMIT=false
 GIT_AUTO_PUSH=false
 # Autofix git push is also gated by GIT_AUTO_PUSH (both must be true).
 # AUTOFIX_GIT_PUSH=true
-# AufRaum: _Inbox dry-run during docs-order. Live sort only if:
-# AUFRAUM_APPLY=false
-# AUFRAUM_OPERATOR=$HOME/.grok/skills/aufraum/scripts/aufraum.py
 
 # AI transparency (false = less terminal noise)
 # AI_TRACE=true
@@ -74,7 +71,3 @@ MEISTER_OLLAMA_NUM_PREDICT=1024
 
 # Bounded diagnostics need the final answer, not an internal reasoning trace.
 MEISTER_OLLAMA_THINK="false"
-
-# SmartInbox runs on every maintenance profile by default, using local Apple FM.
-# Keeps protected/uncertain mail; moves approved newsletters older than seven days.
-MEGASMART_ENABLED=true

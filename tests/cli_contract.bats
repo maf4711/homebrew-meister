@@ -22,7 +22,7 @@ PY
 import json,os,pathlib,subprocess,sys
 script=pathlib.Path(sys.argv[1]).resolve(); fixture=pathlib.Path(sys.argv[2])/'fixture'
 state=fixture/'.meister'; state.mkdir(parents=True)
-keys=['AUTOFIX_FIREWALL','AUTOFIX_OLD_BOTTLES','AUTOFIX_ORPHAN_LAUNCHD','AUTOFIX_GIT_PUSH','GIT_AUTO_PUSH','AUTOFIX_INBOX_ARCHIVE']
+keys=['AUTOFIX_FIREWALL','AUTOFIX_OLD_BOTTLES','AUTOFIX_ORPHAN_LAUNCHD','AUTOFIX_GIT_PUSH','GIT_AUTO_PUSH']
 (state/'config').write_text(''.join(f'{k}=false\n' for k in keys))
 bindir=fixture/'bin'; bindir.mkdir()
 # A missing AI runtime is an expected, safe no-model fixture; never compile.
@@ -72,7 +72,7 @@ import json,os,pathlib,subprocess,sys
 script=pathlib.Path(sys.argv[1]).resolve(); fixture=pathlib.Path(sys.argv[2])/'fixture'
 state=fixture/'.meister'; state.mkdir(parents=True)
 bindir=fixture/'bin'; bindir.mkdir()
-for command in ['brew','sudo','xcrun','mas','mdimport','purge','osascript','terminal-notifier','git']:
+for command in ['brew','sudo','xcrun','mas','mdimport','purge','osascript','terminal-notifier','git','node']:
  stub=bindir/command
  stub.write_text('#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$MEISTER_DIR/unexpected"\nexit 99\n')
  stub.chmod(0o755)
@@ -86,8 +86,35 @@ for args in [['--auto'],['--quick'],['--deep'],['-a']]:
  assert r['score'] is None and r['freed_bytes'] is None
  assert r['fix']==r['verified_repair_count']==0 and r['fixes']==r['would_fix']==[]
  assert 'AI Updates' in r['planned_modules'], r
+ assert 'SmartInbox' not in r['planned_modules'], r
  assert r['planned_modules'] and all(m['status']=='PLAN' for m in r['modules'])
 assert not (state/'history.log').exists()
+PY
+}
+
+@test "removed and unknown commands fail before maintenance or Mail access" {
+  python3 - "$BATS_TEST_DIRNAME/.." "$BATS_TEST_TMPDIR" <<'PY'
+import os,pathlib,subprocess,sys
+repo=pathlib.Path(sys.argv[1]).resolve(); root=pathlib.Path(sys.argv[2]); state=root/'state'; state.mkdir()
+(state/'last.json').write_text('{"prior":"report"}\n')
+(state/'history.log').write_text('prior history\n')
+(state/'meister.lock').write_text(str(os.getpid()))
+bindir=root/'bin'; bindir.mkdir()
+for command in ['node','osascript','sudo','brew','xcrun','mas','git']:
+ stub=bindir/command
+ stub.write_text('#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$MEISTER_DIR/unexpected"\nexit 99\n')
+ stub.chmod(0o755)
+env={**os.environ,'MEISTER_DIR':str(state),'MEISTER_LIB':str(repo/'lib'),'PATH':f'{bindir}:{os.environ["PATH"]}'}
+for script in ['MeisterAI.sh','meister.sh']:
+ for args in [['megasmart','scan'],['smartinbox','status'],['unknown-command','--dry-run'],['-n','unknown-command']]:
+  p=subprocess.run(['/bin/bash',str(repo/script),*args],env=env,capture_output=True,text=True,timeout=15)
+  assert p.returncode==64,(script,args,p.stdout,p.stderr)
+  assert 'Unknown command or argument:' in p.stderr,(p.stdout,p.stderr)
+  assert not (state/'unexpected').exists()
+  assert (state/'last.json').read_text()=='{"prior":"report"}\n'
+  assert (state/'history.log').read_text()=='prior history\n'
+  assert (state/'meister.lock').read_text()==str(os.getpid())
+assert not (state/'runs').exists() and not (state/'mail').exists()
 PY
 }
 

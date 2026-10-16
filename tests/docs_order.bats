@@ -109,15 +109,36 @@ setup() {
   [[ "$output" != *'No ghost folders'* ]]
 }
 
-@test "failed inbox scan cannot claim inbox empty" {
+@test "docs order preserves inbox files even with legacy cleanup settings" {
   mkdir "$DOCS_ORDER_ROOT/_Inbox"
-  find() {
-    case " $* " in *'/Documents/_Inbox -type f '*) return 1 ;; esac
-    command find "$@"
-  }
+  printf 'keep this content\n' > "$DOCS_ORDER_ROOT/_Inbox/old.txt"
+  touch -t 202001010000 "$DOCS_ORDER_ROOT/_Inbox/old.txt"
+  AUTOFIX_INBOX_ARCHIVE=true
+  AUTOFIX_INBOX_DAYS=1
+  AUFRAUM_APPLY=true
+  aufraum_hook_inbox() { touch "$MEISTER_DIR/hook-called"; }
   run module_docs_order
-  [[ "$output" == *'WARN Docs order: _Inbox contents could not be checked'* ]]
-  [[ "$output" != *'_Inbox empty'* ]]
+  [ "$status" = 0 ]
+  [ "$(cat "$DOCS_ORDER_ROOT/_Inbox/old.txt")" = 'keep this content' ]
+  [ ! -e "$DOCS_ORDER_ROOT/_Inbox/_Archive" ]
+  [ ! -e "$MEISTER_DIR/hook-called" ]
+}
+
+@test "autofix ignores legacy inbox archive configuration" {
+  eval "$(awk '$0=="autofix_known_issues() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
+  mkdir "$DOCS_ORDER_ROOT/_Inbox"
+  printf 'keep this content\n' > "$DOCS_ORDER_ROOT/_Inbox/old.txt"
+  touch -t 202001010000 "$DOCS_ORDER_ROOT/_Inbox/old.txt"
+  AUTOFIX_INBOX_ARCHIVE=true
+  AUTOFIX_INBOX_DAYS=1
+  AUTOFIX_FIREWALL=false
+  AUTOFIX_OLD_BOTTLES=false
+  AUTOFIX_ORPHAN_LAUNCHD=false
+  git_push_enabled() { return 1; }
+  run autofix_known_issues
+  [ "$status" = 0 ]
+  [ "$(cat "$DOCS_ORDER_ROOT/_Inbox/old.txt")" = 'keep this content' ]
+  [ ! -e "$DOCS_ORDER_ROOT/_Inbox/_Archive" ]
 }
 
 @test "failed dataless scan cannot claim all content local" {
