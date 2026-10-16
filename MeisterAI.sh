@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterAI - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.40
+# Version: 6.41
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -917,6 +917,13 @@ brew_upgrade_each() {
         fi
         rc=$?
         elapsed=$(( $(date +%s) - start ))
+        if [ "$rc" -ne 0 ]; then
+            if command -v brew_record_upgrade_failure >/dev/null 2>&1; then
+                brew_record_upgrade_failure "$kind" "$name" "$rc" "${RUN_VERBOSE_OUT:-}"
+            else
+                report_add WARN "Homebrew: $name upgrade failed (exit $rc)"
+            fi
+        fi
         if [ -n "${RUN_VERBOSE_OUT:-}" ] && [ -f "$RUN_VERBOSE_OUT" ]; then
             cat "$RUN_VERBOSE_OUT" >> "$combined" 2>/dev/null || true
             rm -f "$RUN_VERBOSE_OUT"
@@ -2208,18 +2215,26 @@ module_homebrew() {
     fi
     rm -f "$cask_out"
 
-    # Fix #142: Post-Upgrade Cask-Verifikation — split deprecated/disabled from auto-update
-    local still_outdated_casks
+    # Remaining outdated packages are unresolved updates, not proof of auto-update.
+    local still_outdated_casks cask_verify_rc=0
     if $greedy; then
-        still_outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
+        still_outdated_casks=$(brew outdated --cask --greedy 2>/dev/null) || cask_verify_rc=$?
     else
-        still_outdated_casks=$(brew outdated --cask 2>/dev/null)
+        still_outdated_casks=$(brew outdated --cask 2>/dev/null) || cask_verify_rc=$?
+    fi
+    if [ "$cask_verify_rc" -ne 0 ]; then
+        report_add WARN "Homebrew: cask update verification failed (exit $cask_verify_rc)"
+        still_outdated_casks=""
     fi
     if [ -n "$still_outdated_casks" ]; then
         local dead_casks="" live_casks=""
         while IFS= read -r line; do
             local name="${line%% *}"
             [ -z "$name" ] && continue
+            if command -v brew_cask_is_skipped >/dev/null 2>&1 && brew_cask_is_skipped "$name"; then
+                log STEP "   $name remains outdated (explicitly skipped by cask policy)"
+                continue
+            fi
             if brew info --cask "$name" 2>&1 | grep -qE 'deprecated!|disabled!'; then
                 dead_casks+="$line"$'\n'
             else
@@ -2229,7 +2244,8 @@ module_homebrew() {
 
         if [ -n "$live_casks" ]; then
             local live_count=$(echo -n "$live_casks" | grep -c '^')
-            log STEP "   ${live_count} casks still outdated (auto-update apps, normal)"
+            report_add WARN "${live_count} casks still outdated after upgrade"
+            log WARN "   ${live_count} casks still outdated; inspect update failure logs"
             echo -n "$live_casks" | while IFS= read -r line; do
                 log STEP "     - $line"
             done
@@ -2257,7 +2273,8 @@ module_homebrew() {
     fi
 
     log INFO "   Cleanup..."
-    run_verbose brew cleanup -s
+    # Preserve current-version downloads so a failed update can retry from cache.
+    run_verbose brew cleanup
     report_add SUCCESS "Homebrew Cleanup finished"
 
     # Doctor-Check mit Auto-Fix (Fix #22)
@@ -2304,7 +2321,7 @@ module_homebrew() {
         if echo "$doctor_output" | grep -qi "broken symlinks"; then
             log HEAL "   Auto-Fix: Broken symlinks cleaned up..."
             did_autofix=true
-            brew cleanup -s 2>/dev/null
+            brew cleanup 2>/dev/null
             report_add FIX "brew cleanup: Broken Symlinks cleaned up"
         fi
 
@@ -3317,13 +3334,23 @@ module_cleanup() {
 
     if $CLEAN_CACHES; then
         local cache_size=$(du -sh "$HOME/Library/Caches" 2>/dev/null | awk '{print $1}')
-        log INFO "   Deleting User Caches ($cache_size)..."
-        run_or_dry rm -rf "$HOME/Library/Caches"/*
-        report_add FIX "Cleaned User Caches ($cache_size)"
+        log INFO "   Cleaning User Caches ($cache_size total; keeping Homebrew downloads)..."
+        if cleanup_cache_root "$HOME/Library/Caches"; then
+            report_add FIX "Cleaned User Caches (Homebrew downloads preserved)"
+        else
+            report_add WARN "User cache cleanup incomplete; Homebrew downloads preserved"
+        fi
         if $NEEDS_SUDO; then
             log INFO "   Deleting System Caches (sudo)..."
-            run_or_dry sudo -n rm -rf /Library/Caches/* /System/Library/Caches/* /private/var/tmp/*
-            report_add FIX "Cleaned System Caches"
+            local cache_failed=false cache_root
+            for cache_root in /Library/Caches /System/Library/Caches /private/var/tmp; do
+                cleanup_cache_root "$cache_root" sudo || cache_failed=true
+            done
+            if $cache_failed; then
+                report_add WARN "System cache cleanup incomplete; Homebrew downloads preserved"
+            else
+                report_add FIX "Cleaned System Caches"
+            fi
         fi
     else
         log STEP "   Cache clean: not needed (< ${AUTO_CACHE_THRESHOLD_MB}MB)"
@@ -4921,7 +4948,7 @@ module_healer() {
             bw_phase "Healer: brew cleanup"
             log HEAL "   brew doctor flagged linker issues — cleanup..."
             fixed=$((fixed + 1))
-            $DRY_RUN || brew cleanup -s >/dev/null 2>&1
+            $DRY_RUN || brew cleanup >/dev/null 2>&1
         fi
     fi
 
@@ -5186,14 +5213,14 @@ module_brew_age() {
     if [ "${AUTOFIX_OLD_BOTTLES:-true}" = "true" ]; then
         log HEAL "   Autofix: brew cleanup (prune old downloads/versions)..."
         if $DRY_RUN; then
-            log STEP "   [DRY-RUN] would: brew cleanup -s --prune=all"
+            log STEP "   [DRY-RUN] would: brew cleanup (preserve current downloads)"
             report_add WOULD "brew cleanup for ${count} old bottles"
         else
-            if brew cleanup -s --prune=all >/dev/null 2>&1; then
+            if brew cleanup >/dev/null 2>&1; then
                 log FIX "   brew cleanup done (old bottles/downloads pruned)"
                 report_add FIX "brew cleanup: pruned old bottles/downloads (${count} aged)"
             else
-                log WARN "   brew cleanup failed — manual: brew cleanup -s"
+                log WARN "   brew cleanup failed — manual: brew cleanup"
                 report_add WARN "${count} bottles >180d old (cleanup failed)"
             fi
         fi
@@ -8740,11 +8767,11 @@ autofix_known_issues() {
     if [ "${AUTOFIX_OLD_BOTTLES:-true}" = "true" ] && command_exists brew; then
         log HEAL "Brew: cleanup old bottles/downloads..."
         if $DRY_RUN; then
-            log STEP "   [DRY-RUN] brew cleanup -s --prune=all"
-            report_add WOULD "brew cleanup -s --prune=all"
+            log STEP "   [DRY-RUN] brew cleanup (preserve current downloads)"
+            report_add WOULD "brew cleanup (preserve current downloads)"
         else
             local brew_cleanup_output
-            if brew_cleanup_output=$(brew cleanup -s --prune=all 2>&1); then
+            if brew_cleanup_output=$(brew cleanup 2>&1); then
                 printf '%s\n' "$brew_cleanup_output" | tail -3 | while read -r l; do log STEP "   $l"; done
                 log FIX "   brew cleanup completed"
                 report_add FIX "Brew cleanup completed"

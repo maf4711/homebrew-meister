@@ -12,7 +12,7 @@ for tool in shellcheck bats python3 node; do
 done
 
 echo "=== shellcheck ==="
-shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh scripts/homebrew-launcher.sh
+shellcheck -x -S warning lib/core/*.sh lib/commands/*.sh scripts/check.sh scripts/check-app.sh scripts/sync-twins.sh scripts/homebrew-launcher.sh scripts/install-release.sh release.sh
 
 echo "=== bash -n twins ==="
 bash -n MeisterAI.sh

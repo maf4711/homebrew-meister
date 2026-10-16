@@ -9,16 +9,22 @@ Wenn du einen Release machst (`./release.sh` oder manuell tag + formula):
 1. GitHub Release + Formula-SHA pushen
 2. **Sofort lokal installieren** — nicht nur pushen und aufhören:
    ```bash
-   brew update && brew reinstall maf4711/meister/meister
-   meister --version
-   MeisterAI --version
-   # Symlink-Pfad (nicht nur Cellar):
-   /opt/homebrew/bin/MeisterAI --version
+   bash scripts/install-release.sh VERSION
+   # Nur wenn zu diesem Release ein neues App-ZIP veröffentlicht wurde:
+   bash scripts/install-release.sh VERSION --app-version VERSION
    ```
 3. Release erst melden, wenn die installierte Version mit dem Tag übereinstimmt.
 
 `./release.sh` macht das automatisch in **Step 6**. Nie Step 6 skippen.
-Auch bei manuellem Release: denselben brew-reinstall selbst ausführen.
+Auch bei manuellem Release: denselben Installer selbst ausführen. Er installiert
+fehlende Pakete, aktualisiert abweichende Versionen und prüft bereits aktuelle
+Installationen ohne Neuinstallation. Öffentliche Brew-Links, PATH-Auflösung und
+beide CLI-Versionen werden geprüft; Fehler dürfen nicht als Erfolg gelten.
+CLI-only-Releases lassen die bestehende App unverändert. Gültige Brew-Symlinks
+und Download-Caches vor der Versionsprüfung nicht entfernen.
+Ein vorhandenes App-ZIP muss vor der Veröffentlichung dieselbe Version wie der
+Release tragen; alte Builds in `dist` blockieren den Release statt erneut
+veröffentlicht oder installiert zu werden.
 
 Hintergrund: Repo (`~/Developer/homebrew-meister`) und Homebrew-Cellar
 (`/opt/homebrew/Cellar/meister`) driften sonst. Keine Repo-Symlinks auf PATH

@@ -5,12 +5,12 @@
 # 2. Creates GitHub Release with tag
 # 3. Updates SHA256 in Formula
 # 4. Pushes everything
-# 5. ALWAYS reinstalls locally via brew (mandatory — do not skip)
+# 5. ALWAYS ensures the release is installed locally via brew (do not skip)
 #
 # Usage: ./release.sh
 #
 # MERKREGEL: Nach jedem Release IMMER lokal installieren
-#   (brew update && brew reinstall meister). Sonst laufen Repo und
+#   (install if missing, upgrade if outdated, verify if current). Sonst laufen Repo und
 #   /opt/homebrew/bin auseinander. release.sh erledigt das in Step 6.
 
 set -euo pipefail
@@ -19,12 +19,48 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE="$SCRIPT_DIR/meister.sh"
 FORMULA="$SCRIPT_DIR/Formula/meister.rb"
 REPO="maf4711/homebrew-meister"
+APP_ZIP="$SCRIPT_DIR/app/MeisterAI/dist/MeisterAI-macOS.zip"
+CASK="$SCRIPT_DIR/Casks/meister-mac.rb"
+
+release_verify_app_zip() {
+    python3 - "$1" "$2" <<'PY'
+import plistlib, re, sys, zipfile
+def parts(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)+', value):
+        raise ValueError('Invalid app version')
+    numbers = [int(part) for part in value.split('.')]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    return numbers
+try:
+    with zipfile.ZipFile(sys.argv[1]) as archive:
+        path = 'MeisterAI.app/Contents/Info.plist'
+        if archive.namelist().count(path) != 1 or archive.getinfo(path).file_size > 1_000_000:
+            raise ValueError('Missing, duplicated or oversized app metadata')
+        info = plistlib.loads(archive.read(path))
+    actual = info.get('CFBundleShortVersionString')
+    if parts(actual) != parts(sys.argv[2]):
+        raise ValueError(f'App ZIP version {actual!r}; expected {sys.argv[2]}')
+except (OSError, ValueError, KeyError, zipfile.BadZipFile, plistlib.InvalidFileException) as error:
+    print(f'ERROR: {error}', file=sys.stderr)
+    sys.exit(1)
+PY
+}
 
 # Extract version from script
 VERSION=$(grep -m1 '^# Version:' "$SOURCE" | awk '{print $3}')
 if [[ -z "$VERSION" ]]; then
     echo "ERROR: Version not found in $SOURCE"
     exit 1
+fi
+
+# A leftover build is not a new app release. Reject it before any GitHub/Git
+# publication, so CLI-only releases cannot republish or install an older app.
+if [ -f "$APP_ZIP" ]; then
+    release_verify_app_zip "$APP_ZIP" "$VERSION" || {
+        echo "ERROR: App ZIP does not match this release; rebuild it or move it out of dist for a CLI-only release." >&2
+        exit 1
+    }
 fi
 
 # MERKREGEL: twins parallel — MeisterAI is source of truth
@@ -79,8 +115,8 @@ macOS Maintenance & Self-Healing Script v${VERSION}
 
 ## Install / upgrade
 brew tap maf4711/meister
-brew update && brew reinstall meister
-brew reinstall --cask meister-mac
+brew update && brew upgrade meister
+# First installation: brew install meister
 EOF
 fi
 gh release create "v${VERSION}" -R "$REPO" \
@@ -90,11 +126,11 @@ gh release create "v${VERSION}" -R "$REPO" \
 rm -f "$NOTES_FILE"
 echo "Release created at $TARGET_SHA: https://github.com/$REPO/releases/tag/v${VERSION}"
 
-APP_ZIP="$SCRIPT_DIR/app/MeisterAI/dist/MeisterAI-macOS.zip"
-CASK="$SCRIPT_DIR/Casks/meister-mac.rb"
+APP_RELEASED_VERSION=""
 if [ -f "$APP_ZIP" ]; then
     echo ""
     echo "--- Step 2b: Upload MeisterAI.app zip ---"
+    release_verify_app_zip "$APP_ZIP" "$VERSION" || exit 1
     gh release upload "v${VERSION}" "$APP_ZIP" -R "$REPO" --clobber
     CASK_SHA=$(shasum -a 256 "$APP_ZIP" | awk '{print $1}')
     sed -i '' "s|version \".*\"|version \"${VERSION}\"|" "$CASK"
@@ -107,6 +143,9 @@ if [ -f "$APP_ZIP" ]; then
         git commit -m "cask: MeisterAI.app v${VERSION}"
         git push origin main
     fi
+    CASK_VERSION=$(awk -F'"' '/^[[:space:]]*version / {print $2; exit}' "$CASK")
+    [ "$CASK_VERSION" = "$VERSION" ] || { echo "ERROR: Published app cask version does not match v$VERSION" >&2; exit 1; }
+    APP_RELEASED_VERSION="$CASK_VERSION"
 fi
 
 # 3. Get SHA256 of tarball
@@ -151,36 +190,11 @@ fi
 # 6. ALWAYS install locally after release (mandatory)
 echo ""
 echo "--- Step 6: Local install (MERKREGEL: immer nach Release) ---"
-# Drop any repo symlink so brew owns the binaries
-if [[ -L /opt/homebrew/bin/MeisterAI ]]; then
-    rm -f /opt/homebrew/bin/MeisterAI
+INSTALL_ARGS=("$VERSION")
+if [ -n "$APP_RELEASED_VERSION" ]; then
+    INSTALL_ARGS+=(--app-version "$APP_RELEASED_VERSION")
 fi
-if [[ -L /opt/homebrew/bin/meisterSiri ]]; then
-    rm -f /opt/homebrew/bin/meisterSiri
-fi
-CACHE_FILE=$(brew --cache meister 2>/dev/null || true)
-[ -n "${CACHE_FILE:-}" ] && [ -f "$CACHE_FILE" ] && rm -f "$CACHE_FILE"
-# Refresh tap from GitHub (formula lives in this repo / tap).
-# brew update can fail on this prefix when other taps lack remotes.
-export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
-brew update || echo "WARN: brew update failed; pulling maf4711/meister tap instead"
-TAP_REPO=$(brew --repo maf4711/meister 2>/dev/null || true)
-if [ -n "${TAP_REPO:-}" ] && [ -d "$TAP_REPO/.git" ]; then
-    git -C "$TAP_REPO" pull --ff-only || true
-fi
-# Reinstall from the tap so both meister + MeisterAI land in Cellar
-brew reinstall maf4711/meister/meister || brew reinstall meister
-if [ -f "$CASK" ]; then
-    brew reinstall --cask maf4711/meister/meister-mac || brew reinstall --cask meister-mac
-fi
-echo ""
-echo "Installed binaries:"
-which meister MeisterAI
-meister --version
-MeisterAI --version
-if [ -d /Applications/MeisterAI.app ]; then
-    defaults read /Applications/MeisterAI.app/Contents/Info CFBundleShortVersionString
-fi
+bash "$SCRIPT_DIR/scripts/install-release.sh" "${INSTALL_ARGS[@]}"
 
 echo ""
 echo "=== Release v${VERSION} done! ==="

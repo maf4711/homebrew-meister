@@ -72,7 +72,7 @@ ai_brew_metadata_current() {
 }
 
 ai_update_brew() {
-    local kind installed token outdated failed=0 sudo_checked=false
+    local kind installed token outdated pending checked failed=0 sudo_checked=false
     command -v brew >/dev/null 2>&1 || return 0
     if ${DRY_RUN:-false}; then
         log STEP "[DRY-RUN] AI Updates: refresh Homebrew; upgrade installed AI clients (--greedy)"
@@ -94,6 +94,7 @@ ai_update_brew() {
     fi
     export HOMEBREW_NO_AUTO_UPDATE=1
     for kind in cask formula; do
+        checked=false
         if ! installed=$(timeout 60 brew list "--$kind" 2>/dev/null); then
             ai_update_error "AI Updates: cannot enumerate Homebrew $kind clients"
             failed=1
@@ -104,10 +105,26 @@ ai_update_brew() {
             local -a flags=("--$kind")
             if [ "$kind" = cask ]; then
                 flags+=(--greedy)
-                if ! $sudo_checked && command -v ensure_sudo >/dev/null 2>&1; then
-                    ensure_sudo "AI client cask updates" 2>/dev/null || log WARN "AI Updates: no sudo ticket; admin-owned apps may fail"
-                    sudo_checked=true
+            fi
+            if ! $checked; then
+                # Without package arguments, outdated returns 0 for a successful
+                # list; a named outdated package returns 1, like a probe error.
+                if ! pending=$(timeout 60 brew outdated "${flags[@]}" 2>/dev/null); then
+                    ai_update_error "AI Updates: cannot check outdated Homebrew $kind clients"
+                    failed=1
+                    break
                 fi
+                # brew list uses short names; outdated may qualify tap formulae.
+                pending=$(printf '%s\n' "$pending" | sed 's|.*/||')
+                checked=true
+            fi
+            if ! printf '%s\n' "$pending" | grep -Fxq -- "${token##*/}"; then
+                report_add SUCCESS "AI Updates: $token current in Homebrew"
+                continue
+            fi
+            if [ "$kind" = cask ] && ! $sudo_checked && command -v ensure_sudo >/dev/null 2>&1; then
+                ensure_sudo "AI client cask updates" 2>/dev/null || log WARN "AI Updates: no sudo ticket; admin-owned apps may fail"
+                sudo_checked=true
             fi
             if ai_update_attempt brew upgrade "${flags[@]}" "$token" &&
                 outdated=$(timeout 60 brew outdated "${flags[@]}" "$token" 2>/dev/null) &&

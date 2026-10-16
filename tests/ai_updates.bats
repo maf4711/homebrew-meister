@@ -48,7 +48,8 @@ setup() {
     case "$*" in
       'list --cask') printf 'codex\njan\ngemini\n' ;;
       'list --formula') : ;;
-      'outdated --cask --greedy codex') echo codex ;;
+      'outdated --cask --greedy') printf 'codex\njan\n' ;;
+      'outdated --cask --greedy codex') echo codex; return 1 ;;
     esac
   }
   run ai_update_brew
@@ -61,6 +62,65 @@ setup() {
   brew() { [ "$1" != update ]; }
   run ai_update_brew
   [ "$status" -ne 0 ]
+  [[ "$output" != *'SUCCESS'* ]]
+}
+@test "current AI casks and formulae never invoke upgrade or sudo on repeated checks" {
+  export CALLS="$BATS_TEST_TMPDIR/calls"
+  REPORTS=""
+  report_add() { REPORTS="$REPORTS $*"; }
+  ensure_sudo() { echo sudo >> "$CALLS"; }
+  brew() {
+    echo "$*" >> "$CALLS"
+    case "$*" in
+      'list --cask') echo codex ;;
+      'list --formula') echo ollama ;;
+    esac
+  }
+  ai_update_brew
+  ai_update_brew
+  ! grep -Eq '^(upgrade|sudo)' "$CALLS"
+  [[ "$REPORTS" == *'SUCCESS AI Updates: codex current in Homebrew'* ]]
+  [[ "$REPORTS" == *'SUCCESS AI Updates: ollama current in Homebrew'* ]]
+  [ "$(grep -c '^outdated --cask --greedy$' "$CALLS")" = 2 ]
+  [ "$(grep -c '^outdated --formula$' "$CALLS")" = 2 ]
+}
+@test "outdated AI packages upgrade once then are only checked on the next run" {
+  export CALLS="$BATS_TEST_TMPDIR/calls"
+  brew() {
+    echo "$*" >> "$CALLS"
+    case "$*" in
+      'list --cask') echo codex ;;
+      'list --formula') echo ollama ;;
+      'outdated --cask --greedy')
+        if ! grep -q '^upgrade --cask --greedy codex$' "$CALLS"; then echo codex; fi ;;
+      'outdated --formula')
+        if ! grep -q '^upgrade --formula ollama$' "$CALLS"; then echo example/ai/ollama; fi ;;
+    esac
+  }
+  ai_update_brew
+  ai_update_brew
+  [ "$(grep -c '^upgrade --cask --greedy codex$' "$CALLS")" = 1 ]
+  [ "$(grep -c '^upgrade --formula ollama$' "$CALLS")" = 1 ]
+  [ "$(grep -c '^outdated --cask --greedy codex$' "$CALLS")" = 1 ]
+  [ "$(grep -c '^outdated --formula ollama$' "$CALLS")" = 1 ]
+}
+@test "failed outdated probes never upgrade or report current even with partial output" {
+  export CALLS="$BATS_TEST_TMPDIR/calls"
+  ensure_sudo() { echo sudo >> "$CALLS"; }
+  brew() {
+    echo "$*" >> "$CALLS"
+    case "$*" in
+      'list --cask') echo codex ;;
+      'list --formula') echo ollama ;;
+      'outdated --cask --greedy') echo codex; return 1 ;;
+      'outdated --formula') echo ollama; return 1 ;;
+    esac
+  }
+  run ai_update_brew
+  [ "$status" = 1 ]
+  ! grep -Eq '^(upgrade|sudo)' "$CALLS"
+  [[ "$output" == *'ERROR AI Updates: cannot check outdated Homebrew cask clients'* ]]
+  [[ "$output" == *'ERROR AI Updates: cannot check outdated Homebrew formula clients'* ]]
   [[ "$output" != *'SUCCESS'* ]]
 }
 @test "npm catalog includes AI clients but excludes unrelated globals" {
@@ -136,6 +196,7 @@ SH
   brew() {
     case "$*" in
       'list --cask') printf 'codex\njan\n' ;;
+      'outdated --cask --greedy') printf 'codex\njan\n' ;;
       upgrade*) echo upgrade >> "$CALLS" ;;
     esac
   }
@@ -156,8 +217,8 @@ SH
   }
   ai_update_brew
   ! grep -q '^update$' "$CALLS"
-  grep -q 'upgrade --formula ollama' "$CALLS"
-  grep -q 'outdated --formula ollama' "$CALLS"
+  ! grep -q '^upgrade' "$CALLS"
+  grep -q '^outdated --formula$' "$CALLS"
   [ "$HOMEBREW_NO_AUTO_UPDATE" = 1 ]
 }
 

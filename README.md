@@ -54,7 +54,7 @@ is deliberately excluded; Gemini CLI is `@google/gemini-cli` / `gemini-cli`.
 
 ### Homebrew
 
-Updates Homebrew, upgrades outdated formulae and casks, runs `brew cleanup` and `brew autoremove`. Detects broken installs and attempts repair.
+Updates Homebrew, upgrades outdated formulae and casks, runs `brew cleanup` and `brew autoremove`. Current Homebrew downloads survive normal cache cleanup so failed upgrades can reuse them. Failed package upgrades remain warnings and retain private logs under `~/.meister/update-failures/`. Detects broken installs and attempts repair.
 
 ### App Store
 
@@ -451,5 +451,8 @@ check, including deep runs. AI clients are still checked through their owners.
 
 The formula stores the internal runtime in `libexec`; direct source checkout
 execution and Homebrew's sandboxed formula tests do not update Homebrew.
+
+
+Release installation uses `scripts/install-release.sh VERSION`: install missing packages, upgrade older versions, and verify already current versions without reinstalling. CLI-only releases leave the app cask unchanged.
 
 Recap: Daily starts reuse a successful check for 12 hours; deep/all refresh once.

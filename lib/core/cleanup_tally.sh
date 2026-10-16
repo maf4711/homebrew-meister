@@ -3,6 +3,40 @@
 # Expects: DRY_RUN (true/false string), FIND_TIMEOUT_SEC optional.
 # Bash 3.2 compatible (macOS).
 
+# Clean visible direct entries as before, retaining Homebrew downloads and any
+# parent needed to reach them. $2 may be "sudo" for system cache roots.
+cleanup_cache_root() {
+    local root="${1%/}" privilege="${2:-}" entry protected canonical keep failed=0
+    local -a preserved=()
+    [ -d "$root" ] || return 0
+    for protected in "$HOME/Library/Caches/Homebrew" "${HOMEBREW_CACHE:-}"; do
+        [ -n "$protected" ] || continue
+        preserved+=("${protected%/}")
+        if canonical=$(realpath "$protected" 2>/dev/null); then
+            preserved+=("${canonical%/}")
+        fi
+    done
+    for entry in "$root"/*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        canonical=$(realpath "$entry" 2>/dev/null) || canonical="$entry"
+        keep=false
+        for protected in "${preserved[@]}"; do
+            case "$protected/" in "$entry/"*|"$canonical/"*) keep=true ;; esac
+            case "$entry/" in "$protected/"*) keep=true ;; esac
+            case "$canonical/" in "$protected/"*) keep=true ;; esac
+            $keep && break
+        done
+        if $keep; then
+            log STEP "   Preserved Homebrew cache path: $entry"
+        elif [ "$privilege" = sudo ]; then
+            run_or_dry sudo -n rm -rf -- "$entry" || failed=1
+        else
+            run_or_dry rm -rf -- "$entry" || failed=1
+        fi
+    done
+    return "$failed"
+}
+
 # Sets CLEANUP_FOUND / CLEANUP_REMOVED / CLEANUP_SKIPPED
 # $1 = basename pattern; remaining = root dirs
 cleanup_find_delete() {

@@ -8,6 +8,22 @@
 # Auto-update / GUI casks that hang unattended (livecheck or sudo installer).
 : "${BREW_CASK_SKIP:=whatsapp microsoft-word}"
 
+# Preserve the actual failure even when a TTY bypasses the main log. The caller
+# may delete its temporary capture; this private copy remains for diagnosis.
+brew_record_upgrade_failure() {
+    local kind="$1" name="$2" rc="$3" capture="${4:-}" evidence="" safe_name
+    safe_name=${name//[^a-zA-Z0-9@._+-]/_}
+    if [ -n "$capture" ] && [ -f "$capture" ] && [ -n "${MEISTER_DIR:-}" ]; then
+        evidence=$(umask 077; mkdir -p "$MEISTER_DIR/update-failures" &&
+            mktemp "$MEISTER_DIR/update-failures/${kind}-${safe_name}.XXXXXX") || evidence=""
+        if [ -n "$evidence" ] && ! cat "$capture" > "$evidence"; then
+            rm -f "$evidence"
+            evidence=""
+        fi
+    fi
+    report_add WARN "Homebrew: $name upgrade failed (exit $rc)${evidence:+; log: $evidence}"
+}
+
 # true if this profile should force auto-updating casks (--greedy).
 # Override: BREW_CASK_GREEDY=true|false in ~/.meister/config
 brew_cask_greedy_wanted() {
