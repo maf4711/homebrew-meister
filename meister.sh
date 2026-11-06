@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.41
+# Version: 6.42
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -439,6 +439,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/core/confirm.sh" ] && . "$MEISTER_LIB_DIR/core/confirm.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/commands/purge.sh" ] && . "$MEISTER_LIB_DIR/commands/purge.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
     MEISTER_LIB_LOADED=true
@@ -9764,6 +9766,19 @@ if [ "${1:-}" = "storage" ]; then
     exit 0
 fi
 
+# ── Purgeable space (meister purge — lib/commands/purge.sh) ──
+if [ "${1:-}" = "purge" ]; then
+    echo -e "\033[1;34m  meister PURGE — reclaim purgeable space\033[0m"
+    echo ""
+    if command -v cmd_purge >/dev/null 2>&1; then
+        shift
+        cmd_purge "$@"
+        exit $?
+    fi
+    echo "  lib/commands/purge.sh not loaded (MEISTER_LIB missing)"
+    exit 1
+fi
+
 if [ "${1:-}" = "contacts" ]; then
     echo -e "\033[1;34m  meister CONTACTS\033[0m"
     echo ""
@@ -10043,6 +10058,7 @@ TOOLS:
   meister report --json [N]  History as JSON array
   meister why <x>      Why a module runs/skips, or explain a warn (profile|Homebrew|…)
   meister storage      Safe-to-delete size candidates (DerivedData, caches, …)
+  meister purge [--do]  Free Finder "purgeable": thin snapshots, cloud-only old iCloud files
   meister contacts doctor  AddressBook size / bloat risk (read-only)
   meister score        Maintenance score 0-100 + trend history
   meister diff         What changed since the last run (apps/autostart/brew)

@@ -111,6 +111,7 @@ Fixes: alte brew bottles, orphan LaunchDaemons, git push (clean), Firewall on.
 ```
 lib/core/          heal_guards, cleanup_tally, profiles, last_json  (bats-tested)
 lib/commands/      extras.sh — why, storage, contacts, report diff/json, doctor json
+                   purge.sh + purge.js — `purge`: snapshots + cloud-only iCloud files (v6.42)
 lib/modules/       extraction track (README only until modules move)
 tests/             bats
 scripts/check.sh   shellcheck + bats + bash -n  (also run by release.sh)
@@ -150,3 +151,10 @@ LaunchAgents (install: `MeisterAI -I`):
 - Retires legacy `com.meister.maintenance` (old meister2026.sh)
 
 Ollama model override: `MEISTER_OLLAMA_MODEL=...` in `~/.meister/config`.
+
+## v6.42 purge (Finder "löschbar")
+
+`MeisterAI purge` previews; `purge --do` thins local TM snapshots (`tmutil thinlocalsnapshots`, no sudo)
+and evicts iCloud copies via `lib/commands/purge.js` (JXA, `NSFileManager evictUbiquitousItemAtURL`).
+Only items iCloud reports as downloaded AND uploaded are evicted. Candidates come from `find -mtime`;
+never filter on atime — Spotlight/iCloud bump it. Tests stub `osascript`/`tmutil`: `tests/purge.bats`.
