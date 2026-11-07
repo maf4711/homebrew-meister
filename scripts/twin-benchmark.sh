@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# twin-benchmark.sh — meister (Ollama) vs meisterSiri (Apple Intelligence)
+# twin-benchmark.sh — meister (Ollama) vs MeisterAI (Apple Intelligence)
 # Usage: ./scripts/twin-benchmark.sh [--json] [--quick]
 # Exit 0 always after writing report (winner printed on stdout).
 set -euo pipefail
@@ -20,11 +20,11 @@ done
 
 # When invoked from Cellar bin/, also find brew-installed twin on PATH
 MEISTER_BIN="${MEISTER_BIN:-$(command -v meister 2>/dev/null || true)}"
-SIRI_BIN="${SIRI_BIN:-$(command -v meisterSiri 2>/dev/null || true)}"
+AI_BIN="${AI_BIN:-$(command -v MeisterAI 2>/dev/null || true)}"
 # Prefer Cellar-resolved realpaths for fair comparison
 if command -v realpath >/dev/null 2>&1; then
   [ -n "$MEISTER_BIN" ] && MEISTER_BIN=$(realpath "$MEISTER_BIN" 2>/dev/null || echo "$MEISTER_BIN")
-  [ -n "$SIRI_BIN" ] && SIRI_BIN=$(realpath "$SIRI_BIN" 2>/dev/null || echo "$SIRI_BIN")
+  [ -n "$AI_BIN" ] && AI_BIN=$(realpath "$AI_BIN" 2>/dev/null || echo "$AI_BIN")
 fi
 OUT_DIR="${MEISTER_DIR:-$HOME/.meister}/benchmarks"
 mkdir -p "$OUT_DIR"
@@ -60,13 +60,13 @@ have_ollama() {
 }
 
 have_apple_ai() {
-  # meister-fm helper or meisterSiri doctor-ish: try explain with short timeout
+  # meister-fm helper or MeisterAI doctor-ish: try explain with short timeout
   [ -x "${HOME}/.meister/meister-fm" ] || return 1
   return 0
 }
 
-if [ -z "$MEISTER_BIN" ] || [ -z "$SIRI_BIN" ]; then
-  echo "ERROR: need both meister and meisterSiri on PATH (brew install meister)" >&2
+if [ -z "$MEISTER_BIN" ] || [ -z "$AI_BIN" ]; then
+  echo "ERROR: need both meister and MeisterAI on PATH (brew install meister)" >&2
   exit 1
 fi
 
@@ -120,7 +120,7 @@ run_suite() {
 }
 
 run_suite "meister" "$MEISTER_BIN"
-run_suite "meisterSiri" "$SIRI_BIN"
+run_suite "MeisterAI" "$AI_BIN"
 
 # Backend availability
 OLLAMA_UP=0; have_ollama && OLLAMA_UP=1
@@ -183,21 +183,21 @@ score_twin() {
 
   # Backend available bonus
   if [ "$twin" = "meister" ] && [ "$OLLAMA_UP" -eq 1 ]; then score=$((score + 5)); fi
-  if [ "$twin" = "meisterSiri" ] && [ "$APPLE_UP" -eq 1 ]; then score=$((score + 5)); fi
+  if [ "$twin" = "MeisterAI" ] && [ "$APPLE_UP" -eq 1 ]; then score=$((score + 5)); fi
 
   echo "$score"
 }
 
 SCORE_M=$(score_twin meister)
-SCORE_S=$(score_twin meisterSiri)
+SCORE_S=$(score_twin MeisterAI)
 
 WINNER="tie"
-if [ "$SCORE_S" -gt "$SCORE_M" ]; then WINNER="meisterSiri"
+if [ "$SCORE_S" -gt "$SCORE_M" ]; then WINNER="MeisterAI"
 elif [ "$SCORE_M" -gt "$SCORE_S" ]; then WINNER="meister"
 fi
 
 # Preferred maintain CLI for heald (prefer Apple twin if tie or win)
-PREFERRED="meisterSiri"
+PREFERRED="MeisterAI"
 [ "$WINNER" = "meister" ] && PREFERRED="meister"
 
 # Persist preference for heald / humans
@@ -229,14 +229,14 @@ json_metrics_for() {
   echo "  \"ollama_up\": $OLLAMA_UP,"
   echo "  \"apple_fm_helper\": $APPLE_UP,"
   echo "  \"meister_bin\": \"$MEISTER_BIN\","
-  echo "  \"meisterSiri_bin\": \"$SIRI_BIN\","
+  echo "  \"MeisterAI_bin\": \"$AI_BIN\","
   echo "  \"score_meister\": $SCORE_M,"
-  echo "  \"score_meisterSiri\": $SCORE_S,"
+  echo "  \"score_MeisterAI\": $SCORE_S,"
   echo "  \"winner\": \"$WINNER\","
   echo "  \"preferred_maintain\": \"$PREFERRED\","
   echo "  \"twins\": {"
   echo -n "    \"meister\": {"; json_metrics_for meister; echo "},"
-  echo -n "    \"meisterSiri\": {"; json_metrics_for meisterSiri; echo "}"
+  echo -n "    \"MeisterAI\": {"; json_metrics_for MeisterAI; echo "}"
   echo "  }"
   echo "}"
 } > "$REPORT_JSON"
@@ -253,7 +253,7 @@ echo "╔═══════════════════════�
 echo "║  Meister Twin Benchmark — Ollama vs Apple Intelligence  ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
-printf "  %-14s  %8s  %8s\n" "Metric" "meister" "meisterSiri"
+printf "  %-14s  %8s  %8s\n" "Metric" "meister" "MeisterAI"
 printf "  ─%.0s" $(seq 1 44); echo ""
 
 print_row() {
@@ -264,7 +264,7 @@ print_row() {
     IFS='|' read -r t met ms rc bytes <<<"$line"
     [ "$met" = "$metric" ] || continue
     [ "$t" = "meister" ] && m_ms="${ms}ms"
-    [ "$t" = "meisterSiri" ] && s_ms="${ms}ms"
+    [ "$t" = "MeisterAI" ] && s_ms="${ms}ms"
   done
   # boolean metrics use 0/1 as ms field
   case "$metric" in
@@ -274,7 +274,7 @@ print_row() {
         IFS='|' read -r t met ms rc bytes <<<"$line"
         [ "$met" = "$metric" ] || continue
         [ "$t" = "meister" ] && { [ "$ms" = "1" ] && m_ms="yes" || m_ms="no"; }
-        [ "$t" = "meisterSiri" ] && { [ "$ms" = "1" ] && s_ms="yes" || s_ms="no"; }
+        [ "$t" = "MeisterAI" ] && { [ "$ms" = "1" ] && s_ms="yes" || s_ms="no"; }
       done
       ;;
   esac
@@ -295,7 +295,7 @@ fi
 
 echo ""
 echo "  Backend:  Ollama=$OLLAMA_UP  AppleFM-helper=$APPLE_UP"
-echo "  Score:    meister=$SCORE_M   meisterSiri=$SCORE_S"
+echo "  Score:    meister=$SCORE_M   MeisterAI=$SCORE_S"
 echo ""
 if [ "$WINNER" = "tie" ]; then
   echo "  Winner:   TIE — preferred maintain: $PREFERRED"
@@ -308,13 +308,13 @@ echo "  Pref:     $PREF_FILE → $PREFERRED"
 echo ""
 
 # Short recommendation
-if [ "$WINNER" = "meisterSiri" ]; then
-  echo "  Empfehlung: meisterSiri als Default (LaunchAgents / heald trigger)."
+if [ "$WINNER" = "MeisterAI" ]; then
+  echo "  Empfehlung: MeisterAI als Default (LaunchAgents / heald trigger)."
   echo "  meister behalten wenn Ollama offline-Apple / Server-Szenario."
 elif [ "$WINNER" = "meister" ]; then
   echo "  Empfehlung: meister (Ollama) schlägt gerade Apple-Twin."
   echo "  Prüfe Apple Intelligence Settings / meister-fm helper."
 else
-  echo "  Empfehlung: Gleichstand — meisterSiri als keep-current Default behalten."
+  echo "  Empfehlung: Gleichstand — MeisterAI als keep-current Default behalten."
 fi
 echo ""

@@ -60,3 +60,45 @@ setup() {
   run heal_missing_path "killall Dock"
   [ "$status" -ne 0 ]
 }
+
+@test "parse JSON noFix true yields NO_FIX" {
+  run heal_parse_suggestion '{"noFix":true}'
+  [ "$status" -eq 0 ]
+  [ "$output" = "NO_FIX" ]
+}
+
+@test "parse JSON command extracts the command" {
+  run heal_parse_suggestion '{"noFix":false,"command":"killall Dock"}'
+  [ "$status" -eq 0 ]
+  [ "$output" = "killall Dock" ]
+}
+
+@test "parse JSON empty command yields NO_FIX" {
+  run heal_parse_suggestion '{"noFix":false,"command":""}'
+  [ "$status" -eq 0 ]
+  [ "$output" = "NO_FIX" ]
+}
+
+@test "parse JSON wrapped in markdown fences" {
+  run heal_parse_suggestion $'```json\n{"noFix":false,"command":"mdutil -s /"}\n```'
+  [ "$status" -eq 0 ]
+  [ "$output" = "mdutil -s /" ]
+}
+
+@test "parse legacy fenced command" {
+  run heal_parse_suggestion $'```bash\nkillall Dock\n```'
+  [ "$status" -eq 0 ]
+  [ "$output" = "killall Dock" ]
+}
+
+@test "parse empty yields NO_FIX" {
+  run heal_parse_suggestion ""
+  [ "$status" -eq 0 ]
+  [ "$output" = "NO_FIX" ]
+}
+
+@test "parse literal NO_FIX text" {
+  run heal_parse_suggestion "NO_FIX"
+  [ "$status" -eq 0 ]
+  [ "$output" = "NO_FIX" ]
+}

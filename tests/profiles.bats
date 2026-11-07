@@ -60,6 +60,25 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "auto and quick never run Simulator Fix or iOS Simulators" {
+  RUN_PROFILE=auto
+  run module_in_profile "Simulator Fix"
+  [ "$status" -ne 0 ]
+  run module_in_profile "iOS Simulators"
+  [ "$status" -ne 0 ]
+  RUN_PROFILE=quick
+  run module_in_profile "Simulator Fix"
+  [ "$status" -ne 0 ]
+  run module_in_profile "iOS Simulators"
+  [ "$status" -ne 0 ]
+}
+
+@test "deep still includes Simulator Fix and iOS Simulators" {
+  RUN_PROFILE=deep
+  module_in_profile "Simulator Fix"
+  module_in_profile "iOS Simulators"
+}
+
 @test "profile_list_modules quick shape" {
   run profile_list_modules quick Healer Homebrew "Deep Clean" "iCloud Fix"
   [ "$status" -eq 0 ]

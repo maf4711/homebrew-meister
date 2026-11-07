@@ -1,19 +1,19 @@
-# MEISTER-CLOSE-LOOPS — MeisterSiri daily runner
+# MEISTER-CLOSE-LOOPS — MeisterAI daily runner
 
 **Status:** in progress  
 **Date:** 2026-08-24  
-**Source:** log comparison meister vs meisterSiri (user: close the loops)
+**Source:** log comparison meister vs MeisterAI (user: close the loops)
 
 meradOS `requirements_registry` has no `desktop`/`meister` codebase_area
 (prefixes are AI/AM/BE/BT/…). This requirement lives in the tap.
 
 ## Objective
 
-MeisterSiri is the product default. Three log-driven loops:
+MeisterAI is the product default. Three log-driven loops:
 
 1. **Git push gate** — `GIT_AUTO_PUSH=false` must stop Autofix, not only the Git module.
 2. **AufRaum hook** — `_Inbox` WARN calls AufRaum dry-run (never live unless `AUFRAUM_APPLY=true`).
-3. **LaunchAgent** — `meisterSiri -I` installs daily `--auto -q` + weekly `--deep -q` on `meisterSiri`, and retires legacy `com.meister.maintenance` (meister2026.sh).
+3. **LaunchAgent** — `MeisterAI -I` installs daily `--auto -q` + weekly `--deep -q` on `MeisterAI`, and retires legacy `com.meister.maintenance` (meister2026.sh).
 
 ## Acceptance
 
@@ -21,7 +21,7 @@ MeisterSiri is the product default. Three log-driven loops:
 - `.meister-nopush` and `git config meister.nopush true` skip that repo in Autofix.
 - Docs-order Inbox: if unsorted > 0 and operator exists, log planned AufRaum moves from `apply --dry`.
 - Live AufRaum only when `AUFRAUM_APPLY=true` and not dry-run.
-- `meisterSiri -I` daily args are `--auto -q`; weekly `--deep -q`; bootout `com.meister.maintenance`.
+- `MeisterAI -I` daily args are `--auto -q`; weekly `--deep -q`; bootout `com.meister.maintenance`.
 - Twins stay in sync via `scripts/sync-twins.sh`.
 
 ## Test strategy

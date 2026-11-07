@@ -1,5 +1,5 @@
-# MeisterSiri Daily-Fast config — copy to ~/.meister/config (merge keys)
-# Full weekly run: meisterSiri --deep
+# MeisterAI Daily-Fast config — copy to ~/.meister/config (merge keys)
+# Full weekly run: MeisterAI --deep
 
 # Profiles (CLI overrides this): auto | quick | deep
 # RUN_PROFILE=auto
@@ -35,16 +35,17 @@ GIT_AUTO_PUSH=false
 # AI transparency (false = less terminal noise)
 # AI_TRACE=true
 
-# AI-Heal execute gate (v6.12) — default is suggest-only (safer)
-# When false: model may propose an allowlisted command; it is NOT run.
-# When true: allowlisted command may run, then module is retested (verify-after-heal).
-# CLI override: --ai-heal-execute / --ai-heal-suggest
-AI_HEAL_EXECUTE=false
+# AI-Heal execute gate — default ON (allowlisted cmds run + verify-after-heal).
+# Opt-out: AI_HEAL_EXECUTE=false or --ai-heal-suggest
+AI_HEAL_EXECUTE=true
 
 # v6.13 run budget (soft)
 # RUN_MAX_SEC=1200          # skip remaining modules after 20 min wall clock
 # MODULE_SLOW_SEC=300       # WARN if one module exceeds 5 min
 # MEISTER_NOTIFY=true       # notification after run (already default)
+
+# Unattended confirmations (default true): y/N is yes; no TTY never waits.
+# MEISTER_ALWAYS_YES=true
 
 # v6.17 Touch ID for sudo (default true — auto pam_tid in /etc/pam.d/sudo_local)
 # One password once to enable; afterwards fingerprint. Opt-out:
@@ -52,3 +53,22 @@ AI_HEAL_EXECUTE=false
 
 # Fleet (optional)
 # FLEET_HOSTS="mac-mini.local"
+
+# Structured FM diagnoses: system | auto | pcc
+# auto starts on-device; unresolved complete evidence can escalate to PCC.
+# system keeps all inference on-device. PCC receives bounded, redacted context.
+# FM_HEAL_MODEL=auto
+# FM_DIAGNOSE_MODEL=system
+# Actions are fixed catalog IDs; AI_HEAL_EXECUTE remains the execution gate.
+
+# meister / Ollama: explicit model, bounded generation, reuse loaded weights.
+# No automatic downloads or silent model fallback.
+MEISTER_OLLAMA_URL="http://localhost:11434"
+MEISTER_OLLAMA_MODEL="qwen3-coder:30b"
+MEISTER_OLLAMA_TIMEOUT=90
+MEISTER_OLLAMA_KEEP_ALIVE="5m"
+MEISTER_OLLAMA_NUM_CTX=8192
+MEISTER_OLLAMA_NUM_PREDICT=1024
+
+# Bounded diagnostics need the final answer, not an internal reasoning trace.
+MEISTER_OLLAMA_THINK="false"

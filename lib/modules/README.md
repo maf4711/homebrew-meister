@@ -1,15 +1,15 @@
 # lib/modules — extraction track
 
 **Status (v6.13):** Core pure logic lives in `lib/core/`. Full module bodies
-still live in `meisterSiri.sh` (feature source of truth for the twin sync).
+still live in `MeisterAI.sh` (feature source of truth for the twin sync).
 
 ## Contract
 
 | Layer | Path | Rule |
 |-------|------|------|
 | Pure guards / tallies / profiles | `lib/core/*.sh` | No I/O beyond args; bats-tested |
-| Module implementations | `meisterSiri.sh` → future `lib/modules/<name>.sh` | May use log/report globals |
-| Feature source | `meisterSiri.sh` | Twins via `scripts/sync-twins.sh` |
+| Module implementations | `MeisterAI.sh` → future `lib/modules/<name>.sh` | May use log/report globals |
+| Feature source | `MeisterAI.sh` | Twins via `scripts/sync-twins.sh` |
 
 ## Extraction order (next tracks)
 

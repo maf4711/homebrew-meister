@@ -1,8 +1,8 @@
-# Design: Twin CLIs — `meister.sh` (Ollama) + `meisterSiri.sh` (Apple FoundationModels)
+# Design: Twin CLIs — `meister.sh` (Ollama) + `MeisterAI.sh` (Apple FoundationModels)
 
 Date: 2026-07-21
 Repo: `homebrew-meister` (the tap)
-Status: approved (2026-07-21) — orphan `~/bin/meisterSiri` **kept** per user decision
+Status: approved (2026-07-21) — orphan `~/bin/MeisterAI` **kept** per user decision
 
 ## Context / current state
 
@@ -11,8 +11,8 @@ Status: approved (2026-07-21) — orphan `~/bin/meisterSiri` **kept** per user d
   The relevant seam is four functions — `_fm_helper_source()`, `ensure_fm_helper()`,
   `fm_available()`, `fm_query()` — plus ~6 call-sites (`ai_heal`, and lines ~1003, 4862,
   6703, 6757, 7857). Commit `7a91ab1` (v6.0) deleted the entire Ollama subsystem.
-- A standalone orphan `~/bin/meisterSiri` (compiled Swift binary, "meisterSiri 1.0") plus
-  `~/bin/meisterSiri.swift` (untracked, not in any repo) is a separate conversational REPL.
+- A standalone orphan `~/bin/MeisterAI` (compiled Swift binary, "MeisterAI 1.0") plus
+  `~/bin/MeisterAI.swift` (untracked, not in any repo) is a separate conversational REPL.
 - `Formula/meister.rb` installs the script: `bin.install "meister.sh" => "meister"`.
 
 ## Goal
@@ -23,7 +23,7 @@ differing **only** in the AI backend:
 | File | Installed as | AI backend |
 |------|--------------|-----------|
 | `meister.sh` | `meister` | **Ollama** (local, `localhost:11434`) |
-| `meisterSiri.sh` | `meisterSiri` | **Apple FoundationModels** (on-device) |
+| `MeisterAI.sh` | `MeisterAI` | **Apple FoundationModels** (on-device) |
 
 The user explicitly chose two separate files over the DRY "one script + `MEISTER_AI_BACKEND`
 flag" alternative. The DRY objection (344 KB maintained twice, drift risk) was raised once and
@@ -45,11 +45,11 @@ Both files are identical except the AI-backend section (~150 lines) and title/br
 Crucially, **both twins keep the function names `fm_available` / `fm_query`**, so the ~6
 call-sites need **zero** changes (minimal blast radius, Elon simplify).
 
-### `meisterSiri.sh` (Apple) — near-verbatim copy of today's v6.0
+### `MeisterAI.sh` (Apple) — near-verbatim copy of today's v6.0
 
 Keeps `_fm_helper_source`, `ensure_fm_helper`, `fm_available`, `fm_query` unchanged.
 Only branding differs (title line, `--version` label). This is essentially
-`cp meister.sh meisterSiri.sh` + rebrand, since today's `meister.sh` is already the Apple
+`cp meister.sh MeisterAI.sh` + rebrand, since today's `meister.sh` is already the Apple
 backend.
 
 ### `meister.sh` (Ollama) — replace the AI section with a thin HTTP path
@@ -84,19 +84,19 @@ New dependencies for the Ollama twin: `jq` (safe JSON encoding of arbitrary prom
 ### Versioning
 
 Both carry `v6.0` in the header and `--version`. Distinguished by the title line:
-`meister v6.0 (Ollama)` vs `meisterSiri v6.0 (Apple Intelligence)`.
+`meister v6.0 (Ollama)` vs `MeisterAI v6.0 (Apple Intelligence)`.
 
 Note: v6.0's original headline was "Ollama replaced by Apple Intelligence", so labelling the
 Ollama twin "v6.0" is semantically odd but is what was requested — honored as-is.
 
 ### Distribution
 
-`Formula/meister.rb`: add `bin.install "meisterSiri.sh" => "meisterSiri"` next to the existing
+`Formula/meister.rb`: add `bin.install "MeisterAI.sh" => "MeisterAI"` next to the existing
 `meister` install, and `depends_on "jq"`. Both land on PATH after `brew upgrade`.
 
 ## Resolved decision — orphan kept
 
-The orphan `~/bin/meisterSiri` binary + `.swift` + shell alias stays **as-is**. It is a
+The orphan `~/bin/MeisterAI` binary + `.swift` + shell alias stays **as-is**. It is a
 distinct, working conversational REPL (multi-turn Apple-Intelligence chat) and is out of
 scope for this change. No deletion, no touching `~/bin`. The twin CLIs do not replace it.
 
@@ -109,13 +109,13 @@ scope for this change. No deletion, no touching `~/bin`. The twin CLIs do not re
 - `ai_heal` dry-run exercises `fm_available` / `fm_query`.
 - Graceful degrade: backend absent (Ollama down / Apple Intelligence off) → AI features skip,
   maintenance modules still run.
-- Regression: `diff meister.sh meisterSiri.sh` → only the AI section + branding differ.
+- Regression: `diff meister.sh MeisterAI.sh` → only the AI section + branding differ.
 
 ## Rollout
 
 1. Worktree off the tap repo (`homebrew-meister`).
-2. `meisterSiri.sh` = copy of current v6.0 Apple, rebranded.
+2. `MeisterAI.sh` = copy of current v6.0 Apple, rebranded.
 3. Convert `meister.sh` AI section → thin Ollama path (keep `fm_*` names).
 4. Update `Formula/meister.rb` (install + `depends_on "jq"`).
 5. Test both twins.
-6. Commit, bump the tap. (Orphan `~/bin/meisterSiri` left untouched.)
+6. Commit, bump the tap. (Orphan `~/bin/MeisterAI` left untouched.)

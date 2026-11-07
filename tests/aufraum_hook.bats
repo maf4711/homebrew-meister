@@ -30,12 +30,10 @@ setup() {
 }
 
 @test "operator missing when AUFRAUM_OPERATOR points nowhere" {
-  AUFRAUM_OPERATOR="/no/such/aufraum.py"
-  # also hide default path by pointing HOME at empty tmp
-  HOME=$(mktemp -d)
+  # An explicit operator is authoritative; a missing file must not fall back.
+  AUFRAUM_OPERATOR="${BATS_TEST_TMPDIR}/missing-aufraum.py"
   run aufraum_operator
   [ "$status" -eq 1 ]
-  rm -rf "$HOME"
 }
 
 @test "count_planned counts space-arrow-space lines" {
