@@ -28,6 +28,19 @@ purge_js() {
     "$PURGE_OSASCRIPT" -l JavaScript "$PURGE_JS" "$@"
 }
 
+# check/evict with live progress on stderr when it is a terminal (PURGE_PROGRESS=1/0 overrides).
+purge_js_scan() {
+    local progress="${PURGE_PROGRESS:-}"
+    if [ -z "$progress" ]; then
+        if [ -t 2 ]; then progress=1; else progress=0; fi
+    fi
+    if [ "$progress" = 1 ]; then
+        PURGE_PROGRESS=1 purge_js "$@"
+    else
+        PURGE_PROGRESS=0 purge_js "$@" 2>/dev/null
+    fi
+}
+
 purge_data_volume() {
     if [ -d /System/Volumes/Data ]; then echo /System/Volumes/Data; else echo /; fi
 }
@@ -121,6 +134,8 @@ cmd_purge() {
         "$(purge_fmt_bytes "$purgeable_before")" "$(purge_fmt_bytes "$free_before")" \
         "$(purge_fmt_bytes "$imp_before")" "$(purge_fmt_bytes "${total:-0}")"
     $apply || echo "  [PREVIEW — nothing is changed]"
+    $apply || echo "  Note: Finder's \"Available\" already includes purgeable space and will not grow;"
+    $apply || echo "        purge turns purgeable into truly free space."
     echo ""
 
     # 1. Local Time Machine snapshots (only for a full run, not for explicit paths)
@@ -147,7 +162,7 @@ cmd_purge() {
         $apply && mode=evict
         echo "  iCloud files unchanged in the last $days days, at least ${min_mb} MB:"
         for p in "${paths[@]}"; do
-            result=$(purge_candidates "$p" "$days" "$min_mb" | purge_js "$mode" "$p" 2>/dev/null)
+            result=$(purge_candidates "$p" "$days" "$min_mb" | purge_js_scan "$mode" "$p")
             ok=$(_purge_field "$result" ok); bytes=$(_purge_field "$result" bytes); failed=$(_purge_field "$result" failed)
             if ! [[ "${ok:-}" =~ ^[0-9]+$ ]]; then
                 echo "    $p: could not be checked"
@@ -185,6 +200,9 @@ cmd_purge() {
             echo "  Free space has not grown yet — macOS can release it with a delay."
         fi
         printf "  %-18s %s\n" "Purgeable after:" "$(purge_fmt_bytes "$purgeable_after")"
+        echo ""
+        echo "  Finder's \"Available\" stays the same: it already counted purgeable space."
+        echo "  The space moved from purgeable to free. Reopen Get Info (Cmd+I) to see it."
     else
         echo "  Could not re-measure the volume."
     fi

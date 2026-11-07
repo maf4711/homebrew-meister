@@ -24,6 +24,7 @@ setup() {
         fi ;;
       check|evict)
         tr '\0' '\n' >> "$MEISTER_DIR/stdin-$mode"
+        echo "progress-from-js" >&2
         if [ "$mode" = check ]; then
           echo "ok=10 bytes=150000000000 failed=0 skipped=2"
         else
@@ -152,4 +153,36 @@ old_file() { # path size_bytes
     grep -q 'commands/purge.sh' "$BATS_TEST_DIRNAME/../$script"
     grep -qE '^  (MeisterAI|meister) purge ' "$BATS_TEST_DIRNAME/../$script"
   done
+}
+
+@test "--do explains that Finder's Available stays the same while purgeable turns into free" {
+  run cmd_purge --do
+  [ "$status" = 0 ]
+  [[ "$output" == *'Available'*'stays the same'* ]]
+  [[ "$output" == *'purgeable to free'* ]]
+  [[ "$output" == *'Cmd+I'* ]]
+}
+
+@test "preview warns up front that Finder's Available will not grow" {
+  run cmd_purge
+  [ "$status" = 0 ]
+  [[ "$output" == *'Available'*'will not grow'* ]]
+}
+
+@test "progress from the helper is shown only when enabled" {
+  PURGE_PROGRESS=1 run cmd_purge
+  [[ "$output" == *'progress-from-js'* ]]
+  PURGE_PROGRESS=0 run cmd_purge
+  [[ "$output" != *'progress-from-js'* ]]
+}
+
+@test "real JXA helper reports progress on stderr when PURGE_PROGRESS=1" {
+  command -v osascript >/dev/null 2>&1 || skip "no osascript"
+  unset -f osascript
+  f="$BATS_TEST_TMPDIR/local.bin"; head -c 1000 /dev/zero > "$f"
+  out=$(printf '%s\0' "$f" | PURGE_PROGRESS=1 osascript -l JavaScript "$BATS_TEST_DIRNAME/../lib/commands/purge.js" check X 2>"$BATS_TEST_TMPDIR/err")
+  [[ "$out" == "ok=0 bytes=0 failed=0 skipped=1" ]]
+  grep -q '1/1' "$BATS_TEST_TMPDIR/err"
+  out=$(printf '%s\0' "$f" | PURGE_PROGRESS=0 osascript -l JavaScript "$BATS_TEST_DIRNAME/../lib/commands/purge.js" check X 2>"$BATS_TEST_TMPDIR/err")
+  [ ! -s "$BATS_TEST_TMPDIR/err" ]
 }
