@@ -177,8 +177,8 @@ old_file() { # path size_bytes
 }
 
 @test "real JXA helper reports progress on stderr when PURGE_PROGRESS=1" {
-  command -v osascript >/dev/null 2>&1 || skip "no osascript"
   unset -f osascript
+  command -v osascript >/dev/null 2>&1 || skip "no osascript"
   f="$BATS_TEST_TMPDIR/local.bin"; head -c 1000 /dev/zero > "$f"
   out=$(printf '%s\0' "$f" | PURGE_PROGRESS=1 osascript -l JavaScript "$BATS_TEST_DIRNAME/../lib/commands/purge.js" check X 2>"$BATS_TEST_TMPDIR/err")
   [[ "$out" == "ok=0 bytes=0 failed=0 skipped=1" ]]
