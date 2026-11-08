@@ -186,3 +186,11 @@ old_file() { # path size_bytes
   out=$(printf '%s\0' "$f" | PURGE_PROGRESS=0 osascript -l JavaScript "$BATS_TEST_DIRNAME/../lib/commands/purge.js" check X 2>"$BATS_TEST_TMPDIR/err")
   [ ! -s "$BATS_TEST_TMPDIR/err" ]
 }
+
+@test "apply hint and usage name the CLI that was invoked" {
+  PURGE_CMD=MeisterAI run cmd_purge
+  [ "$status" = 0 ]
+  [[ "$output" == *'Apply with: MeisterAI purge --do'* ]]
+  PURGE_CMD=MeisterAI run cmd_purge --help
+  [[ "$output" == *'Usage: MeisterAI purge'* ]]
+}
