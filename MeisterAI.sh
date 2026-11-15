@@ -3824,8 +3824,9 @@ module_spotlight_fix() {
     while IFS= read -r vol; do
         [ -z "$vol" ] && continue
         # Skip internal APFS / simulator / recovery volumes and sealed read-only
-        # cryptex mounts (mdutil always errors or is meaningless). Match prefixes — INSIGHTS #3: Update/mnt1 + SFR/mnt1
-        # were permanent false ERRORs when only the exact path was whitelisted.
+        # cryptex mounts (mdutil always errors or is meaningless). Match prefixes —
+        # INSIGHTS #3: Update/mnt1 + SFR/mnt1 were permanent false ERRORs when only
+        # the exact path was whitelisted.
         case "$vol" in
             /System/Volumes/VM|/System/Volumes/VM/*)                 continue ;;
             /System/Volumes/Preboot|/System/Volumes/Preboot/*)       continue ;;
