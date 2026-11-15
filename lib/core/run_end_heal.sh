@@ -165,6 +165,10 @@ run_end_heal() {
         fi
         RUN_END_HEAL_ATTEMPTED=$((RUN_END_HEAL_ATTEMPTED + 1))
         read -r fn arg _ <<< "${cmds[$i]}"
+        # Like the module call site: pre-authenticate, attempt regardless.
+        if command -v ensure_sudo >/dev/null 2>&1; then
+            ensure_sudo "run-end cask reinstall: $arg" 2>/dev/null || true
+        fi
         if eval "${cmds[$i]}"; then
             RUN_END_HEAL_VERIFIED=$((RUN_END_HEAL_VERIFIED + 1))
             VERIFIED_REPAIR_COUNT=$((${VERIFIED_REPAIR_COUNT:-0} + 1))

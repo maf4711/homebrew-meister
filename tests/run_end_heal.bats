@@ -16,6 +16,7 @@ setup() {
   brew() { echo "real brew must not run: $*" >&2; return 99; }
   brew_cask_repair() {
     printf '%s\n' "$*" >> "$MEISTER_DIR/stub-calls"
+    printf 'repair %s\n' "$1" >> "$MEISTER_DIR/order"
     return "${STUB_RC:-0}"
   }
   DRY_RUN=false
@@ -225,4 +226,38 @@ LOG
   again
   [ "$(stub_calls)" -eq 3 ]
   [ "$RUN_END_HEAL_ATTEMPTED" -eq 1 ]
+}
+
+@test "sudo is prepared once before each attempted run-end repair" {
+  ensure_sudo() { printf 'sudo %s\n' "$*" >> "$MEISTER_DIR/order"; return 1; }
+  two() {
+    REPORT_WARNINGS=()
+    REPORT_FIXED=()
+    local c
+    for c in alpha beta; do
+      stale_capture "$c" "$D/cask-$c.S1"
+      REPORT_WARNINGS+=("Homebrew: $c upgrade failed (exit 1); log: $D/cask-$c.S1")
+    done
+    REPORT_WARNINGS+=("Homebrew: alpha upgrade failed (exit 1); log: $D/cask-alpha.S1")
+  }
+  two
+  run_end_heal > "$D/out"
+  # ensure_sudo failing does not stop the attempt (same as the module call site)
+  [ "$(cat "$MEISTER_DIR/order")" = "$(printf '%s\n' 'sudo run-end cask reinstall: alpha' 'repair alpha' 'sudo run-end cask reinstall: beta' 'repair beta')" ]
+
+  for gate in DRY_RUN=true RUN_END_HEAL=false RUN_STATUS=partial INTERRUPTED=true RUN_END_HEAL_MAX_SEC=0 RUN_END_HEAL_MAX_ATTEMPTS=0; do
+    rm -f "$MEISTER_DIR/order"
+    two
+    env_name=${gate%%=*}
+    eval "local $gate"
+    run_end_heal > "$D/out"
+    eval "unset $env_name"
+    DRY_RUN=false; RUN_END_HEAL=true; RUN_STATUS=completed; INTERRUPTED=false
+    [ ! -e "$MEISTER_DIR/order" ]
+  done
+
+  rm -f "$MEISTER_DIR/order"
+  two
+  RUN_END_HEAL_MAX_ATTEMPTS=1 run_end_heal > "$D/out"
+  [ "$(grep -c '^sudo ' "$MEISTER_DIR/order")" -eq 1 ]
 }
