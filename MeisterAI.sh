@@ -9927,8 +9927,24 @@ if [ "${1:-}" = "report" ]; then
 fi
 
 if [ "${1:-}" = "free" ]; then
+    DRY_RUN=false
+    _free_restart_ui=false
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            --restart-ui) _free_restart_ui=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see MeisterAI -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     echo -e "\033[1;34m  MeisterAI FREE — Free up RAM & reset UI\033[0m"
     echo ""
+    if $DRY_RUN; then
+        echo "  [DRY-RUN MODE — no changes]"
+        run_or_dry sudo purge
+        $_free_restart_ui && run_or_dry killall Finder Dock SystemUIServer
+        exit 0
+    fi
     _ram_before=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
     echo "  RAM free before: ${_ram_before} MB"
     echo "  Running sudo purge (may take 10-30s)..."
@@ -9938,7 +9954,7 @@ if [ "${1:-}" = "free" ]; then
     else
         echo "  Purge needs sudo"
     fi
-    if [ "${2:-}" = "--restart-ui" ]; then
+    if $_free_restart_ui; then
         echo "  Restarting Finder + Dock..."
         killall Finder 2>/dev/null
         killall Dock 2>/dev/null
