@@ -7945,10 +7945,16 @@ fi
 
 # ── Simulator Fix (meister simfix) ──
 if [ "${1:-}" = "simfix" ]; then
+    DRY_RUN=false
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     echo -e "\033[1;34m  meister SIMFIX — Repair iOS Simulator\033[0m"
     echo ""
-    DRY_RUN=false
-    [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
     MODULE_TOTAL=1
     start_bw_monitor
@@ -8847,7 +8853,13 @@ autofix_known_issues() {
 # Feeds the last run's warnings/errors + live system facts to the on-device
 # model and prints a prioritized diagnosis. Read-only, nothing runs.
 if [ "${1:-}" = "autofix" ]; then
-    [ "${2:-}" = "--dry-run" ] || [ "${2:-}" = "-n" ] && DRY_RUN=true
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     start_run_report autofix || exit 1
     # Need log helpers + sudo helpers already defined (we are past function defs)
     rotate_logs 2>/dev/null || true
@@ -9886,10 +9898,16 @@ fi
 
 # ── Healer (meister heal) ──
 if [ "${1:-}" = "heal" ]; then
+    DRY_RUN=false
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     echo -e "\033[1;34m  meister HEAL — Auto-Healing\033[0m"
     echo ""
-    DRY_RUN=false
-    [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
     start_run_report heal || exit 1
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
     # One sudo auth (or reuse ticket) — no mid-run prompts
