@@ -3772,8 +3772,8 @@ module_spotlight_fix() {
     local volumes_broken=0
     while IFS= read -r vol; do
         [ -z "$vol" ] && continue
-        # Skip internal APFS / simulator / recovery volumes (mdutil always errors
-        # or is meaningless). Match prefixes — INSIGHTS #3: Update/mnt1 + SFR/mnt1
+        # Skip internal APFS / simulator / recovery volumes and sealed read-only
+        # cryptex mounts (mdutil always errors or is meaningless). Match prefixes — INSIGHTS #3: Update/mnt1 + SFR/mnt1
         # were permanent false ERRORs when only the exact path was whitelisted.
         case "$vol" in
             /System/Volumes/VM|/System/Volumes/VM/*)                 continue ;;
@@ -3786,6 +3786,7 @@ module_spotlight_fix() {
             /Library/Developer/CoreSimulator|/Library/Developer/CoreSimulator/*) continue ;;
             /Volumes/Recovery|/Volumes/Recovery/*)                  continue ;;
             /System/Volumes/Recovery|/System/Volumes/Recovery/*)    continue ;;
+            /private/var/run/com.apple.security.cryptexd|/private/var/run/com.apple.security.cryptexd/*) continue ;;
         esac
         volumes_checked=$((volumes_checked + 1))
         local vol_status=$(mdutil -s "$vol" 2>/dev/null)
