@@ -194,3 +194,81 @@ old_file() { # path size_bytes
   PURGE_CMD=MeisterAI run cmd_purge --help
   [[ "$output" == *'Usage: MeisterAI purge'* ]]
 }
+
+# ── macOS purge service (what Finder counts as purgeable beyond snapshots/iCloud) ──
+with_purge_service() { # purgeable_bytes
+  eval "base_$(declare -f osascript)"
+  SERVICE_BYTES="$1"
+  osascript() {
+    case "${4:-}" in
+      purgeable)
+        printf 'osascript purgeable %s\n' "${5:-}" >> "$MEISTER_DIR/calls"
+        [ "$SERVICE_BYTES" = fail ] && return 1
+        echo "$SERVICE_BYTES" ;;
+      *) base_osascript "$@" ;;
+    esac
+  }
+  swift() {
+    printf 'swift release %s %s\n' "${2:-}" "${3:-}" >> "$MEISTER_DIR/calls"
+    [ "${SWIFT_FAILS:-false}" = true ] && return 1
+    echo "released=${3:-0}"
+  }
+}
+
+@test "preview shows what the macOS purge service can release and releases nothing" {
+  with_purge_service 202000000000
+  run cmd_purge
+  [ "$status" = 0 ]
+  [[ "$output" == *'macOS can release:'*'202.0 GB'* ]]
+  grep -q '^osascript purgeable ' "$MEISTER_DIR/calls"
+  ! grep -q '^swift release' "$MEISTER_DIR/calls"
+}
+
+@test "--do asks the macOS purge service to release the reported amount after snapshots and iCloud" {
+  with_purge_service 202000000000
+  run cmd_purge --do
+  [ "$status" = 0 ]
+  [ "$(grep -c '^swift release ' "$MEISTER_DIR/calls")" = 1 ]
+  grep -qE '^swift release (/System/Volumes/Data|/) 202000000000$' "$MEISTER_DIR/calls"
+  last_evict=$(grep -n '^osascript evict' "$MEISTER_DIR/calls" | tail -1 | cut -d: -f1)
+  release=$(grep -n '^swift release' "$MEISTER_DIR/calls" | cut -d: -f1)
+  [ "$release" -gt "$last_evict" ]
+  [[ "$output" == *'macOS released: 202.0 GB'* ]]
+}
+
+@test "--do with an explicit path or --no-system never calls the macOS purge service" {
+  with_purge_service 202000000000
+  mkdir -p "$HOME/Documents/Archive"
+  run cmd_purge --do "$HOME/Documents/Archive"
+  [ "$status" = 0 ]
+  run cmd_purge --do --no-system
+  [ "$status" = 0 ]
+  ! grep -q '^swift release\|^osascript purgeable' "$MEISTER_DIR/calls"
+}
+
+@test "an unavailable or empty macOS purge service is reported and the run continues" {
+  with_purge_service fail
+  run cmd_purge --do
+  [ "$status" = 0 ]
+  [[ "$output" == *'macOS purge service: unavailable'* ]]
+  ! grep -q '^swift release' "$MEISTER_DIR/calls"
+  [[ "$output" == *'Freed: 200.0 GB'* ]]
+  SERVICE_BYTES=0
+  run cmd_purge --do
+  [ "$status" = 0 ]
+  ! grep -q '^swift release' "$MEISTER_DIR/calls"
+}
+
+@test "a failing release is reported as not done and never as released" {
+  with_purge_service 202000000000
+  SWIFT_FAILS=true
+  run cmd_purge --do
+  [ "$status" = 0 ]
+  [[ "$output" == *'release failed or Swift is missing'* ]]
+  [[ "$output" != *'macOS released:'* ]]
+}
+
+@test "usage documents --no-system" {
+  run cmd_purge --help
+  [[ "$output" == *'--no-system'* ]]
+}

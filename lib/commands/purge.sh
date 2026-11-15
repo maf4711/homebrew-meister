@@ -8,10 +8,16 @@
 #   2. remove local copies of iCloud Drive / Desktop / Documents files that are
 #      fully uploaded and unchanged for N days (they stay in iCloud and Finder,
 #      a double-click downloads them again)
+#   3. ask the macOS purge service to release the rest — macOS picks what goes
+#      (caches, optimised media, iCloud copies of any age, ignoring --days);
+#      it is data macOS would drop on its own when the disk fills.
+#      --no-system skips this step.
 # Default is a read-only preview; --do applies. Bash 3.2 compatible.
 
 PURGE_OSASCRIPT="${PURGE_OSASCRIPT:-osascript}"
 PURGE_JS="${PURGE_JS:-$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/purge.js}"
+PURGE_SWIFT="${PURGE_SWIFT:-swift}"
+PURGE_RELEASE_SWIFT="${PURGE_RELEASE_SWIFT:-${PURGE_JS%/*}/purge-release.swift}"
 
 # Decimal units, like Finder.
 purge_fmt_bytes() {
@@ -50,6 +56,23 @@ purge_volume() {
     purge_js volume "$(purge_data_volume)" 2>/dev/null
 }
 
+# Bytes the macOS purge service says it can release; empty when it cannot be asked.
+purge_system_purgeable() {
+    local bytes
+    bytes=$(purge_js purgeable "$(purge_data_volume)" 2>/dev/null) || return 0
+    [[ "$bytes" =~ ^[0-9]+$ ]] && echo "$bytes"
+}
+
+# Asks the purge service to release up to $1 bytes; prints the bytes it reports, or nothing.
+purge_system_release() {
+    local out
+    command -v "$PURGE_SWIFT" >/dev/null 2>&1 && [ -f "$PURGE_RELEASE_SWIFT" ] || return 1
+    out=$("$PURGE_SWIFT" "$PURGE_RELEASE_SWIFT" "$(purge_data_volume)" "$1" 2>/dev/null) || return 1
+    out=${out#released=}
+    [[ "$out" =~ ^[0-9]+$ ]] && echo "$out"
+    return 0
+}
+
 # iCloud Drive itself plus Desktop/Documents when "Desktop & Documents" sync is on.
 purge_icloud_roots() {
     local cloud="$HOME/Library/Mobile Documents/com~apple~CloudDocs" name
@@ -86,20 +109,24 @@ _purge_usage() {
     echo "  Usage: ${PURGE_CMD:-meister} purge [--do] [--days N] [--min-mb N] [path ...]"
     cat <<'USAGE'
     (no flags)   Preview: purgeable space, snapshots, evictable iCloud files
-    --do         Thin local snapshots and remove local iCloud copies
+    --do         Thin local snapshots, remove local iCloud copies, then let
+                 macOS release the rest of its purgeable space
     --days N     Keep files changed in the last N days local (default 30)
     --min-mb N   Only files of at least N MB (default 1, 0 = all)
     path ...     Only these iCloud folders; snapshots are left alone
+    --no-system  Skip the last step, where macOS releases everything it marks
+                 purgeable (also iCloud copies newer than --days)
 USAGE
 }
 
 cmd_purge() {
-    local apply=false days=30 min_mb=1 paths=() arg
+    local apply=false days=30 min_mb=1 paths=() arg system=true
     while [ $# -gt 0 ]; do
         arg="$1"
         case "$arg" in
             --do) apply=true ;;
             -n|--dry-run) apply=false ;;
+            --no-system) system=false ;;
             --days|--min-mb)
                 if ! [[ "${2:-}" =~ ^[0-9]+$ ]]; then
                     echo "  $arg needs a whole number"; _purge_usage; return 2
@@ -137,6 +164,9 @@ cmd_purge() {
     $apply || echo "  Note: Finder's \"Available\" already includes purgeable space and will not grow;"
     $apply || echo "        purge turns purgeable into truly free space."
     echo ""
+
+    # Explicit paths limit the run to those folders: no snapshots, no system purge.
+    [ ${#paths[@]} -eq 0 ] || system=false
 
     # 1. Local Time Machine snapshots (only for a full run, not for explicit paths)
     if [ ${#paths[@]} -eq 0 ]; then
@@ -183,6 +213,26 @@ cmd_purge() {
         echo "  Files stay in iCloud and in Finder; opening one downloads it again."
     fi
     echo ""
+
+    # 3. Everything else macOS marks purgeable. Asked last, so the amount is what is still left.
+    if $system; then
+        local sys_bytes
+        sys_bytes=$(purge_system_purgeable)
+        if [ -z "$sys_bytes" ]; then
+            echo "  macOS purge service: unavailable — system-managed purgeable space was not touched."
+        elif ! $apply; then
+            printf "  %-18s %s  (all purgeable data: caches, iCloud copies of any age)\n" "macOS can release:" "$(purge_fmt_bytes "$sys_bytes")"
+        elif [ "$sys_bytes" -gt 0 ]; then
+            echo "  Asking macOS to release $(purge_fmt_bytes "$sys_bytes") of purgeable space (can take several minutes)..."
+            local sys_released
+            if sys_released=$(purge_system_release "$sys_bytes"); then
+                echo "  macOS released: ${sys_released:+$(purge_fmt_bytes "$sys_released") }(reported by the purge service; measured result below)"
+            else
+                echo "  macOS purge service: release failed or Swift is missing — system-managed purgeable space was not touched."
+            fi
+        fi
+        echo ""
+    fi
 
     if ! $apply; then
         echo "  Apply with: ${PURGE_CMD:-meister} purge --do"
