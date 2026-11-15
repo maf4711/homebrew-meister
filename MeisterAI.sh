@@ -2111,7 +2111,7 @@ module_homebrew() {
     for entry in "${brew_formula_failures[@]}"; do
         IFS='|' read -r f_name f_rc f_capture <<< "$entry"
         if [ "$formula_verify_rc" -ne 0 ] ||
-            printf '%s\n' "$still_outdated_formulae" | awk '{print $1}' | sed 's|.*/||' | grep -Fxq -- "$f_name"; then
+            printf '%s\n' "$still_outdated_formulae" | awk '{print $1}' | sed 's|.*/||' | grep -Fxq -- "${f_name##*/}"; then
             if command -v brew_record_upgrade_failure >/dev/null 2>&1; then
                 brew_record_upgrade_failure formula "$f_name" "$f_rc" "$f_capture"
             else

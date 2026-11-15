@@ -191,9 +191,12 @@ stale_conflict_live() {
     printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
     case "$*" in
       'outdated --formula')
-        if [ -f "$MEISTER_DIR/formula-listed" ]; then return "${READBACK_RC:-0}"; fi
+        if [ -f "$MEISTER_DIR/formula-listed" ]; then
+          [ -n "${STILL_LISTED:-}" ] && echo "$STILL_LISTED"
+          return "${READBACK_RC:-0}"
+        fi
         touch "$MEISTER_DIR/formula-listed"
-        echo ada-url ;;
+        echo "${FORMULA:-ada-url}" ;;
     esac
     return 0
   }
@@ -209,4 +212,9 @@ stale_conflict_live() {
   : > "$MEISTER_DIR/report"; rm -f "$MEISTER_DIR/formula-listed"
   READBACK_RC=2 run module_homebrew
   [ "$(grep -c 'WARN.*ada-url.*failed' "$MEISTER_DIR/report")" = 1 ]
+
+  # Tap-qualified formula still listed by a successful readback keeps its warning.
+  : > "$MEISTER_DIR/report"; rm -f "$MEISTER_DIR/formula-listed"
+  FORMULA=example/tap/tool STILL_LISTED=example/tap/tool run module_homebrew
+  [ "$(grep -c 'WARN Homebrew: example/tap/tool upgrade failed' "$MEISTER_DIR/report")" = 1 ]
 }
