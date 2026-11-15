@@ -43,8 +43,11 @@ stub_calls() {
 
 @test "finding with a repairer gets exactly one attempt" {
   stale_capture hp-easy-start "$D/cask-hp-easy-start.AbC"
-  printf '==> Upgrading docker-desktop\nError: SIGTERM\n' > "$D/cask-docker-desktop.XyZ"
-  printf '==> Upgrading ada-url\nError: ada-url: failed to build\n' > "$D/formula-ada-url.WL6"
+  # Both carry a stale-artifact conflict, so only the timeout rule and the
+  # cask- evidence rule can be what rejects them.
+  stale_capture docker-desktop "$D/cask-docker-desktop.XyZ"
+  printf 'Error: SIGTERM\n' >> "$D/cask-docker-desktop.XyZ"
+  stale_capture ada-url "$D/formula-ada-url.WL6"
   findings=(
     "Homebrew: hp-easy-start upgrade failed (exit 1); log: $D/cask-hp-easy-start.AbC"
     "Homebrew: hp-easy-start upgrade failed (exit 1); log: $D/cask-hp-easy-start.AbC"
@@ -55,7 +58,7 @@ stub_calls() {
   REPORT_WARNINGS=("${findings[@]}")
   run_end_heal > "$D/out"
   [ "$(stub_calls)" -eq 1 ]
-  [[ "$(cat "$MEISTER_DIR/stub-calls")" == "hp-easy-start "* ]]
+  [ "$(cat "$MEISTER_DIR/stub-calls")" = "hp-easy-start $D/cask-hp-easy-start.AbC true" ]
   for f in "Homebrew: docker-desktop upgrade failed" "Homebrew: ada-url upgrade failed" "6 new entries in Documents root"; do
     [ "$(grep -cF -- "Run-end heal: no automatic repair — $f" "$D/out")" -eq 1 ]
   done
@@ -99,7 +102,8 @@ stub_calls() {
   unresolved='Run-end heal: unresolved — Homebrew: hp-easy-start upgrade failed'
   one_run() {
     stale_capture hp-easy-start "$D/cask-hp-easy-start.R$1"
-    REPORT_WARNINGS=("Homebrew: hp-easy-start upgrade failed (exit 1); log: $D/cask-hp-easy-start.R$1")
+    # The exit code varies between runs; the finding stays the same subject.
+    REPORT_WARNINGS=("Homebrew: hp-easy-start upgrade failed (exit $1); log: $D/cask-hp-easy-start.R$1")
     REPORT_FIXED=()
     run_end_heal > "$D/out$1"
   }
