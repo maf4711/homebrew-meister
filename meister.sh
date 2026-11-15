@@ -10022,7 +10022,7 @@ for arg in "$@"; do
                 bloatware|kill-bloat|bloat|remove|uninstall|orphans|report|doctor|watch|clip|keys|ai|heal|free)
                     _NEW_ARGS+=("$arg") ;;
                 *)
-                    echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
+                    printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$arg" >&2; exit 64 ;;
             esac
             ;;
         *)         _NEW_ARGS+=("$arg") ;;
@@ -10178,7 +10178,7 @@ Docs: docs/PRODUCT.md  docs/GUI.md
   Tip: meister --quick daily · meister --deep weekly
 HELPEOF
        exit 0 ;;
-    \?) log ERROR "Unknown option: -$OPTARG"; exit 1 ;;
+    \?) printf '[ERROR] Unknown command or argument: -%s (see meister -h)\n' "$OPTARG" >&2; exit 64 ;;
   esac
 done
 
