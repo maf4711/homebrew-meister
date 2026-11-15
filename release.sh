@@ -21,6 +21,8 @@ FORMULA="$SCRIPT_DIR/Formula/meister.rb"
 REPO="maf4711/homebrew-meister"
 APP_ZIP="$SCRIPT_DIR/app/MeisterAI/dist/MeisterAI-macOS.zip"
 CASK="$SCRIPT_DIR/Casks/meister-mac.rb"
+# shellcheck source=scripts/release-lib.sh
+. "$SCRIPT_DIR/scripts/release-lib.sh"
 
 release_verify_app_zip() {
     python3 - "$1" "$2" <<'PY'
@@ -102,10 +104,14 @@ echo "Pushed (HEAD = $(git rev-parse --short HEAD))"
 echo ""
 echo "--- Step 2: GitHub Release v${VERSION} ---"
 TARGET_SHA=$(git rev-parse HEAD)
-if gh release view "v${VERSION}" -R "$REPO" &>/dev/null; then
-    echo "ERROR: Release v${VERSION} already exists. Bump the version; published tags are immutable." >&2
+RELEASE_STATE=$(release_existing_state "$REPO" "$VERSION" "$TARGET_SHA")
+if [ "$RELEASE_STATE" = conflict ]; then
+    echo "ERROR: Release v${VERSION} already exists on another commit. Bump the version; published tags are immutable." >&2
     exit 1
 fi
+if [ "$RELEASE_STATE" = resume ]; then
+    echo "Release v${VERSION} already exists at $TARGET_SHA — resuming with the remaining steps."
+else
 NOTES_FILE=$(mktemp)
 if [ -f "$SCRIPT_DIR/docs/releases/${VERSION}.md" ]; then
     cat "$SCRIPT_DIR/docs/releases/${VERSION}.md" > "$NOTES_FILE"
@@ -125,6 +131,7 @@ gh release create "v${VERSION}" -R "$REPO" \
     --notes-file "$NOTES_FILE"
 rm -f "$NOTES_FILE"
 echo "Release created at $TARGET_SHA: https://github.com/$REPO/releases/tag/v${VERSION}"
+fi
 
 APP_RELEASED_VERSION=""
 if [ -f "$APP_ZIP" ]; then
@@ -151,19 +158,13 @@ fi
 # 3. Get SHA256 of tarball
 echo ""
 echo "--- Step 3: Calculate SHA256 ---"
-TARBALL_URL="https://github.com/$REPO/archive/refs/tags/v${VERSION}.tar.gz"
+TARBALL_URLS=()
+while IFS= read -r url; do TARBALL_URLS+=("$url"); done < <(release_tarball_urls "$REPO" "$VERSION")
+TARBALL_URL="${TARBALL_URLS[0]}"
 TMPTAR=$(mktemp)
-# GitHub can lag briefly after release create
-for i in 1 2 3 4 5; do
-    if curl -fsSL "$TARBALL_URL" -o "$TMPTAR"; then
-        break
-    fi
-    echo "Tarball not ready yet (try $i)..."
-    sleep 2
-done
-[ -s "$TMPTAR" ] || { echo "ERROR: Release tarball download failed" >&2; exit 1; }
+# GitHub can lag after release create, and the archive URL can 504 while codeload works.
+release_fetch_tarball "$TMPTAR" "${TARBALL_URLS[@]}" || { echo "ERROR: Release tarball download failed; rerun ./release.sh to resume" >&2; exit 1; }
 SHA=$(shasum -a 256 "$TMPTAR" | awk '{print $1}')
-rm -f "$TMPTAR"
 echo "URL:     $TARBALL_URL"
 echo "SHA256:  $SHA"
 
@@ -190,6 +191,8 @@ fi
 # 6. ALWAYS install locally after release (mandatory)
 echo ""
 echo "--- Step 6: Local install (MERKREGEL: immer nach Release) ---"
+release_seed_brew_cache "$TMPTAR" "$TARBALL_URL" "$VERSION" || echo "WARN: could not seed the Homebrew cache" >&2
+rm -f "$TMPTAR"
 INSTALL_ARGS=("$VERSION")
 if [ -n "$APP_RELEASED_VERSION" ]; then
     INSTALL_ARGS+=(--app-version "$APP_RELEASED_VERSION")

@@ -190,6 +190,7 @@ SH
   fixture="$TEST_ROOT/release"
   mkdir -p "$fixture/app/MeisterAI/dist"
   cp "$ROOT/release.sh" "$fixture/release.sh"
+  mkdir -p "$fixture/scripts" && cp "$ROOT/scripts/release-lib.sh" "$fixture/scripts/"
   printf '# Version: %s\n' "$TARGET_VERSION" > "$fixture/meister.sh"
   python3 - "$fixture/app/MeisterAI/dist/MeisterAI-macOS.zip" <<'PY'
 import plistlib, sys, zipfile
