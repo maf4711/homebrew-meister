@@ -92,6 +92,10 @@ write_last_json() {
         printf ',\n  "would_fix": '
         if "$dry"; then meister_json_array "${REPORT_WOULD_FIX[@]}" "${REPORT_FIXED[@]}"; else meister_json_array "${REPORT_WOULD_FIX[@]}"; fi
         printf ',\n  "modules": '; meister_json_modules
+        printf ',\n  "run_end_heal": {"attempted": %s, "verified": %s, "unresolved": %s, "skipped": %s, "unrepairable": %s}' \
+            "$(meister_json_number "${RUN_END_HEAL_ATTEMPTED:-0}")" "$(meister_json_number "${RUN_END_HEAL_VERIFIED:-0}")" \
+            "$(meister_json_number "${RUN_END_HEAL_UNRESOLVED:-0}")" "$(meister_json_number "${RUN_END_HEAL_SKIPPED:-0}")" \
+            "$(meister_json_number "${RUN_END_HEAL_UNREPAIRABLE:-0}")"
         printf ',\n  "ai_heal_mode": '; meister_json_string "$ai_mode"
         printf ',\n  "twin": '; meister_json_string "$twin"
         printf ',\n  "ai_backend": '; meister_json_string "${AI_BACKEND_KIND:-unknown}"

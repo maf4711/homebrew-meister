@@ -150,3 +150,22 @@ PYTEST
   grep -q '"preferred_twin": "meister"' "$MEISTER_DIR/last.json"
   grep -q '"twin": "meister"' "$MEISTER_DIR/last.json"
 }
+
+@test "run-end heal counts are written as integers" {
+  RUN_END_HEAL_ATTEMPTED=2
+  RUN_END_HEAL_VERIFIED=1
+  RUN_END_HEAL_UNRESOLVED=1
+  RUN_END_HEAL_SKIPPED=3
+  RUN_END_HEAL_UNREPAIRABLE=4
+  write_last_json 90 1 1 1 0 0 10 auto 6.45
+  python3 - "$MEISTER_DIR/last.json" <<'PYTEST'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r['schema']=='meister.last/v1'
+assert r['run_end_heal']=={"attempted": 2, "verified": 1, "unresolved": 1, "skipped": 3, "unrepairable": 4}, r.get('run_end_heal')
+assert all(type(v) is int for v in r['run_end_heal'].values())
+keys=list(r)
+assert keys.index('run_end_heal')+1==keys.index('ai_heal_mode'), keys
+assert r['score']==90 and r['warn']==1 and r['heal']==0 and r['ai_heal_mode']=='suggest-only'
+PYTEST
+}
