@@ -83,8 +83,8 @@ _purge_field() {
 }
 
 _purge_usage() {
+    echo "  Usage: ${PURGE_CMD:-meister} purge [--do] [--days N] [--min-mb N] [path ...]"
     cat <<'USAGE'
-  Usage: meister purge [--do] [--days N] [--min-mb N] [path ...]
     (no flags)   Preview: purgeable space, snapshots, evictable iCloud files
     --do         Thin local snapshots and remove local iCloud copies
     --days N     Keep files changed in the last N days local (default 30)
@@ -185,7 +185,7 @@ cmd_purge() {
     echo ""
 
     if ! $apply; then
-        echo "  Apply with: meister purge --do"
+        echo "  Apply with: ${PURGE_CMD:-meister} purge --do"
         return 0
     fi
 

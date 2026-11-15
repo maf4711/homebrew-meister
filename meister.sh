@@ -9772,7 +9772,7 @@ if [ "${1:-}" = "purge" ]; then
     echo ""
     if command -v cmd_purge >/dev/null 2>&1; then
         shift
-        cmd_purge "$@"
+        PURGE_CMD=meister cmd_purge "$@"
         exit $?
     fi
     echo "  lib/commands/purge.sh not loaded (MEISTER_LIB missing)"
