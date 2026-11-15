@@ -919,6 +919,15 @@ brew_upgrade_each() {
         fi
         rc=$?
         elapsed=$(( $(date +%s) - start ))
+        if [ "$rc" -ne 0 ] && [ "$kind" = cask ] && [ -n "${RUN_VERBOSE_OUT:-}" ] &&
+            command -v brew_cask_repair >/dev/null 2>&1 &&
+            brew_cask_conflict_names < "$RUN_VERBOSE_OUT" | grep -Fxq -- "$name"; then
+            log HEAL "   ${name}: stale artifact blocks the upgrade — one forced reinstall"
+            if BREW_CASK_REPAIR_TIMEOUT="$to" brew_cask_repair "$name" "$RUN_VERBOSE_OUT" "${BREW_UPGRADE_GREEDY:-false}"; then
+                report_add FIX "Homebrew: repaired cask $name (stale artifact; reinstalled and verified current)"
+                rc=0
+            fi
+        fi
         if [ "$rc" -ne 0 ]; then
             if command -v brew_record_upgrade_failure >/dev/null 2>&1; then
                 brew_record_upgrade_failure "$kind" "$name" "$rc" "${RUN_VERBOSE_OUT:-}"
@@ -2189,31 +2198,17 @@ module_homebrew() {
     fi
     BREW_UPGRADE_GREEDY=false
 
-    # Fix #150: Auto-heal cask errors that block batch upgrade
-    local missing_src stale_src
+    # Fix #150: Auto-heal cask errors that block batch upgrade. Stale-artifact
+    # conflicts are repaired per cask inside brew_upgrade_each.
+    local missing_src
     missing_src=$(grep -oE '^[[:space:]]*[a-z0-9][a-z0-9_-]*: It seems the App source' "$cask_out" 2>/dev/null | sed -E 's/^[[:space:]]*([a-z0-9_-]+):.*/\1/' | sort -u)
-    stale_src=$(grep -oE '^[[:space:]]*[a-z0-9][a-z0-9_-]*: It seems there is already an App' "$cask_out" 2>/dev/null | sed -E 's/^[[:space:]]*([a-z0-9_-]+):.*/\1/' | sort -u)
-    local healed=0
-    if [ -n "$missing_src" ] || [ -n "$stale_src" ]; then
+    if [ -n "$missing_src" ] && command -v brew_cask_repair >/dev/null 2>&1; then
         log HEAL "   Auto-healing broken casks..."
-        for name in $stale_src; do
-            local stale_path
-            stale_path=$(grep "^[[:space:]]*${name}: It seems there is already an App at" "$cask_out" | grep -oE "'[^']+'" | head -1 | tr -d "'")
-            if [ -n "$stale_path" ] && [ -e "$stale_path" ]; then
-                log STEP "     $name: removing stale $stale_path"
-                ! $DRY_RUN && rm -rf "$stale_path"
+        for name in $missing_src; do
+            if BREW_CASK_REPAIR_TIMEOUT="$cask_timeout" brew_cask_repair "$name" "$cask_out" "$greedy"; then
+                report_add FIX "Homebrew: repaired cask $name (missing app source; reinstalled and verified current)"
             fi
         done
-        for name in $missing_src $stale_src; do
-            log STEP "     $name: brew reinstall --cask --force"
-            if ! $DRY_RUN; then
-                command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null
-                if brew reinstall --cask --force "$name" >/dev/null 2>&1; then
-                    healed=$((healed + 1))
-                fi
-            fi
-        done
-        [ "$healed" -gt 0 ] && report_add FIX "Auto-healed ${healed} broken cask(s)"
     fi
     rm -f "$cask_out"
 
