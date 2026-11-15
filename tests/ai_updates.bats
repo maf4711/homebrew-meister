@@ -427,3 +427,29 @@ claude_desktop_fixture() {
   [ ! -s "$CALLS" ]
   [[ "$output" != *'SUCCESS'* ]]
 }
+
+@test "stale artifact cask is repaired and verified for AI clients" {
+  source "$BATS_TEST_DIRNAME/../lib/core/brew_upgrade.sh"
+  export CALLS="$BATS_TEST_TMPDIR/calls" FIXED="$BATS_TEST_TMPDIR/reinstalled"
+  brew() {
+    echo "$*" >> "$CALLS"
+    case "$*" in
+      'list --cask') echo chatgpt ;;
+      'outdated --cask --greedy') echo chatgpt ;;
+      'upgrade --cask --greedy chatgpt')
+        printf "Error: chatgpt: It seems there is already an App at '/nonexistent/ChatGPT.app'.\n" >&2
+        return 1 ;;
+      'reinstall --cask --force chatgpt') touch "$FIXED" ;;
+      'outdated --cask --greedy chatgpt') [ -f "$FIXED" ] || { echo chatgpt; return 1; } ;;
+    esac
+  }
+  rc=0
+  ai_update_brew > "$BATS_TEST_TMPDIR/out" || rc=$?
+  [ "$rc" = 0 ]
+  [ "$(grep -c ERROR "$BATS_TEST_TMPDIR/out")" = 0 ]
+  [ "$(grep -c '^upgrade' "$CALLS")" = 1 ]
+  [ "$(grep -cx 'reinstall --cask --force chatgpt' "$CALLS")" = 1 ]
+  [ "$(grep -cx 'SUCCESS AI Updates: chatgpt current in Homebrew' "$BATS_TEST_TMPDIR/out")" = 1 ]
+  brew_cask_repair chatgpt /dev/null true
+  [ "$(grep -cx 'reinstall --cask --force chatgpt' "$CALLS")" = 1 ]
+}
