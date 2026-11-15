@@ -2230,6 +2230,8 @@ module_homebrew() {
     if [ -n "$missing_src" ]; then
         log HEAL "   Auto-healing broken casks..."
         for name in $missing_src; do
+            # One forced reinstall per cask per process (see brew_cask_repair).
+            case " ${BREW_CASK_REPAIRED:-} " in *" $name "*) continue ;; esac
             log STEP "     $name: brew reinstall --cask --force"
             if ! $DRY_RUN; then
                 command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null

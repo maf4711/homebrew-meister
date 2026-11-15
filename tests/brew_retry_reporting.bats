@@ -287,3 +287,25 @@ stale_conflict_live() {
   grep -qx 'FIX Homebrew: repaired cask user/tap/foo (stale artifact; reinstalled and verified current)' "$MEISTER_DIR/report"
   [ "$(grep -c 'WARN' "$MEISTER_DIR/report")" = 0 ]
 }
+
+@test "missing app source heal skips a cask already force-reinstalled" {
+  export T="$BATS_TEST_TMPDIR"
+  mkdir -p "$T/Caskroom/foo/1.0/Foo.app"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in
+      --prefix) echo "$T" ;;
+      'outdated --cask') echo foo ;;
+    esac
+    return 0
+  }
+  run_verbose_live() {
+    RUN_VERBOSE_OUT=$(mktemp)
+    printf "Error: foo: It seems there is already an App at '%s'.\nfoo: It seems the App source '%s' is not there.\n" \
+      "$T/Caskroom/foo/1.0/Foo.app" "$T/Caskroom/foo/1.0/Foo.app" > "$RUN_VERBOSE_OUT"
+    return 1
+  }
+  run module_homebrew
+  [ "$status" = 0 ]
+  [ "$(grep -cx 'reinstall --cask --force foo' "$MEISTER_DIR/brew-calls")" = 1 ]
+}
