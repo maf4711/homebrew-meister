@@ -311,3 +311,29 @@ LOG
   [ "$(wc -l < "$MEISTER_DIR/run_end_heal.tsv")" -eq 2 ]
   [ "$(cut -f1 "$MEISTER_DIR/run_end_heal.tsv" | sort -u | wc -l)" -eq 2 ]
 }
+
+@test "the report prints the run-end heal summary only after the pass ran" {
+  eval "$(awk '$0=="print_report() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
+  RED='' GREEN='' YELLOW='' BLUE='' CYAN='' NC='' AIHEAL_FG=''
+  SCRIPT_START_TIME=$(date +%s)
+  MAINT_SCORE=90
+  MODULE_LEDGER=()
+  REPORT_SUCCESS=()
+  REPORT_WOULD_FIX=()
+  REPORT_AI_DIAGNOSES=()
+  HEAL_COUNT=0
+  AI_CALLS_THIS_RUN=0
+  AI_USAGE_LOG="$MEISTER_DIR/absent-ai-usage.log"
+  MEISTER_CONFIG="$MEISTER_DIR/config"
+  REPORT_WARNINGS=("6 new entries in Documents root")
+  summary='Run-end heal: 1 attempted, 1 verified, 0 unresolved, 0 skipped, 1 without automatic repair'
+
+  unset RUN_END_HEAL_ATTEMPTED RUN_END_HEAL_VERIFIED RUN_END_HEAL_UNRESOLVED RUN_END_HEAL_SKIPPED RUN_END_HEAL_UNREPAIRABLE
+  print_report > "$D/../report-none"
+  [ "$(grep -c 'Run-end heal:' "$D/../report-none")" -eq 0 ]
+
+  RUN_END_HEAL_ATTEMPTED=1 RUN_END_HEAL_VERIFIED=1 RUN_END_HEAL_UNRESOLVED=0
+  RUN_END_HEAL_SKIPPED=0 RUN_END_HEAL_UNREPAIRABLE=1
+  print_report > "$D/../report"
+  [ "$(grep -cxF -- "$summary" "$D/../report")" -eq 1 ]
+}
