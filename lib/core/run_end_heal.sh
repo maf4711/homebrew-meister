@@ -100,7 +100,7 @@ run_end_heal() {
     [ "${DRY_RUN:-false}" = true ] && return 0
 
     local logfile="${LOGFILE:-}"
-    if [ -z "$logfile" ] || [ ! -f "$logfile" ] || [ ! -r "$logfile" ]; then
+    if [ ! -f "$logfile" ] || [ ! -r "$logfile" ]; then
         log WARN "Run-end review: log file missing or unreadable (${logfile:-unset}) — run-end heal skipped"
         return 0
     fi
@@ -172,7 +172,7 @@ run_end_heal() {
             continue
         fi
         RUN_END_HEAL_ATTEMPTED=$((RUN_END_HEAL_ATTEMPTED + 1))
-        read -r fn arg _ <<< "${cmds[$i]}"
+        arg=${subjects[$i]#* }
         # Like the module call site: pre-authenticate, attempt regardless.
         if command -v ensure_sudo >/dev/null 2>&1; then
             ensure_sudo "run-end cask reinstall: $arg" 2>/dev/null || true
@@ -200,8 +200,7 @@ run_end_heal() {
     if [ -z "$new_state" ]; then
         rm -f "$state" 2>/dev/null
     elif tmp=$(mktemp "$dir/.run_end_heal.XXXXXX" 2>/dev/null); then
-        # One row per key, first one wins.
-        printf '%s' "$new_state" | awk -F'\t' '!seen[$1]++' > "$tmp" && mv "$tmp" "$state" || rm -f "$tmp"
+        printf '%s' "$new_state" > "$tmp" && mv "$tmp" "$state" || rm -f "$tmp"
     fi
     return 0
 }
