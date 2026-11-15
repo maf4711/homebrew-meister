@@ -218,3 +218,42 @@ stale_conflict_live() {
   FORMULA=example/tap/tool STILL_LISTED=example/tap/tool run module_homebrew
   [ "$(grep -c 'WARN Homebrew: example/tap/tool upgrade failed' "$MEISTER_DIR/report")" = 1 ]
 }
+
+@test "stale artifact removal never reaches outside the cask folder" {
+  export T="$BATS_TEST_TMPDIR"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in --prefix) echo "$T" ;; esac
+    return 0
+  }
+  fresh() {
+    rm -rf "$T/Caskroom" "$T/victim"; : > "$MEISTER_DIR/brew-calls"
+    mkdir -p "$T/Caskroom" "$T/victim"; echo keep > "$T/victim/keep"
+  }
+  repair_with_path() {
+    printf "\033[31mError:\033[0m c: It seems there is already an App at '%s'.\r\n" "$1" > "$T/capture"
+    run brew_cask_repair c "$T/capture" false
+    [ "$(grep -cx 'reinstall --cask --force c' "$MEISTER_DIR/brew-calls")" = 1 ]
+  }
+  # 1. symlink leaf named with a trailing slash
+  fresh; mkdir -p "$T/Caskroom/c/1.0"; ln -s "$T/victim" "$T/Caskroom/c/1.0/App.app"
+  repair_with_path "$T/Caskroom/c/1.0/App.app/"
+  [ -f "$T/victim/keep" ]
+  # 2. symlinked intermediate directory
+  fresh; mkdir -p "$T/Caskroom/c"; ln -s "$T/victim" "$T/Caskroom/c/1.0"
+  repair_with_path "$T/Caskroom/c/1.0/keep"
+  [ -f "$T/victim/keep" ]
+  # 3. Caskroom/<cask> itself a symlink
+  fresh; ln -s "$T/victim" "$T/Caskroom/c"
+  repair_with_path "$T/Caskroom/c/keep"
+  [ -f "$T/victim/keep" ]
+  # 4. trailing slashes on the cask folder itself
+  fresh; mkdir -p "$T/Caskroom/c/2.0"; echo keep > "$T/Caskroom/c/2.0/keep"
+  repair_with_path "$T/Caskroom/c//"
+  [ -f "$T/Caskroom/c/2.0/keep" ]
+  # 5. a quote inside the path must not truncate it onto another path
+  fresh; mkdir -p "$T/Caskroom/c/1.0/Bob's.app"; echo keep > "$T/Caskroom/c/1.0/Bob"
+  repair_with_path "$T/Caskroom/c/1.0/Bob's.app"
+  [ -f "$T/Caskroom/c/1.0/Bob" ]
+  [ ! -e "$T/Caskroom/c/1.0/Bob's.app" ]
+}

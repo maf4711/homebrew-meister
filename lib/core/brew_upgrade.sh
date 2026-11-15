@@ -89,6 +89,26 @@ brew_cask_conflict_names() {
 # and Homebrew share it).
 BREW_CASK_REPAIRED="${BREW_CASK_REPAIRED:-}"
 
+# Remove $3 only when it is a real (non-symlink) entry whose physical parent
+# lies below the physical $2/Caskroom/$1/ and that folder is not a symlink.
+_brew_cask_remove_stale() {
+    local cask="$1" prefix="$2" path="$3" base root parent
+    while [[ "$path" == */ ]]; do path="${path%/}"; done
+    base="${path##*/}"
+    case "$base" in ''|.|..) log STEP "     $cask: leaving $3 (not a Caskroom artifact)"; return 0 ;; esac
+    if [ -n "$prefix" ] && [ -n "$path" ] &&
+        root=$(cd -P "$prefix/Caskroom" 2>/dev/null && pwd -P) &&
+        [ -d "$root/$cask" ] && [ ! -L "$root/$cask" ] &&
+        parent=$(cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) &&
+        [[ "$parent" == "$root/$cask/"?* ]] &&
+        [ ! -L "$parent/$base" ] && [ -e "$parent/$base" ]; then
+        log STEP "     $cask: removing stale $parent/$base"
+        rm -rf -- "${parent:?}/$base"
+    else
+        log STEP "     $cask: leaving $3 (not a Caskroom artifact)"
+    fi
+}
+
 # $1 cask token, $2 capture of the failed upgrade, $3 true when it used --greedy.
 # Removes the stale artifact named in $2 only under $(brew --prefix)/Caskroom/<cask>/,
 # runs one forced reinstall per process (bounded by BREW_CASK_REPAIR_TIMEOUT,
@@ -115,17 +135,9 @@ brew_cask_repair() {
                 prefix=$(brew --prefix 2>/dev/null) || prefix=""
                 re=$(printf '%s' "$cask" | sed 's/[.+]/\\&/g')
                 while IFS= read -r path; do
-                    case "$path" in
-                        */../*|*/..) continue ;;
-                    esac
-                    if [ -n "$prefix" ] && [[ "$path" == "$prefix/Caskroom/$cask/"?* ]] && [ -e "$path" ]; then
-                        log STEP "     $cask: removing stale $path"
-                        rm -rf -- "$path"
-                    else
-                        log STEP "     $cask: leaving $path (outside the Caskroom)"
-                    fi
+                    _brew_cask_remove_stale "$cask" "$prefix" "$path"
                 done < <(_brew_conflict_clean < "$capture" |
-                    sed -nE "s/^(.*[[:space:]])?${re}: It seems there is already an? (App|Command Wrapper|Binary) at '([^']+)'.*/\3/p")
+                    sed -nE "s/^(.*[[:space:]])?${re}: It seems there is already an? (App|Command Wrapper|Binary) at '(.*)'\.?[[:space:]]*$/\3/p")
             fi
             log STEP "     $cask: brew reinstall --cask --force"
             to="${BREW_CASK_REPAIR_TIMEOUT:-180}"
