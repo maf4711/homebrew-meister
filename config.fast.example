@@ -43,6 +43,13 @@ AI_HEAL_EXECUTE=true
 # MODULE_SLOW_SEC=300       # WARN if one module exceeds 5 min
 # MEISTER_NOTIFY=true       # notification after run (already default)
 
+# Run-end heal (after all modules, before the report): one verified repair
+# attempt per open finding with a registered repairer (today: failed cask
+# upgrades blocked by a stale artifact). 2 unresolved runs suspend it 7 days.
+# RUN_END_HEAL=true             # false = review only, no run-end repairs
+# RUN_END_HEAL_MAX_SEC=300      # start no further repair after N seconds
+# RUN_END_HEAL_MAX_ATTEMPTS=5   # at most N repair attempts per run
+
 # Unattended confirmations (default true): y/N is yes; no TTY never waits.
 # MEISTER_ALWAYS_YES=true
 
