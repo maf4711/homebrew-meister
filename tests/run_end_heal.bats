@@ -27,7 +27,9 @@ setup() {
   REPORT_ERRORS=()
   REPORT_FIXED=()
   VERIFIED_REPAIR_COUNT=0
-  D="$BATS_TEST_TMPDIR"
+  # Evidence captures live where brew_record_upgrade_failure writes them.
+  D="$MEISTER_DIR/update-failures"
+  mkdir -p "$D"
 }
 
 stale_capture() {
@@ -260,4 +262,25 @@ LOG
   two
   RUN_END_HEAL_MAX_ATTEMPTS=1 run_end_heal > "$D/out"
   [ "$(grep -c '^sudo ' "$MEISTER_DIR/order")" -eq 1 ]
+}
+
+@test "only regular cask captures inside update-failures are repair evidence" {
+  out_dir="$BATS_TEST_TMPDIR/elsewhere"
+  mkdir -p "$out_dir" "$D/cask-dir"
+  stale_capture link "$out_dir/target"
+  ln -s "$out_dir/target" "$D/cask-link.4"
+  stale_capture outside "$out_dir/cask-outside.7"
+  stale_capture trav "$MEISTER_DIR/cask-trav.1"
+  REPORT_WARNINGS=(
+    "Homebrew: link upgrade failed (exit 1); log: $D/cask-link.4"
+    "Homebrew: outside upgrade failed (exit 1); log: $out_dir/cask-outside.7"
+    "Homebrew: trav upgrade failed (exit 1); log: $D/cask-dir/../../cask-trav.1"
+  )
+  run_end_heal > "$D/../out"
+  [ "$(stub_calls)" -eq 0 ]
+  [ "$RUN_END_HEAL_UNREPAIRABLE" -eq 3 ]
+  for c in link outside trav; do
+    [ "$(grep -cF -- "Run-end heal: no automatic repair — Homebrew: $c upgrade failed" "$D/../out")" -eq 1 ]
+  done
+  [ "$(run_end_heal_repairer "Homebrew: link upgrade failed (exit 1); log: $D/cask-link.4")" = "" ]
 }

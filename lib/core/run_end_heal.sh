@@ -21,11 +21,15 @@ RUN_END_HEAL_SUSPEND_SEC=604800
 # stale-artifact conflict for that cask → brew_cask_repair <cask> <path> true.
 run_end_heal_repairer() {
     local finding="$1" re='^Homebrew: ([^ ]+) upgrade failed.*; log: (.+)$' cask path
+    local evidence="${MEISTER_DIR:-$HOME/.meister}/update-failures/cask-"
     [[ "$finding" =~ $re ]] || return 0
     cask=${BASH_REMATCH[1]##*/}   # tap casks: Homebrew names the short token
     path=${BASH_REMATCH[2]}
-    case "${path##*/}" in cask-*) ;; *) return 0 ;; esac
-    [ -f "$path" ] && [ -r "$path" ] || return 0
+    # Evidence only from brew_record_upgrade_failure's own capture directory:
+    # a direct child named cask-*, a regular file, never a symlink.
+    case "$path" in "$evidence"*) ;; *) return 0 ;; esac
+    case "${path#"$evidence"}" in */*) return 0 ;; esac
+    [ -f "$path" ] && [ ! -L "$path" ] && [ -r "$path" ] || return 0
     command -v brew_cask_repair >/dev/null 2>&1 || return 0
     command -v brew_cask_conflict_names >/dev/null 2>&1 || return 0
     ! grep -q 'Error: SIGTERM' "$path" 2>/dev/null || return 0
