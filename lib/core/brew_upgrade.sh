@@ -92,7 +92,8 @@ BREW_CASK_REPAIRED="${BREW_CASK_REPAIRED:-}"
 # $1 cask token, $2 capture of the failed upgrade, $3 true when it used --greedy.
 # Removes the stale artifact named in $2 only under $(brew --prefix)/Caskroom/<cask>/,
 # runs one forced reinstall per process (bounded by BREW_CASK_REPAIR_TIMEOUT,
-# default 180 s), then 0 only when `brew outdated` no longer lists the cask.
+# default 180 s; the caller pre-authenticates sudo), then returns 0 only when
+# `brew outdated` no longer lists the cask.
 brew_cask_repair() {
     local cask="$1" capture="${2:-}" greedy="${3:-false}" prefix path re out to
     local -a bounded=() flags=(--cask)
@@ -126,7 +127,6 @@ brew_cask_repair() {
                 done < <(_brew_conflict_clean < "$capture" |
                     sed -nE "s/^(.*[[:space:]])?${re}: It seems there is already an? (App|Command Wrapper|Binary) at '([^']+)'.*/\3/p")
             fi
-            command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $cask" 2>/dev/null
             log STEP "     $cask: brew reinstall --cask --force"
             to="${BREW_CASK_REPAIR_TIMEOUT:-180}"
             if ! "${bounded[@]}" ${bounded:+"$to"} brew reinstall --cask --force "$cask" </dev/null >/dev/null 2>&1; then
