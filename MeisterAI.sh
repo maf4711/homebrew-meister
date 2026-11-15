@@ -2226,14 +2226,19 @@ module_homebrew() {
     # conflicts are repaired per cask inside brew_upgrade_each.
     local missing_src
     missing_src=$(grep -oE '^[[:space:]]*[a-z0-9][a-z0-9_-]*: It seems the App source' "$cask_out" 2>/dev/null | sed -E 's/^[[:space:]]*([a-z0-9_-]+):.*/\1/' | sort -u)
-    if [ -n "$missing_src" ] && command -v brew_cask_repair >/dev/null 2>&1; then
+    local healed=0
+    if [ -n "$missing_src" ]; then
         log HEAL "   Auto-healing broken casks..."
         for name in $missing_src; do
-            command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null
-            if BREW_CASK_REPAIR_TIMEOUT="$cask_timeout" brew_cask_repair "$name" "$cask_out" "$greedy"; then
-                report_add FIX "Homebrew: repaired cask $name (missing app source; reinstalled and verified current)"
+            log STEP "     $name: brew reinstall --cask --force"
+            if ! $DRY_RUN; then
+                command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null
+                if brew reinstall --cask --force "$name" >/dev/null 2>&1; then
+                    healed=$((healed + 1))
+                fi
             fi
         done
+        [ "$healed" -gt 0 ] && report_add FIX "Auto-healed ${healed} broken cask(s)"
     fi
     rm -f "$cask_out"
 

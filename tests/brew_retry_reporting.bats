@@ -257,3 +257,16 @@ stale_conflict_live() {
   [ -f "$T/Caskroom/c/1.0/Bob" ]
   [ ! -e "$T/Caskroom/c/1.0/Bob's.app" ]
 }
+
+@test "missing app source heal keeps its own summary" {
+  run_verbose_live() {
+    RUN_VERBOSE_OUT=$(mktemp)
+    printf "libreoffice: It seems the App source '/Applications/LibreOffice.app' is not there.\n" > "$RUN_VERBOSE_OUT"
+    return 1
+  }
+  run module_homebrew
+  [ "$status" = 0 ]
+  [ "$(grep -cx 'FIX Auto-healed 1 broken cask(s)' "$MEISTER_DIR/report")" = 1 ]
+  [ "$(grep -c 'repaired cask' "$MEISTER_DIR/report")" = 0 ]
+  [ "$(grep -cx 'reinstall --cask --force libreoffice' "$MEISTER_DIR/brew-calls")" = 1 ]
+}
