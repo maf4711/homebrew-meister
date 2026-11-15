@@ -89,14 +89,14 @@ brew_cask_conflict_names() {
 # and Homebrew share it).
 BREW_CASK_REPAIRED="${BREW_CASK_REPAIRED:-}"
 
-# Remove $3 only when it is a real (non-symlink) entry whose physical parent
-# lies below the physical $2/Caskroom/$1/ and that folder is not a symlink.
+# Remove $3 only when it is a real (non-symlink) entry, not named . or ..,
+# whose physical parent lies below the physical $2/Caskroom/$1/ and that folder
+# is not a symlink.
 _brew_cask_remove_stale() {
     local cask="$1" prefix="$2" path="$3" base root parent
     while [[ "$path" == */ ]]; do path="${path%/}"; done
     base="${path##*/}"
-    case "$base" in ''|.|..) log STEP "     $cask: leaving $3 (not a Caskroom artifact)"; return 0 ;; esac
-    if [ -n "$prefix" ] && [ -n "$path" ] &&
+    if [ -n "$prefix" ] && [ -n "$base" ] && [ "$base" != . ] && [ "$base" != .. ] &&
         root=$(cd -P "$prefix/Caskroom" 2>/dev/null && pwd -P) &&
         [ -d "$root/$cask" ] && [ ! -L "$root/$cask" ] &&
         parent=$(cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) &&
@@ -119,8 +119,9 @@ brew_cask_repair() {
     local -a bounded=() flags=(--cask)
     [ -n "$cask" ] || return 1
     [ "$greedy" = true ] && flags+=(--greedy)
-    if { command -v command_exists >/dev/null 2>&1 && command_exists timeout; } ||
-        { ! command -v command_exists >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; }; then
+    if command -v command_exists >/dev/null 2>&1; then
+        command_exists timeout && bounded=(timeout)
+    elif command -v timeout >/dev/null 2>&1; then
         bounded=(timeout)
     fi
     case " $BREW_CASK_REPAIRED " in
