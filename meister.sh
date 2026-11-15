@@ -923,10 +923,10 @@ brew_upgrade_each() {
         elapsed=$(( $(date +%s) - start ))
         if [ "$rc" -ne 0 ] && [ "$kind" = cask ] && [ -n "${RUN_VERBOSE_OUT:-}" ] &&
             command -v brew_cask_repair >/dev/null 2>&1 &&
-            brew_cask_conflict_names < "$RUN_VERBOSE_OUT" | grep -Fxq -- "$name"; then
+            brew_cask_conflict_names < "$RUN_VERBOSE_OUT" | grep -Fxq -- "${name##*/}"; then
             log HEAL "   ${name}: stale artifact blocks the upgrade — one forced reinstall"
             command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null
-            if BREW_CASK_REPAIR_TIMEOUT="$to" brew_cask_repair "$name" "$RUN_VERBOSE_OUT" "${BREW_UPGRADE_GREEDY:-false}"; then
+            if BREW_CASK_REPAIR_TIMEOUT="$to" brew_cask_repair "${name##*/}" "$RUN_VERBOSE_OUT" "${BREW_UPGRADE_GREEDY:-false}"; then
                 report_add FIX "Homebrew: repaired cask $name (stale artifact; reinstalled and verified current)"
                 rc=0
             fi

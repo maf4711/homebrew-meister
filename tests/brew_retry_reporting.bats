@@ -270,3 +270,20 @@ stale_conflict_live() {
   [ "$(grep -c 'repaired cask' "$MEISTER_DIR/report")" = 0 ]
   [ "$(grep -cx 'reinstall --cask --force libreoffice' "$MEISTER_DIR/brew-calls")" = 1 ]
 }
+
+@test "tap-qualified cask with a stale artifact is repaired" {
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    return 0
+  }
+  run_verbose_live() {
+    RUN_VERBOSE_OUT=$(mktemp)
+    printf "Error: foo: It seems there is already an App at '/nonexistent/Foo.app'.\n" > "$RUN_VERBOSE_OUT"
+    return 1
+  }
+  run brew_upgrade_each cask 180 user/tap/foo
+  [ "$status" = 0 ]
+  [ "$(grep -c '^reinstall --cask --force' "$MEISTER_DIR/brew-calls")" = 1 ]
+  grep -qx 'FIX Homebrew: repaired cask user/tap/foo (stale artifact; reinstalled and verified current)' "$MEISTER_DIR/report"
+  [ "$(grep -c 'WARN' "$MEISTER_DIR/report")" = 0 ]
+}
