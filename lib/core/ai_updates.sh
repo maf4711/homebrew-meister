@@ -129,9 +129,10 @@ ai_update_brew() {
             fi
             upgraded=false
             if [ "$kind" = cask ] && command -v brew_cask_repair >/dev/null 2>&1; then
-                # Output goes only to a private temp file (and the 0600 failure
-                # evidence); a stale-artifact conflict gets one forced reinstall
-                # instead of a retry of the identical upgrade.
+                # Output goes only to a private temp file, deleted below; a
+                # stale-artifact conflict gets one forced reinstall instead of
+                # a retry. Any other failure keeps ai_update_attempt's single
+                # retry and log lines (2 attempts in total).
                 rc=0
                 capture=$(umask 077; mktemp "${TMPDIR:-/tmp}/meister-ai-cask.XXXXXX") || capture=/dev/null
                 timeout 300 brew upgrade "${flags[@]}" "$token" </dev/null >"$capture" 2>&1 || rc=$?
@@ -145,11 +146,14 @@ ai_update_brew() {
                         continue
                     fi
                 else
-                    log WARN "AI Updates: brew upgrade $token failed (exit $rc); retrying once"
-                    timeout 300 brew upgrade "${flags[@]}" "$token" </dev/null >/dev/null 2>&1 && upgraded=true
-                fi
-                if ! $upgraded && command -v brew_record_upgrade_failure >/dev/null 2>&1; then
-                    brew_record_upgrade_failure cask "$token" "$rc" "$capture"
+                    log WARN "AI Updates: brew upgrade failed (exit $rc); retrying once"
+                    rc=0
+                    timeout 300 brew upgrade "${flags[@]}" "$token" </dev/null >/dev/null 2>&1 || rc=$?
+                    if [ "$rc" -eq 0 ]; then
+                        upgraded=true
+                    else
+                        log ERROR "AI Updates: brew upgrade failed after retry (exit $rc)"
+                    fi
                 fi
                 [ "$capture" = /dev/null ] || rm -f "$capture"
             elif ai_update_attempt brew upgrade "${flags[@]}" "$token"; then
