@@ -37,11 +37,15 @@ run_end_heal_repairer() {
     printf 'brew_cask_repair %q %q true\n' "$cask" "$path"
 }
 
-# Suspension key: the entry without its log path, every digit run → N.
+# Suspension key: $2 (the literal repair target, e.g. temurin@17) followed by
+# the entry without its log path and without $2, every digit run → N. Only
+# run-varying numbers (exit code) are normalised, never the target's own digits.
 _run_end_heal_key() {
-    local key="${1%%; log: *}"
-    key=${key//$'\t'/ }
-    printf '%s\n' "$key" | sed -E 's/[0-9]+/N/g'
+    local key="${1%%; log: *}" target="${2:-}"
+    [ -z "$target" ] || key=${key/"$target"/@}
+    key=$(printf '%s\n' "$key" | sed -E 's/[0-9]+/N/g')
+    key="${target:+$target }$key"
+    printf '%s\n' "${key//$'\t'/ }"
 }
 
 # $1 state file, $2 key. stdout: "<count> <epoch>" (base-10 integers) or nothing.
@@ -135,7 +139,7 @@ run_end_heal() {
         [ -n "$found" ] && continue
         subjects+=("$subj")
         cmds+=("$cmd")
-        keys+=("$(_run_end_heal_key "$entry")")
+        keys+=("$(_run_end_heal_key "$entry" "$arg")")
         names+=("$finding")
         members+=("$entry")
     done
@@ -196,7 +200,8 @@ run_end_heal() {
     if [ -z "$new_state" ]; then
         rm -f "$state" 2>/dev/null
     elif tmp=$(mktemp "$dir/.run_end_heal.XXXXXX" 2>/dev/null); then
-        printf '%s' "$new_state" > "$tmp" && mv "$tmp" "$state" || rm -f "$tmp"
+        # One row per key, first one wins.
+        printf '%s' "$new_state" | awk -F'\t' '!seen[$1]++' > "$tmp" && mv "$tmp" "$state" || rm -f "$tmp"
     fi
     return 0
 }

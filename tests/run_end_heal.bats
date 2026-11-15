@@ -284,3 +284,26 @@ LOG
   done
   [ "$(run_end_heal_repairer "Homebrew: link upgrade failed (exit 1); log: $D/cask-link.4")" = "" ]
 }
+
+@test "suspension keys keep the digits of the cask token" {
+  STUB_RC=1
+  for i in 1 2; do
+    stale_capture temurin@17 "$D/cask-temurin@17.T$i"
+    REPORT_WARNINGS=("Homebrew: temurin@17 upgrade failed (exit $i); log: $D/cask-temurin@17.T$i")
+    run_end_heal > "$D/../out"
+  done
+  [ "$(stub_calls)" -eq 2 ]
+  stale_capture temurin@17 "$D/cask-temurin@17.T3"
+  stale_capture temurin@21 "$D/cask-temurin@21.T3"
+  REPORT_WARNINGS=(
+    "Homebrew: temurin@17 upgrade failed (exit 1); log: $D/cask-temurin@17.T3"
+    "Homebrew: temurin@21 upgrade failed (exit 1); log: $D/cask-temurin@21.T3"
+  )
+  run_end_heal > "$D/../out"
+  [ "$(stub_calls)" -eq 3 ]
+  [[ "$(tail -1 "$MEISTER_DIR/stub-calls")" == "temurin@21 "* ]]
+  [ "$RUN_END_HEAL_SKIPPED" -eq 1 ]
+  [ "$RUN_END_HEAL_ATTEMPTED" -eq 1 ]
+  [ "$(wc -l < "$MEISTER_DIR/run_end_heal.tsv")" -eq 2 ]
+  [ "$(cut -f1 "$MEISTER_DIR/run_end_heal.tsv" | sort -u | wc -l)" -eq 2 ]
+}
