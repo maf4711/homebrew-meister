@@ -40,7 +40,8 @@ _run_end_heal_key() {
     printf '%s\n' "$key" | sed -E 's/[0-9]+/N/g'
 }
 
-# $1 state file, $2 key. stdout: "<count> <epoch>" or nothing.
+# $1 state file, $2 key. stdout: "<count> <epoch>" (base-10 integers) or nothing.
+# A damaged row never aborts the pass; a future timestamp counts as 0.
 _run_end_heal_state_get() {
     local k n ts
     [ -r "$1" ] || return 0
@@ -48,6 +49,10 @@ _run_end_heal_state_get() {
         [ "$k" = "$2" ] || continue
         case "$n" in ''|*[!0-9]*) n=0 ;; esac
         case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+        [ "${#n}" -le 9 ] || n=0
+        [ "${#ts}" -le 18 ] || ts=0
+        n=$((10#$n)); ts=$((10#$ts))
+        [ "$ts" -le "$(date +%s)" ] || ts=0
         printf '%s %s\n' "$n" "$ts"
         return 0
     done < "$1"

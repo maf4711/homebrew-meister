@@ -202,3 +202,27 @@ LOG
   [ "$RUN_END_HEAL_SKIPPED" -eq 0 ]
   [ "$RUN_END_HEAL_UNREPAIRABLE" -eq 0 ]
 }
+
+@test "state rows with leading-zero counts or future timestamps do not stop the pass" {
+  STUB_RC=1
+  stale_capture hp-easy-start "$D/cask-hp-easy-start.AbC"
+  again() {
+    REPORT_WARNINGS=("Homebrew: hp-easy-start upgrade failed (exit 1); log: $D/cask-hp-easy-start.AbC")
+    run_end_heal > "$D/out"
+  }
+  set_row() {
+    awk -F'\t' -v OFS='\t' -v n="$1" -v t="$2" '{ $2 = n; $3 = t; print }' "$MEISTER_DIR/run_end_heal.tsv" > "$D/state"
+    mv "$D/state" "$MEISTER_DIR/run_end_heal.tsv"
+  }
+  again
+  [ "$(stub_calls)" -eq 1 ]
+  set_row 08 $(( $(date +%s) - 8 * 86400 ))
+  again
+  [ "$(stub_calls)" -eq 2 ]
+  [ "$RUN_END_HEAL_UNRESOLVED" -eq 1 ]
+  [ "$(cut -f2 "$MEISTER_DIR/run_end_heal.tsv")" = 9 ]
+  set_row 5 99999999999
+  again
+  [ "$(stub_calls)" -eq 3 ]
+  [ "$RUN_END_HEAL_ATTEMPTED" -eq 1 ]
+}
