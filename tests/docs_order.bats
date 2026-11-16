@@ -11,7 +11,7 @@ setup() {
   log() { printf '%s %s\n' "$1" "$2"; }
   report_add() { log "$@"; }
   bw_phase() { :; }
-  for fn in docs_order_root_entries docs_order_write_baseline docs_order_accept_baseline module_docs_order; do
+  for fn in docs_order_root_entries docs_order_write_baseline docs_order_accept_baseline docs_order_accept_current module_docs_order; do
     eval "$(awk -v name="$fn" '$0==name"() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
   done
 }
@@ -157,4 +157,27 @@ setup() {
   run module_docs_order
   [[ "$output" == *'No dataless files - all content local'* ]]
   [[ "$output" != *'could not be fully checked'* ]]
+}
+
+@test "docs accept lists the new entries, accepts them and leaves the files alone" {
+  touch "$DOCS_ORDER_ROOT/old" "$DOCS_ORDER_ROOT/new one"
+  printf 'old\n' > "$MEISTER_DIR/docs_order.baseline"
+  run module_docs_order
+  [[ "$output" == *'WARN 1 new entries in Documents root'* ]]
+  [[ "$output" == *'MeisterAI docs accept'* ]]
+  DRY_RUN=true run docs_order_accept_current
+  [ "$status" = 0 ]
+  [[ "$output" == *'+ new one'* ]]
+  [ "$(cat "$MEISTER_DIR/docs_order.baseline")" = old ]
+  run docs_order_accept_current
+  [ "$status" = 0 ]
+  [[ "$output" == *'+ new one'* ]]
+  [[ "$output" != *'+ old'* ]]
+  [[ "$output" == *'FIX Docs baseline: accepted'* ]]
+  [ -f "$DOCS_ORDER_ROOT/new one" ]
+  run module_docs_order
+  [[ "$output" == *'Root entries match baseline'* ]]
+  run docs_order_accept_current
+  [[ "$output" == *'nothing to accept'* ]]
+  [ "$(find "$MEISTER_DIR" -name '*.backup.*' | wc -l | tr -d ' ')" = 1 ]
 }
