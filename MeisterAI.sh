@@ -5657,6 +5657,36 @@ docs_order_accept_baseline() {
     report_add FIX "Accepted reviewed Documents baseline${backup:+ (previous baseline: $backup)}"
 }
 
+# `MeisterAI docs accept`: the explicit, user-invoked acceptance. Lists what is
+# new, then accepts exactly the listing it showed. Maintenance never calls this.
+docs_order_accept_current() {
+    local baseline="$MEISTER_DIR/docs_order.baseline" entries known="" new="" e reviewed rc
+    entries=$(docs_order_root_entries "$DOCS_ORDER_ROOT") || { log WARN "Docs baseline: root entries could not be checked in $DOCS_ORDER_ROOT"; return 1; }
+    [ -f "$baseline" ] && known=$(cat "$baseline")
+    while IFS= read -r e; do
+        [ -z "$e" ] && continue
+        grep -qxF -- "$e" <<< "$known" || new="${new}${new:+$'\n'}$e"
+    done <<< "$entries"
+    if [ -z "$new" ] && [ -f "$baseline" ]; then
+        log STEP "Docs baseline: root entries already match; nothing to accept"
+        return 0
+    fi
+    log INFO "Docs baseline: new top-level entries in $DOCS_ORDER_ROOT:"
+    while IFS= read -r e; do [ -n "$e" ] && log STEP "     + $e"; done <<< "$new"
+    reviewed=$(mktemp "${TMPDIR:-/tmp}/meister-docs-reviewed.XXXXXX") || return 1
+    printf '%s' "$entries" > "$reviewed"
+    docs_order_accept_baseline "$reviewed"; rc=$?
+    rm -f "$reviewed"
+    if [ "$rc" != 0 ]; then
+        log WARN "Docs baseline: not accepted (root changed during the listing, or the baseline is not writable)"
+    elif $DRY_RUN; then
+        log STEP "[DRY-RUN] Docs baseline: would accept these entries"
+    else
+        log FIX "Docs baseline: accepted; files were not moved or changed"
+    fi
+    return "$rc"
+}
+
 # v5.21: Order check for DOCS_ORDER_ROOT (default ~/Documents)
 module_docs_order() {
     $DOCS_ORDER_ENABLED || { log STEP "Docs order check disabled"; return 0; }
@@ -5722,7 +5752,7 @@ module_docs_order() {
             local ncount; ncount=$(printf '%s\n' "$new_entries" | wc -l | tr -d ' ')
             log WARN "   ${ncount} new top-level entries (not in baseline):"
             printf '%s\n' "$new_entries" | head -10 | while IFS= read -r e; do log STEP "     + $e"; done
-            log STEP "   Review entries before accepting a new baseline or adding names to DOCS_ORDER_KNOWN"
+            log STEP "   Review them, then accept with: MeisterAI docs accept (or add names to DOCS_ORDER_KNOWN)"
             report_add WARN "${ncount} new entries in $(basename "$root") root"
         else
             log STEP "   Root entries match baseline"
@@ -9992,6 +10022,25 @@ if [ "${1:-}" = "free" ]; then
     exit 0
 fi
 
+# ── Documents baseline (meister docs accept) ──
+if [ "${1:-}" = "docs" ]; then
+    DRY_RUN=false
+    _docs_action=""
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            accept) _docs_action=accept ;;
+            -n|--dry-run) DRY_RUN=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see MeisterAI -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
+    if [ "$_docs_action" != accept ]; then
+        printf '[ERROR] Usage: MeisterAI docs accept [-n]\n' >&2
+        exit 64
+    fi
+    docs_order_accept_current
+    exit $?
+fi
+
 # ── Healer (meister heal) ──
 if [ "${1:-}" = "heal" ]; then
     DRY_RUN=false
@@ -10187,6 +10236,7 @@ TOOLS:
   MeisterAI selftest     Smoke-test this CLI
   MeisterAI fleet        Score/status of all Macs (FLEET_HOSTS in config)
   MeisterAI touchid [--off|status]  Touch ID for sudo (auto-on; pam_tid in sudo_local)
+  MeisterAI docs accept [-n]  Accept the current Documents root entries as baseline
   MeisterAI sudo-setup       Long shared sudo ticket (2h, all terminals)
   MeisterAI homebrew-share   Share the Homebrew prefix with every admin user
   MeisterAI backup [--now]   Time Machine status; set up destination if none

@@ -309,3 +309,59 @@ stale_conflict_live() {
   [ "$status" = 0 ]
   [ "$(grep -cx 'reinstall --cask --force foo' "$MEISTER_DIR/brew-calls")" = 1 ]
 }
+
+# A self-updated CLI replaces its Homebrew link with a real file; Homebrew then
+# refuses every upgrade and every forced reinstall until that file is gone.
+declared_bin_fixture() {
+  export T="$BATS_TEST_TMPDIR"
+  mkdir -p "$T/bin" "$T/Caskroom/c/2.0" "$T/elsewhere"
+  echo self-updated > "$T/bin/tool"
+  printf "Error: c: It seems there is already a Command Wrapper at '%s'.\n" "${1:-$T/bin/tool}" > "$T/capture"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in
+      --prefix) echo "$T" ;;
+      'info --cask --json=v2 c') printf '{"casks":[{"artifacts":[{"command_wrapper":["tool"],"target":"%s"}]}]}\n' "${DECLARED:-$T/bin/tool}" ;;
+      'reinstall --cask --force c')
+        [ "${REINSTALL_OK:-true}" = true ] || { echo 'Error: c: download failed'; return 1; }
+        [ -e "$T/bin/tool" ] && { echo "Error: c: It seems there is already a Command Wrapper at '$T/bin/tool'."; return 1; }
+        ln -s "$T/Caskroom/c/2.0" "$T/bin/tool" ;;
+    esac
+    return 0
+  }
+}
+
+@test "real file at a cask-declared bin target is moved aside and the reinstall verified" {
+  declared_bin_fixture
+  run brew_cask_repair c "$T/capture" false
+  [ "$status" = 0 ]
+  [ -L "$T/bin/tool" ]
+  [ -z "$(find "$MEISTER_DIR/backups" -type f 2>/dev/null)" ]
+}
+
+@test "failed reinstall puts the parked file back and names the Homebrew error" {
+  declared_bin_fixture
+  REINSTALL_OK=false
+  run brew_cask_repair c "$T/capture" false
+  [ "$status" = 1 ]
+  [ "$(cat "$T/bin/tool")" = self-updated ]
+  [ ! -L "$T/bin/tool" ]
+  [[ "$output" == *'forced reinstall failed — Error: c: download failed'* ]]
+}
+
+@test "bin conflict is left alone unless the cask declares exactly that real file" {
+  declared_bin_fixture
+  DECLARED="$T/bin/other" run brew_cask_repair c "$T/capture" false
+  [ "$(cat "$T/bin/tool")" = self-updated ]
+  BREW_CASK_REPAIRED=""
+  echo keep > "$T/elsewhere/tool"
+  declared_bin_fixture "$T/elsewhere/tool"
+  DECLARED="$T/elsewhere/tool" run brew_cask_repair c "$T/capture" false
+  [ "$(cat "$T/elsewhere/tool")" = keep ]
+  BREW_CASK_REPAIRED=""
+  declared_bin_fixture
+  rm "$T/bin/tool"; echo target > "$T/elsewhere/real"; ln -s "$T/elsewhere/real" "$T/bin/tool"
+  run brew_cask_repair c "$T/capture" false
+  [ "$(cat "$T/elsewhere/real")" = target ]
+  [ -z "$(find "$MEISTER_DIR/backups" -type f 2>/dev/null)" ]
+}
