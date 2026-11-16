@@ -477,3 +477,70 @@ claude_desktop_fixture() {
   grep -qx 'ERROR AI Updates: brew upgrade failed after retry (exit 7)' "$BATS_TEST_TMPDIR/out"
   [ "$(cat "$REPORT")" = 'ERROR AI Updates: codex update/verification failed' ]
 }
+
+# Homebrew lists the cask but its Caskroom folder holds only .metadata: the app
+# is neither upgraded nor recognised as managed, and every run warned.
+orphaned_cask_fixture() {
+  export T="$BATS_TEST_TMPDIR" CALLS="$BATS_TEST_TMPDIR/calls"
+  APP="$T/Applications/Ollama.app"
+  mkdir -p "$APP/Contents" "$T/Caskroom/ollama-app/.metadata"
+  ln -s ollama-app "$T/Caskroom/ollama"
+  touch "$APP/Contents/Info.plist" "$CALLS"
+  /usr/libexec/PlistBuddy() { [ "$2" = 'Print :CFBundleIdentifier' ] && echo com.electron.ollama; }
+  pgrep() { [ -f "$T/running" ]; }
+  open() { echo "open $*" >> "$CALLS"; touch "$T/running"; }
+  brew() {
+    echo "$*" >> "$CALLS"
+    case "$*" in
+      --prefix) echo "$T" ;;
+      'info --cask --json=v2 ollama-app') printf '{"casks":[{"artifacts":[{"app":["Ollama.app"],"target":"%s"}]}]}\n' "$(realpath "$APP")" ;;
+      'reinstall --cask --force ollama-app')
+        rm -f "$T/running"
+        [ "${REINSTALL_OK:-true}" = true ] || return 1
+        mkdir -p "$T/Caskroom/ollama-app/1.0" ;;
+      'list --cask ollama-app') [ -d "$T/Caskroom/ollama-app/1.0" ] && echo "$APP" ;;
+    esac
+  }
+}
+
+@test "AI app whose Homebrew cask lost its metadata is reinstalled, verified and restarted" {
+  orphaned_cask_fixture
+  touch "$T/running"
+  mkdir -p "$APP/Contents/Resources"
+  printf '#!/bin/sh\necho "NAME ID"\n' > "$APP/Contents/Resources/ollama"; chmod +x "$APP/Contents/Resources/ollama"
+  run ai_update_unmanaged_app "$APP" $'ollama\nollama-app'
+  [ "$status" = 0 ]
+  [[ "$output" == *'FIX AI Updates: Ollama.app Homebrew cask ollama-app repaired'* ]]
+  [[ "$output" != *'WARN'* ]]
+  [ "$(grep -c '^reinstall --cask --force ollama-app$' "$CALLS")" = 1 ]
+  grep -q "^open -g -a $APP\$" "$CALLS"
+}
+
+@test "broken cask metadata is not repaired while the app has a session, and a failed reinstall stays a warning" {
+  orphaned_cask_fixture
+  touch "$T/running"
+  mkdir -p "$APP/Contents/Resources"
+  printf '#!/bin/sh\nprintf "NAME ID\\nqwen3 abc\\n"\n' > "$APP/Contents/Resources/ollama"; chmod +x "$APP/Contents/Resources/ollama"
+  run ai_update_unmanaged_app "$APP" ollama-app
+  [ "$status" = 1 ]
+  [[ "$output" == *'WARN'*'app in use, repair deferred'* ]]
+  ! grep -q '^reinstall' "$CALLS"
+  rm "$T/running"
+  REINSTALL_OK=false run ai_update_unmanaged_app "$APP" ollama-app
+  [ "$status" = 1 ]
+  [[ "$output" == *'WARN'*'reinstall failed; run: brew reinstall --cask --force ollama-app'* ]]
+  [[ "$output" != *'FIX'* ]]
+  ! grep -q '^open ' "$CALLS"
+}
+
+@test "an intact or foreign cask folder never triggers the metadata repair" {
+  orphaned_cask_fixture
+  mkdir -p "$T/Caskroom/ollama-app/0.9"
+  run ai_update_unmanaged_app "$APP" ollama-app
+  [[ "$output" == *'has no verified unattended updater'* ]]
+  rmdir "$T/Caskroom/ollama-app/0.9"
+  OTHER="$T/Applications/Copy.app"; mkdir -p "$OTHER/Contents"; touch "$OTHER/Contents/Info.plist"
+  run ai_update_unmanaged_app "$OTHER" ollama-app
+  [[ "$output" == *'has no verified unattended updater'* ]]
+  ! grep -q '^reinstall' "$CALLS"
+}

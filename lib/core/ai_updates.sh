@@ -304,9 +304,72 @@ except (ValueError, TypeError):
     report_add SUCCESS "AI Updates: $label $installed current (Anthropic release feed; signature verified)"
 }
 
+# A Caskroom folder with a receipt but no version folder: Homebrew lists the
+# cask but can neither upgrade nor inspect it (brew doctor: "no valid
+# metadata", fix `brew reinstall --cask --force`). Ownership already lies with
+# Homebrew, so this repairs it and migrates nothing.
+# stdout: the AI client cask in that state whose declared app target is $1.
+ai_brew_orphaned_cask_for() {
+    local app="$1" installed="$2" prefix target token dir
+    prefix=$(brew --prefix 2>/dev/null) && [ -n "$prefix" ] || return 1
+    target=$(realpath "$app" 2>/dev/null) || return 1
+    while IFS= read -r token; do
+        ai_brew_client "$token" || continue
+        dir="$prefix/Caskroom/$token"
+        [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+        [ -z "$(find "$dir" -mindepth 1 -maxdepth 1 ! -name '.*' 2>/dev/null | head -1)" ] || continue
+        timeout 60 brew info --cask --json=v2 "$token" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    cask = json.load(sys.stdin)["casks"][0]
+    hit = any(isinstance(a, dict) and "app" in a and a.get("target") == sys.argv[1] for a in cask["artifacts"])
+except (ValueError, KeyError, IndexError, TypeError):
+    hit = False
+sys.exit(0 if hit else 1)
+' "$target" || continue
+        printf '%s\n' "$token"
+        return 0
+    done <<< "$installed"
+    return 1
+}
+
+ai_app_running() { pgrep -f "$1/Contents/MacOS/" >/dev/null 2>&1; }
+
+# The reinstall quits the app. A running app counts as in use, except Ollama
+# with no model loaded: its menu-bar server then has no session to lose.
+ai_app_in_use() {
+    local app="$1" bundle="$2" loaded
+    ai_app_running "$app" || return 1
+    [ "$bundle" = com.electron.ollama ] && [ -x "$app/Contents/Resources/ollama" ] || return 0
+    loaded=$(timeout 15 "$app/Contents/Resources/ollama" ps 2>/dev/null | awk 'NR>1 && NF' | head -1) || return 0
+    [ -n "$loaded" ]
+}
+
+# One forced reinstall, verified by Homebrew owning the app afterwards. An app
+# that was running is started again.
+ai_repair_orphaned_cask() {
+    local app="$1" bundle="$2" token="$3" label="${1##*/}" was_running=false ok=false
+    if ai_app_in_use "$app" "$bundle"; then
+        report_add WARN "AI Updates: $label Homebrew cask $token has broken metadata; app in use, repair deferred to a run while it is idle"
+        return 1
+    fi
+    ai_app_running "$app" && was_running=true
+    log HEAL "AI Updates: $label Homebrew cask $token has broken metadata — one forced reinstall"
+    timeout 300 brew reinstall --cask --force "$token" </dev/null >/dev/null 2>&1 && ok=true
+    if $was_running && ! ai_app_running "$app"; then
+        open -g -a "$app" >/dev/null 2>&1 || log WARN "AI Updates: $label could not be started again"
+    fi
+    if $ok && ai_brew_owns_app "$token" "$app"; then
+        report_add FIX "AI Updates: $label Homebrew cask $token repaired (broken metadata; reinstalled and verified)"
+        return 0
+    fi
+    report_add WARN "AI Updates: $label Homebrew cask $token has broken metadata and the reinstall failed; run: brew reinstall --cask --force $token"
+    return 1
+}
+
 # Identify bundles, not display names (a renamed Codex app can be ChatGPT.app).
 ai_update_unmanaged_app() {
-    local app="$1" installed="$2" bundle
+    local app="$1" installed="$2" bundle token
     ${DRY_RUN:-false} && return 0
     [ -f "$app/Contents/Info.plist" ] || return 0
     bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null) || return 0
@@ -315,6 +378,10 @@ ai_update_unmanaged_app() {
         *) return 0 ;;
     esac
     ai_brew_owns_installed_app "$app" "$installed" && return 0
+    if token=$(ai_brew_orphaned_cask_for "$app" "$installed"); then
+        ai_repair_orphaned_cask "$app" "$bundle" "$token"
+        return $?
+    fi
     if [ "$bundle" = com.anthropic.claudefordesktop ]; then
         ai_check_claude_desktop "$app"
         return $?
