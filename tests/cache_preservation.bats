@@ -99,6 +99,22 @@ teardown() { unset -f rm sudo realpath du; }
   [ -f "$HOMEBREW_CACHE/update.dmg" ]
 }
 
+@test "entries protected by macOS are skipped without a failure; real failures are named" {
+  mkdir -p "$cache_root/com.apple.kext.caches" "$cache_root/unrelated" "$cache_root/stuck"
+  cleanup_entry_sip_restricted() { [ "${1##*/}" = com.apple.kext.caches ]; }
+  rm() { case "$3" in */stuck) return 1 ;; *) command rm -rf -- "$3" ;; esac; }
+  run cleanup_cache_root "$cache_root" sudo
+  [ "$status" = 1 ]
+  [[ "$output" == *"Skipped (protected by macOS): $cache_root/com.apple.kext.caches"* ]]
+  [[ "$output" == *"Not removed: $cache_root/stuck"* ]]
+  [ -d "$cache_root/com.apple.kext.caches" ]
+  [ ! -e "$cache_root/unrelated" ]
+  ! grep -Fq "com.apple.kext.caches" "$CALLS"
+  command rm -rf "$cache_root/stuck"
+  run cleanup_cache_root "$cache_root" sudo
+  [ "$status" = 0 ]
+}
+
 @test "cache cleanup module reports failed removals without a repair claim" {
   eval "$(awk '$0=="module_cleanup() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
   CLEAN_XCODE=false

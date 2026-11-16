@@ -5,6 +5,12 @@
 
 # Clean visible direct entries as before, retaining Homebrew downloads and any
 # parent needed to reach them. $2 may be "sudo" for system cache roots.
+# System Integrity Protection: root cannot remove these either, so trying only
+# turns every run into a warning (e.g. /System/Library/Caches/com.apple.kext.caches).
+cleanup_entry_sip_restricted() {
+    /bin/ls -ldO -- "$1" 2>/dev/null | awk '{print $5}' | grep -q restricted
+}
+
 cleanup_cache_root() {
     local root="${1%/}" privilege="${2:-}" entry protected canonical keep failed=0
     local -a preserved=()
@@ -28,10 +34,12 @@ cleanup_cache_root() {
         done
         if $keep; then
             log STEP "   Preserved Homebrew cache path: $entry"
+        elif cleanup_entry_sip_restricted "$entry"; then
+            log STEP "   Skipped (protected by macOS): $entry"
         elif [ "$privilege" = sudo ]; then
-            run_or_dry sudo -n rm -rf -- "$entry" || failed=1
+            run_or_dry sudo -n rm -rf -- "$entry" || { failed=1; log STEP "   Not removed: $entry"; }
         else
-            run_or_dry rm -rf -- "$entry" || failed=1
+            run_or_dry rm -rf -- "$entry" || { failed=1; log STEP "   Not removed: $entry"; }
         fi
     done
     return "$failed"
