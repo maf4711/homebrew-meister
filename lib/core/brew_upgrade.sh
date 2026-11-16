@@ -109,13 +109,64 @@ _brew_cask_remove_stale() {
     fi
 }
 
+# Homebrew never replaces a real file at a link target, not even with --force
+# (cask/artifact/symlinked.rb), so a self-updated binary blocks its cask for
+# good. Park $3 in MEISTER_DIR only when it is a regular non-symlink file
+# directly in the physical $2/bin and cask $1 declares exactly that target.
+# Sets BREW_CASK_PARKED_FROM / BREW_CASK_PARKED_AT for the caller.
+_brew_cask_park_conflict() {
+    local cask="$1" prefix="$2" path="$3" bin parent base store
+    base="${path##*/}"
+    [ -n "$prefix" ] && [ -n "$base" ] && [ -n "${MEISTER_DIR:-}" ] || return 1
+    bin=$(cd -P "$prefix/bin" 2>/dev/null && pwd -P) || return 1
+    parent=$(cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) || return 1
+    [ "$parent" = "$bin" ] && [ -f "$bin/$base" ] && [ ! -L "$bin/$base" ] || return 1
+    brew info --cask --json=v2 "$cask" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    cask = json.load(sys.stdin)["casks"][0]
+    hit = any(isinstance(a, dict) and a.get("target") == sys.argv[1] for a in cask["artifacts"])
+except (ValueError, KeyError, IndexError, TypeError):
+    hit = False
+sys.exit(0 if hit else 1)
+' "$path" || return 1
+    store=$(umask 077; mkdir -p "$MEISTER_DIR/backups/cask-conflicts" &&
+        mktemp -d "$MEISTER_DIR/backups/cask-conflicts/${cask}.XXXXXX") || return 1
+    if mv -- "$bin/$base" "$store/$base"; then
+        BREW_CASK_PARKED_FROM="$bin/$base"
+        BREW_CASK_PARKED_AT="$store/$base"
+        log STEP "     $cask: moved $bin/$base aside (Homebrew does not overwrite real files)"
+        return 0
+    fi
+    rmdir "$store" 2>/dev/null
+    return 1
+}
+
+# After the reinstall: drop the parked file when Homebrew put its own artifact
+# at the target, otherwise put it back so nothing the user had goes missing.
+_brew_cask_unpark() {
+    local ok="$1" from="${BREW_CASK_PARKED_FROM:-}" at="${BREW_CASK_PARKED_AT:-}"
+    BREW_CASK_PARKED_FROM="" BREW_CASK_PARKED_AT=""
+    [ -n "$from" ] && [ -n "$at" ] || return 0
+    if [ "$ok" = true ] && { [ -e "$from" ] || [ -L "$from" ]; }; then
+        rm -f -- "$at"
+    elif [ ! -e "$from" ] && [ ! -L "$from" ] && mv -- "$at" "$from"; then
+        log STEP "     restored $from"
+    else
+        log WARN "     previous $from kept at $at"
+        return 0
+    fi
+    rmdir "$(dirname "$at")" 2>/dev/null || true
+}
+
 # $1 cask token, $2 capture of the failed upgrade, $3 true when it used --greedy.
-# Removes the stale artifact named in $2 only under $(brew --prefix)/Caskroom/<cask>/,
+# Removes the stale artifact named in $2 only under $(brew --prefix)/Caskroom/<cask>/
+# (a real file at a cask-declared target in $(brew --prefix)/bin is parked instead),
 # runs one forced reinstall per process (bounded by BREW_CASK_REPAIR_TIMEOUT,
 # default 180 s; the caller pre-authenticates sudo), then returns 0 only when
 # `brew outdated` no longer lists the cask.
 brew_cask_repair() {
-    local cask="$1" capture="${2:-}" greedy="${3:-false}" prefix path re out to
+    local cask="$1" capture="${2:-}" greedy="${3:-false}" prefix path re out to why
     local -a bounded=() flags=(--cask)
     [ -n "$cask" ] || return 1
     [ "$greedy" = true ] && flags+=(--greedy)
@@ -136,16 +187,20 @@ brew_cask_repair() {
                 prefix=$(brew --prefix 2>/dev/null) || prefix=""
                 re=$(printf '%s' "$cask" | sed 's/[.+]/\\&/g')
                 while IFS= read -r path; do
-                    _brew_cask_remove_stale "$cask" "$prefix" "$path"
+                    [ -n "${BREW_CASK_PARKED_AT:-}" ] || _brew_cask_park_conflict "$cask" "$prefix" "$path" ||
+                        _brew_cask_remove_stale "$cask" "$prefix" "$path"
                 done < <(_brew_conflict_clean < "$capture" |
                     sed -nE "s/^(.*[[:space:]])?${re}: It seems there is already an? (App|Command Wrapper|Binary) at '(.*)'\.?[[:space:]]*$/\3/p")
             fi
             log STEP "     $cask: brew reinstall --cask --force"
             to="${BREW_CASK_REPAIR_TIMEOUT:-180}"
-            if ! "${bounded[@]}" ${bounded:+"$to"} brew reinstall --cask --force "$cask" </dev/null >/dev/null 2>&1; then
-                log WARN "     $cask: forced reinstall failed"
+            if ! out=$("${bounded[@]}" ${bounded:+"$to"} brew reinstall --cask --force "$cask" </dev/null 2>&1); then
+                why=$(printf '%s\n' "$out" | _brew_conflict_clean | grep -E '^Error:' | tail -1)
+                log WARN "     $cask: forced reinstall failed${why:+ — $why}"
+                _brew_cask_unpark false
                 return 1
             fi
+            _brew_cask_unpark true
             ;;
     esac
     out=$("${bounded[@]}" ${bounded:+60} brew outdated "${flags[@]}" "$cask" 2>/dev/null) || return 1
