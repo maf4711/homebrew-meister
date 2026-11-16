@@ -919,7 +919,22 @@ brew_upgrade_each() {
         fi
         rc=$?
         elapsed=$(( $(date +%s) - start ))
-        if [ "$rc" -ne 0 ]; then
+        if [ "$rc" -ne 0 ] && [ "$kind" = cask ] && [ -n "${RUN_VERBOSE_OUT:-}" ] &&
+            command -v brew_cask_repair >/dev/null 2>&1 &&
+            brew_cask_conflict_names < "$RUN_VERBOSE_OUT" | grep -Fxq -- "${name##*/}"; then
+            log HEAL "   ${name}: stale artifact blocks the upgrade — one forced reinstall"
+            command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null
+            if BREW_CASK_REPAIR_TIMEOUT="$to" brew_cask_repair "${name##*/}" "$RUN_VERBOSE_OUT" "${BREW_UPGRADE_GREEDY:-false}"; then
+                report_add FIX "Homebrew: repaired cask $name (stale artifact; reinstalled and verified current)"
+                rc=0
+            fi
+        fi
+        local keep_capture=false
+        if [ "$rc" -ne 0 ] && [ "$kind" = formula ] && declare -p brew_formula_failures >/dev/null 2>&1; then
+            # module_homebrew decides after its `brew outdated --formula` readback.
+            brew_formula_failures+=("${name}|${rc}|${RUN_VERBOSE_OUT:-}")
+            keep_capture=true
+        elif [ "$rc" -ne 0 ]; then
             if command -v brew_record_upgrade_failure >/dev/null 2>&1; then
                 brew_record_upgrade_failure "$kind" "$name" "$rc" "${RUN_VERBOSE_OUT:-}"
             else
@@ -928,7 +943,7 @@ brew_upgrade_each() {
         fi
         if [ -n "${RUN_VERBOSE_OUT:-}" ] && [ -f "$RUN_VERBOSE_OUT" ]; then
             cat "$RUN_VERBOSE_OUT" >> "$combined" 2>/dev/null || true
-            rm -f "$RUN_VERBOSE_OUT"
+            $keep_capture || rm -f "$RUN_VERBOSE_OUT"
         fi
         case "$rc" in
             0)   log INFO "   [${i}/${n}] DONE  ${name}  (${elapsed}s)" ;;
@@ -2056,6 +2071,7 @@ module_homebrew() {
     local formula_out=""
     local rc=0
     local pkg_to="${BREW_PKG_TIMEOUT_SEC:-180}"
+    local -a brew_formula_failures=()
     if $DRY_RUN; then
         log STEP "   [DRY-RUN] brew upgrade --formula ${formula_names[*]}"
         formula_out=$(mktemp)
@@ -2088,7 +2104,24 @@ module_homebrew() {
     rm -f "$formula_out"
 
     # Fix #142: Post-Upgrade Verifikation - sind still formulae veraltet?
-    local still_outdated_formulae=$(brew outdated --formula 2>/dev/null)
+    local still_outdated_formulae formula_verify_rc=0 entry f_name f_rc f_capture
+    still_outdated_formulae=$(brew outdated --formula 2>/dev/null) || formula_verify_rc=$?
+    # A failed upgrade whose formula the readback no longer lists was installed;
+    # only a failed post-step (e.g. a dependent's link) went wrong.
+    for entry in "${brew_formula_failures[@]}"; do
+        IFS='|' read -r f_name f_rc f_capture <<< "$entry"
+        if [ "$formula_verify_rc" -ne 0 ] ||
+            printf '%s\n' "$still_outdated_formulae" | awk '{print $1}' | sed 's|.*/||' | grep -Fxq -- "${f_name##*/}"; then
+            if command -v brew_record_upgrade_failure >/dev/null 2>&1; then
+                brew_record_upgrade_failure formula "$f_name" "$f_rc" "$f_capture"
+            else
+                report_add WARN "Homebrew: $f_name upgrade failed (exit $f_rc)"
+            fi
+        else
+            log STEP "   $f_name: upgrade exited $f_rc but brew no longer lists it as outdated"
+        fi
+        [ -n "$f_capture" ] && rm -f "$f_capture"
+    done
     if [ -n "$still_outdated_formulae" ]; then
         local still_count=$(( $(echo "$still_outdated_formulae" | wc -l) ))
         log WARN "   ${still_count} formulae still outdated after upgrade - trying individual upgrade..."
@@ -2189,22 +2222,16 @@ module_homebrew() {
     fi
     BREW_UPGRADE_GREEDY=false
 
-    # Fix #150: Auto-heal cask errors that block batch upgrade
-    local missing_src stale_src
+    # Fix #150: Auto-heal cask errors that block batch upgrade. Stale-artifact
+    # conflicts are repaired per cask inside brew_upgrade_each.
+    local missing_src
     missing_src=$(grep -oE '^[[:space:]]*[a-z0-9][a-z0-9_-]*: It seems the App source' "$cask_out" 2>/dev/null | sed -E 's/^[[:space:]]*([a-z0-9_-]+):.*/\1/' | sort -u)
-    stale_src=$(grep -oE '^[[:space:]]*[a-z0-9][a-z0-9_-]*: It seems there is already an App' "$cask_out" 2>/dev/null | sed -E 's/^[[:space:]]*([a-z0-9_-]+):.*/\1/' | sort -u)
     local healed=0
-    if [ -n "$missing_src" ] || [ -n "$stale_src" ]; then
+    if [ -n "$missing_src" ]; then
         log HEAL "   Auto-healing broken casks..."
-        for name in $stale_src; do
-            local stale_path
-            stale_path=$(grep "^[[:space:]]*${name}: It seems there is already an App at" "$cask_out" | grep -oE "'[^']+'" | head -1 | tr -d "'")
-            if [ -n "$stale_path" ] && [ -e "$stale_path" ]; then
-                log STEP "     $name: removing stale $stale_path"
-                ! $DRY_RUN && rm -rf "$stale_path"
-            fi
-        done
-        for name in $missing_src $stale_src; do
+        for name in $missing_src; do
+            # One forced reinstall per cask per process (see brew_cask_repair).
+            case " ${BREW_CASK_REPAIRED:-} " in *" $name "*) continue ;; esac
             log STEP "     $name: brew reinstall --cask --force"
             if ! $DRY_RUN; then
                 command -v ensure_sudo >/dev/null 2>&1 && ensure_sudo "cask reinstall: $name" 2>/dev/null

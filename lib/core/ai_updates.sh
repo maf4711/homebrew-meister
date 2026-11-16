@@ -73,6 +73,7 @@ ai_brew_metadata_current() {
 
 ai_update_brew() {
     local kind installed token outdated pending checked failed=0 sudo_checked=false
+    local capture rc upgraded
     command -v brew >/dev/null 2>&1 || return 0
     if ${DRY_RUN:-false}; then
         log STEP "[DRY-RUN] AI Updates: refresh Homebrew; upgrade installed AI clients (--greedy)"
@@ -126,7 +127,39 @@ ai_update_brew() {
                 ensure_sudo "AI client cask updates" 2>/dev/null || log WARN "AI Updates: no sudo ticket; admin-owned apps may fail"
                 sudo_checked=true
             fi
-            if ai_update_attempt brew upgrade "${flags[@]}" "$token" &&
+            upgraded=false
+            if [ "$kind" = cask ] && command -v brew_cask_repair >/dev/null 2>&1; then
+                # Output goes only to a private temp file, deleted below; a
+                # stale-artifact conflict gets one forced reinstall instead of
+                # a retry. Any other failure keeps ai_update_attempt's single
+                # retry and log lines (2 attempts in total).
+                rc=0
+                capture=$(umask 077; mktemp "${TMPDIR:-/tmp}/meister-ai-cask.XXXXXX") || capture=/dev/null
+                timeout 300 brew upgrade "${flags[@]}" "$token" </dev/null >"$capture" 2>&1 || rc=$?
+                if [ "$rc" -eq 0 ]; then
+                    upgraded=true
+                elif brew_cask_conflict_names < "$capture" | grep -Fxq -- "$token"; then
+                    log WARN "AI Updates: brew upgrade $token failed (exit $rc); stale artifact, one forced reinstall"
+                    if BREW_CASK_REPAIR_TIMEOUT=300 brew_cask_repair "$token" "$capture" true; then
+                        report_add SUCCESS "AI Updates: $token current in Homebrew"
+                        [ "$capture" = /dev/null ] || rm -f "$capture"
+                        continue
+                    fi
+                else
+                    log WARN "AI Updates: brew upgrade failed (exit $rc); retrying once"
+                    rc=0
+                    timeout 300 brew upgrade "${flags[@]}" "$token" </dev/null >/dev/null 2>&1 || rc=$?
+                    if [ "$rc" -eq 0 ]; then
+                        upgraded=true
+                    else
+                        log ERROR "AI Updates: brew upgrade failed after retry (exit $rc)"
+                    fi
+                fi
+                [ "$capture" = /dev/null ] || rm -f "$capture"
+            elif ai_update_attempt brew upgrade "${flags[@]}" "$token"; then
+                upgraded=true
+            fi
+            if $upgraded &&
                 outdated=$(timeout 60 brew outdated "${flags[@]}" "$token" 2>/dev/null) &&
                 [ -z "$outdated" ]; then
                 report_add SUCCESS "AI Updates: $token current in Homebrew"

@@ -3,6 +3,7 @@
 setup() {
   MEISTER_DIR="$BATS_TEST_TMPDIR/meister"
   mkdir -p "$MEISTER_DIR"
+  : > "$MEISTER_DIR/report"
   DRY_RUN=false
   RUN_PROFILE=auto
   BREW_CASK_SKIP=""
@@ -80,4 +81,231 @@ PY
   run module_homebrew
   [ "$status" = 0 ]
   grep -q 'WARN Homebrew: cask update verification failed (exit 2)' "$MEISTER_DIR/report"
+}
+
+stale_conflict_live() {
+  RUN_VERBOSE_OUT=$(mktemp)
+  case "$*" in
+    *hp-easy-start) printf "\033[31mError:\033[0m hp-easy-start: It seems there is already an App at '%s'.\r\n" "${STALE_APP_PATH:-$T/Caskroom/hp-easy-start/2.16.7,260722/HP Easy Start.app}" ;;
+    *antigravity-cli) printf "Error: antigravity-cli: It seems there is already a Command Wrapper at '%s'.\n" "$T/bin/agy" ;;
+    *tool-x) printf "Error: tool-x: It seems there is already a Binary at '%s'.\n" "$T/bin/tool-x" ;;
+    *) printf "Error: %s: It seems there is already an App at '/nonexistent/%s.app'.\n" "${*##* }" "${*##* }" ;;
+  esac > "$RUN_VERBOSE_OUT"
+  return 1
+}
+
+@test "stale artifact failures trigger one forced reinstall" {
+  export T="$BATS_TEST_TMPDIR"
+  stale="$T/Caskroom/hp-easy-start/2.16.7,260722/HP Easy Start.app"
+  mkdir -p "$stale" "$T/bin/agy"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in
+      --prefix) echo "$T" ;;
+      'outdated --cask') printf 'hp-easy-start\nantigravity-cli\ntool-x\n' ;;
+      'outdated --cask '*) echo "${*##* }"; return 1 ;;
+    esac
+    return 0
+  }
+  run_verbose_live() { stale_conflict_live "$@"; }
+  run module_homebrew
+  [ "$status" = 0 ]
+  [ "$(grep -c '^reinstall --cask --force ' "$MEISTER_DIR/brew-calls")" = 3 ]
+  for c in hp-easy-start antigravity-cli tool-x; do
+    [ "$(grep -cx "reinstall --cask --force $c" "$MEISTER_DIR/brew-calls")" = 1 ]
+  done
+  [ ! -e "$stale" ]
+  [ -e "$T/bin/agy" ]
+}
+
+@test "verified cask repair retracts its failure warning" {
+  export T="$BATS_TEST_TMPDIR"
+  export STALE_APP_PATH="$T/outside/HP Easy Start.app"
+  mkdir -p "$STALE_APP_PATH"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in
+      --prefix) echo "$T" ;;
+      'reinstall --cask --force hp-easy-start') touch "$MEISTER_DIR/reinstalled" ;;
+      'outdated --cask --greedy'*) [ "${GREEDY_LISTS:-false}" = true ] && echo hp-easy-start ;;
+      'outdated --cask hp-easy-start')
+        [ -f "$MEISTER_DIR/reinstalled" ] || { echo hp-easy-start; return 1; } ;;
+      'outdated --cask') [ -f "$MEISTER_DIR/reinstalled" ] || echo hp-easy-start ;;
+    esac
+    return 0
+  }
+  run_verbose_live() { stale_conflict_live "$@"; }
+  run module_homebrew
+  [ "$status" = 0 ]
+  [ "$(grep -cx 'FIX Homebrew: repaired cask hp-easy-start (stale artifact; reinstalled and verified current)' "$MEISTER_DIR/report")" = 1 ]
+  [ "$(grep -c 'WARN.*hp-easy-start.*failed' "$MEISTER_DIR/report")" = 0 ]
+  [ -d "$STALE_APP_PATH" ]
+
+  # Greedy upgrade needs a greedy readback: auto-updating casks stay listed there.
+  : > "$MEISTER_DIR/report"; rm -f "$MEISTER_DIR/reinstalled"
+  GREEDY_LISTS=true BREW_UPGRADE_GREEDY=true run brew_upgrade_each cask 180 hp-easy-start
+  [ "$status" -ne 0 ]
+  [ "$(grep -c '^FIX' "$MEISTER_DIR/report")" = 0 ]
+  grep -qx 'outdated --cask --greedy hp-easy-start' "$MEISTER_DIR/brew-calls"
+
+  # Preview never reinstalls or removes anything.
+  : > "$MEISTER_DIR/brew-calls"
+  capture="$T/capture"
+  stale_conflict_live brew upgrade --cask hp-easy-start || cp "$RUN_VERBOSE_OUT" "$capture"
+  DRY_RUN=true
+  run brew_cask_repair hp-easy-start "$capture" false
+  [ "$status" -ne 0 ]
+  run module_homebrew
+  [ "$(grep -c 'reinstall' "$MEISTER_DIR/brew-calls")" = 0 ]
+  [ -d "$STALE_APP_PATH" ]
+}
+
+@test "failed cask repair keeps the warning and runs once" {
+  export T="$BATS_TEST_TMPDIR"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in
+      --prefix) echo "$T" ;;
+      'reinstall --cask --force cask-a') return 1 ;;
+      'outdated --cask') printf 'cask-a\ncask-b\n' ;;
+      'outdated --cask '*)
+        [ "${READBACK_FAILS:-false}" = true ] && return 2
+        echo "${*##* }"; return 1 ;;
+    esac
+    return 0
+  }
+  run_verbose_live() { stale_conflict_live "$@"; }
+  for READBACK_FAILS in false true; do
+    : > "$MEISTER_DIR/report"; rm -f "$MEISTER_DIR/brew-calls"
+    run module_homebrew
+    [ "$status" = 0 ]
+    [ "$(grep -cE '^WARN Homebrew: (cask-a|cask-b) upgrade failed' "$MEISTER_DIR/report")" = 2 ]
+    [ "$(grep -c '^FIX Homebrew: repaired cask' "$MEISTER_DIR/report")" = 0 ]
+    [ "$(grep -cx 'reinstall --cask --force cask-a' "$MEISTER_DIR/brew-calls")" = 1 ]
+    [ "$(grep -cx 'reinstall --cask --force cask-b' "$MEISTER_DIR/brew-calls")" = 1 ]
+  done
+}
+
+@test "upgraded formula with failing post-step is not reported failed" {
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in
+      'outdated --formula')
+        if [ -f "$MEISTER_DIR/formula-listed" ]; then
+          [ -n "${STILL_LISTED:-}" ] && echo "$STILL_LISTED"
+          return "${READBACK_RC:-0}"
+        fi
+        touch "$MEISTER_DIR/formula-listed"
+        echo "${FORMULA:-ada-url}" ;;
+    esac
+    return 0
+  }
+  run_verbose_live() {
+    RUN_VERBOSE_OUT=$(mktemp)
+    printf 'Error: The `brew link` step did not complete successfully\n' > "$RUN_VERBOSE_OUT"
+    return 1
+  }
+  run module_homebrew
+  [ "$status" = 0 ]
+  [ "$(grep -c 'WARN.*ada-url.*failed' "$MEISTER_DIR/report")" = 0 ]
+
+  : > "$MEISTER_DIR/report"; rm -f "$MEISTER_DIR/formula-listed"
+  READBACK_RC=2 run module_homebrew
+  [ "$(grep -c 'WARN.*ada-url.*failed' "$MEISTER_DIR/report")" = 1 ]
+
+  # Tap-qualified formula still listed by a successful readback keeps its warning.
+  : > "$MEISTER_DIR/report"; rm -f "$MEISTER_DIR/formula-listed"
+  FORMULA=example/tap/tool STILL_LISTED=example/tap/tool run module_homebrew
+  [ "$(grep -c 'WARN Homebrew: example/tap/tool upgrade failed' "$MEISTER_DIR/report")" = 1 ]
+}
+
+@test "stale artifact removal never reaches outside the cask folder" {
+  export T="$BATS_TEST_TMPDIR"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in --prefix) echo "$T" ;; esac
+    return 0
+  }
+  fresh() {
+    rm -rf "$T/Caskroom" "$T/victim"; : > "$MEISTER_DIR/brew-calls"
+    mkdir -p "$T/Caskroom" "$T/victim"; echo keep > "$T/victim/keep"
+  }
+  repair_with_path() {
+    printf "\033[31mError:\033[0m c: It seems there is already an App at '%s'.\r\n" "$1" > "$T/capture"
+    run brew_cask_repair c "$T/capture" false
+    [ "$(grep -cx 'reinstall --cask --force c' "$MEISTER_DIR/brew-calls")" = 1 ]
+  }
+  # 1. symlink leaf named with a trailing slash
+  fresh; mkdir -p "$T/Caskroom/c/1.0"; ln -s "$T/victim" "$T/Caskroom/c/1.0/App.app"
+  repair_with_path "$T/Caskroom/c/1.0/App.app/"
+  [ -f "$T/victim/keep" ]
+  # 2. symlinked intermediate directory
+  fresh; mkdir -p "$T/Caskroom/c"; ln -s "$T/victim" "$T/Caskroom/c/1.0"
+  repair_with_path "$T/Caskroom/c/1.0/keep"
+  [ -f "$T/victim/keep" ]
+  # 3. Caskroom/<cask> itself a symlink
+  fresh; ln -s "$T/victim" "$T/Caskroom/c"
+  repair_with_path "$T/Caskroom/c/keep"
+  [ -f "$T/victim/keep" ]
+  # 4. trailing slashes on the cask folder itself
+  fresh; mkdir -p "$T/Caskroom/c/2.0"; echo keep > "$T/Caskroom/c/2.0/keep"
+  repair_with_path "$T/Caskroom/c//"
+  [ -f "$T/Caskroom/c/2.0/keep" ]
+  # 5. a quote inside the path must not truncate it onto another path
+  fresh; mkdir -p "$T/Caskroom/c/1.0/Bob's.app"; echo keep > "$T/Caskroom/c/1.0/Bob"
+  repair_with_path "$T/Caskroom/c/1.0/Bob's.app"
+  [ -f "$T/Caskroom/c/1.0/Bob" ]
+  [ ! -e "$T/Caskroom/c/1.0/Bob's.app" ]
+}
+
+@test "missing app source heal keeps its own summary" {
+  run_verbose_live() {
+    RUN_VERBOSE_OUT=$(mktemp)
+    printf "libreoffice: It seems the App source '/Applications/LibreOffice.app' is not there.\n" > "$RUN_VERBOSE_OUT"
+    return 1
+  }
+  run module_homebrew
+  [ "$status" = 0 ]
+  [ "$(grep -cx 'FIX Auto-healed 1 broken cask(s)' "$MEISTER_DIR/report")" = 1 ]
+  [ "$(grep -c 'repaired cask' "$MEISTER_DIR/report")" = 0 ]
+  [ "$(grep -cx 'reinstall --cask --force libreoffice' "$MEISTER_DIR/brew-calls")" = 1 ]
+}
+
+@test "tap-qualified cask with a stale artifact is repaired" {
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    return 0
+  }
+  run_verbose_live() {
+    RUN_VERBOSE_OUT=$(mktemp)
+    printf "Error: foo: It seems there is already an App at '/nonexistent/Foo.app'.\n" > "$RUN_VERBOSE_OUT"
+    return 1
+  }
+  run brew_upgrade_each cask 180 user/tap/foo
+  [ "$status" = 0 ]
+  [ "$(grep -c '^reinstall --cask --force' "$MEISTER_DIR/brew-calls")" = 1 ]
+  grep -qx 'FIX Homebrew: repaired cask user/tap/foo (stale artifact; reinstalled and verified current)' "$MEISTER_DIR/report"
+  [ "$(grep -c 'WARN' "$MEISTER_DIR/report")" = 0 ]
+}
+
+@test "missing app source heal skips a cask already force-reinstalled" {
+  export T="$BATS_TEST_TMPDIR"
+  mkdir -p "$T/Caskroom/foo/1.0/Foo.app"
+  brew() {
+    printf '%s\n' "$*" >> "$MEISTER_DIR/brew-calls"
+    case "$*" in
+      --prefix) echo "$T" ;;
+      'outdated --cask') echo foo ;;
+    esac
+    return 0
+  }
+  run_verbose_live() {
+    RUN_VERBOSE_OUT=$(mktemp)
+    printf "Error: foo: It seems there is already an App at '%s'.\nfoo: It seems the App source '%s' is not there.\n" \
+      "$T/Caskroom/foo/1.0/Foo.app" "$T/Caskroom/foo/1.0/Foo.app" > "$RUN_VERBOSE_OUT"
+    return 1
+  }
+  run module_homebrew
+  [ "$status" = 0 ]
+  [ "$(grep -cx 'reinstall --cask --force foo' "$MEISTER_DIR/brew-calls")" = 1 ]
 }

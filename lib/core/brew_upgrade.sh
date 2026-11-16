@@ -69,3 +69,85 @@ brew_cask_tokens() {
         printf '%s\n' "${line%% *}"
     done
 }
+
+# Homebrew 7 prints `Error: <cask>: It seems there is already an App at '…'.`
+# (also "a Command Wrapper", "a Binary"); a TTY capture adds ANSI codes and CR.
+_brew_conflict_clean() {
+    local esc
+    esc=$(printf '\033')
+    tr -d '\r' | sed -e "s/${esc}\[[0-9;]*[A-Za-z]//g"
+}
+
+# stdin: captured Homebrew output. stdout: one cask token per stale-artifact conflict.
+brew_cask_conflict_names() {
+    _brew_conflict_clean |
+        sed -nE "s/^(.*[[:space:]])?([a-z0-9][a-z0-9@._+-]*): It seems there is already an? (App|Command Wrapper|Binary) at '.*/\2/p" |
+        sort -u
+}
+
+# Casks already given their one forced reinstall in this process (AI Updates
+# and Homebrew share it).
+BREW_CASK_REPAIRED="${BREW_CASK_REPAIRED:-}"
+
+# Remove $3 only when it is a real (non-symlink) entry, not named . or ..,
+# whose physical parent lies below the physical $2/Caskroom/$1/ and that folder
+# is not a symlink.
+_brew_cask_remove_stale() {
+    local cask="$1" prefix="$2" path="$3" base root parent
+    while [[ "$path" == */ ]]; do path="${path%/}"; done
+    base="${path##*/}"
+    if [ -n "$prefix" ] && [ -n "$base" ] && [ "$base" != . ] && [ "$base" != .. ] &&
+        root=$(cd -P "$prefix/Caskroom" 2>/dev/null && pwd -P) &&
+        [ -d "$root/$cask" ] && [ ! -L "$root/$cask" ] &&
+        parent=$(cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) &&
+        [[ "$parent" == "$root/$cask/"?* ]] &&
+        [ ! -L "$parent/$base" ] && [ -e "$parent/$base" ]; then
+        log STEP "     $cask: removing stale $parent/$base"
+        rm -rf -- "${parent:?}/$base"
+    else
+        log STEP "     $cask: leaving $3 (not a Caskroom artifact)"
+    fi
+}
+
+# $1 cask token, $2 capture of the failed upgrade, $3 true when it used --greedy.
+# Removes the stale artifact named in $2 only under $(brew --prefix)/Caskroom/<cask>/,
+# runs one forced reinstall per process (bounded by BREW_CASK_REPAIR_TIMEOUT,
+# default 180 s; the caller pre-authenticates sudo), then returns 0 only when
+# `brew outdated` no longer lists the cask.
+brew_cask_repair() {
+    local cask="$1" capture="${2:-}" greedy="${3:-false}" prefix path re out to
+    local -a bounded=() flags=(--cask)
+    [ -n "$cask" ] || return 1
+    [ "$greedy" = true ] && flags+=(--greedy)
+    if command -v command_exists >/dev/null 2>&1; then
+        command_exists timeout && bounded=(timeout)
+    elif command -v timeout >/dev/null 2>&1; then
+        bounded=(timeout)
+    fi
+    case " $BREW_CASK_REPAIRED " in
+        *" $cask "*) ;;
+        *)
+            if ${DRY_RUN:-false}; then
+                log STEP "   [DRY-RUN] $cask: remove stale Caskroom artifact; brew reinstall --cask --force"
+                return 1
+            fi
+            BREW_CASK_REPAIRED="${BREW_CASK_REPAIRED:+$BREW_CASK_REPAIRED }$cask"
+            if [ -s "$capture" ] && [ -r "$capture" ]; then
+                prefix=$(brew --prefix 2>/dev/null) || prefix=""
+                re=$(printf '%s' "$cask" | sed 's/[.+]/\\&/g')
+                while IFS= read -r path; do
+                    _brew_cask_remove_stale "$cask" "$prefix" "$path"
+                done < <(_brew_conflict_clean < "$capture" |
+                    sed -nE "s/^(.*[[:space:]])?${re}: It seems there is already an? (App|Command Wrapper|Binary) at '(.*)'\.?[[:space:]]*$/\3/p")
+            fi
+            log STEP "     $cask: brew reinstall --cask --force"
+            to="${BREW_CASK_REPAIR_TIMEOUT:-180}"
+            if ! "${bounded[@]}" ${bounded:+"$to"} brew reinstall --cask --force "$cask" </dev/null >/dev/null 2>&1; then
+                log WARN "     $cask: forced reinstall failed"
+                return 1
+            fi
+            ;;
+    esac
+    out=$("${bounded[@]}" ${bounded:+60} brew outdated "${flags[@]}" "$cask" 2>/dev/null) || return 1
+    [ -z "$out" ]
+}
