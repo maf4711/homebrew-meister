@@ -142,3 +142,82 @@ assert (state/'last.json').read_text()==report
 assert not (state/'meister-fm').exists() and not (state/'diagnoses').exists()
 PY
 }
+
+@test "heal simfix autofix accept preview flags in any position" {
+  python3 - "$BATS_TEST_DIRNAME/.." "$BATS_TEST_TMPDIR" <<'PY'
+import json,os,pathlib,shutil,subprocess,sys
+repo=pathlib.Path(sys.argv[1]).resolve(); root=pathlib.Path(sys.argv[2])
+bindir=root/'bin'; bindir.mkdir()
+record='printf "%s\\n" "$0 $*" >> "$MEISTER_DIR/unexpected"; exit 99'
+stubs={
+ 'brew':f'case "$1" in upgrade|reinstall|uninstall|cleanup|link) {record};; esac\nexit 0',
+ 'sudo':record,'killall':record,
+ 'launchctl':f'case "$1" in unload|bootout|load) {record};; esac\nexit 0',
+ 'xcrun':f'[ "$1" = simctl ] && case "$2" in shutdown|delete|erase) {record};; esac\nexit 0',
+}
+for name,body in stubs.items():
+ stub=bindir/name; stub.write_text(f'#!/bin/sh\n{body}\n'); stub.chmod(0o755)
+for script in ['MeisterAI.sh','meister.sh']:
+ for args in [['heal','-n'],['heal','--dry-run'],['heal','-y','--dry-run'],['simfix','-n'],['simfix','--dry-run'],['autofix','-n'],['autofix','-y','--dry-run']]:
+  state=root/'state'
+  shutil.rmtree(state,ignore_errors=True); state.mkdir()
+  env={**os.environ,'MEISTER_DIR':str(state),'MEISTER_LIB':str(repo/'lib'),'PATH':f'{bindir}:{os.environ["PATH"]}'}
+  p=subprocess.run(['/bin/bash',str(repo/script),*args],env=env,capture_output=True,text=True,timeout=20)
+  ctx=(script,args,p.stdout[-2000:],p.stderr[-2000:])
+  assert p.returncode==0,ctx
+  assert not (state/'unexpected').exists(),(ctx,(state/'unexpected').read_text())
+  if args[0] in ('heal','autofix'):
+   r=json.loads((state/'last.json').read_text())
+   assert r['dry_run'] is True and r['profile']==args[0],(ctx,r)
+  if args==['heal','-n']: assert 'symlinks tally:' in p.stdout,ctx
+  if args==['simfix','-n']: assert 'DRY-RUN MODE' in p.stdout,ctx
+PY
+}
+
+@test "free preview runs no privileged command" {
+  python3 - "$BATS_TEST_DIRNAME/.." "$BATS_TEST_TMPDIR" <<'PY'
+import os,pathlib,shutil,subprocess,sys
+repo=pathlib.Path(sys.argv[1]).resolve(); root=pathlib.Path(sys.argv[2])
+bindir=root/'bin'; bindir.mkdir()
+for name in ['sudo','purge','killall']:
+ stub=bindir/name
+ stub.write_text('#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$MEISTER_DIR/unexpected"\nexit 99\n')
+ stub.chmod(0o755)
+for script in ['MeisterAI.sh','meister.sh']:
+ for args in [['free','-n'],['free','--dry-run'],['free','--restart-ui','-n']]:
+  state=root/'state'
+  shutil.rmtree(state,ignore_errors=True); state.mkdir()
+  env={**os.environ,'MEISTER_DIR':str(state),'MEISTER_LIB':str(repo/'lib'),'PATH':f'{bindir}:{os.environ["PATH"]}'}
+  p=subprocess.run(['/bin/bash',str(repo/script),*args],env=env,capture_output=True,text=True,timeout=20)
+  ctx=(script,args,p.stdout,p.stderr)
+  assert p.returncode==0,ctx
+  assert not (state/'unexpected').exists(),(ctx,(state/'unexpected').read_text())
+  assert '[DRY-RUN] sudo purge' in p.stdout,ctx
+  if '--restart-ui' in args:
+   assert '[DRY-RUN] killall Finder Dock SystemUIServer' in p.stdout,ctx
+PY
+}
+
+@test "unknown options exit 64 on stderr" {
+  python3 - "$BATS_TEST_DIRNAME/.." "$BATS_TEST_TMPDIR" <<'PY'
+import os,pathlib,subprocess,sys
+repo=pathlib.Path(sys.argv[1]).resolve(); root=pathlib.Path(sys.argv[2]); state=root/'state'; state.mkdir()
+seed={'last.json':'{"prior":"report"}\n','history.log':'prior history\n','meister.lock':str(os.getpid())}
+for name,text in seed.items(): (state/name).write_text(text)
+bindir=root/'bin'; bindir.mkdir()
+for command in ['sudo','brew','xcrun','killall','launchctl','purge','osascript','git','node']:
+ stub=bindir/command
+ stub.write_text('#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$MEISTER_DIR/unexpected"\nexit 99\n')
+ stub.chmod(0o755)
+env={**os.environ,'MEISTER_DIR':str(state),'MEISTER_LIB':str(repo/'lib'),'PATH':f'{bindir}:{os.environ["PATH"]}'}
+for script in ['MeisterAI.sh','meister.sh']:
+ for args in [['--bogus'],['-Z'],['heal','--bogus'],['simfix','--bogus'],['autofix','--bogus'],['free','--bogus'],['-n','heal']]:
+  p=subprocess.run(['/bin/bash',str(repo/script),*args],env=env,capture_output=True,text=True,timeout=20)
+  ctx=(script,args,p.returncode,p.stdout,p.stderr)
+  assert p.returncode==64,ctx
+  assert p.stdout=='',ctx
+  assert 'Unknown command or argument:' in p.stderr,ctx
+  assert not (state/'unexpected').exists(),ctx
+  for name,text in seed.items(): assert (state/name).read_text()==text,(ctx,name)
+PY
+}

@@ -3799,9 +3799,10 @@ module_spotlight_fix() {
     local volumes_broken=0
     while IFS= read -r vol; do
         [ -z "$vol" ] && continue
-        # Skip internal APFS / simulator / recovery volumes (mdutil always errors
-        # or is meaningless). Match prefixes — INSIGHTS #3: Update/mnt1 + SFR/mnt1
-        # were permanent false ERRORs when only the exact path was whitelisted.
+        # Skip internal APFS / simulator / recovery volumes and sealed read-only
+        # cryptex mounts (mdutil always errors or is meaningless). Match prefixes —
+        # INSIGHTS #3: Update/mnt1 + SFR/mnt1 were permanent false ERRORs when only
+        # the exact path was whitelisted.
         case "$vol" in
             /System/Volumes/VM|/System/Volumes/VM/*)                 continue ;;
             /System/Volumes/Preboot|/System/Volumes/Preboot/*)       continue ;;
@@ -3813,6 +3814,7 @@ module_spotlight_fix() {
             /Library/Developer/CoreSimulator|/Library/Developer/CoreSimulator/*) continue ;;
             /Volumes/Recovery|/Volumes/Recovery/*)                  continue ;;
             /System/Volumes/Recovery|/System/Volumes/Recovery/*)    continue ;;
+            /private/var/run/com.apple.security.cryptexd|/private/var/run/com.apple.security.cryptexd/*) continue ;;
         esac
         volumes_checked=$((volumes_checked + 1))
         local vol_status=$(mdutil -s "$vol" 2>/dev/null)
@@ -7972,10 +7974,16 @@ fi
 
 # ── Simulator Fix (meister simfix) ──
 if [ "${1:-}" = "simfix" ]; then
+    DRY_RUN=false
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     echo -e "\033[1;34m  meister SIMFIX — Repair iOS Simulator\033[0m"
     echo ""
-    DRY_RUN=false
-    [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
     MODULE_TOTAL=1
     start_bw_monitor
@@ -8874,7 +8882,13 @@ autofix_known_issues() {
 # Feeds the last run's warnings/errors + live system facts to the on-device
 # model and prints a prioritized diagnosis. Read-only, nothing runs.
 if [ "${1:-}" = "autofix" ]; then
-    [ "${2:-}" = "--dry-run" ] || [ "${2:-}" = "-n" ] && DRY_RUN=true
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     start_run_report autofix || exit 1
     # Need log helpers + sudo helpers already defined (we are past function defs)
     rotate_logs 2>/dev/null || true
@@ -9891,8 +9905,24 @@ if [ "${1:-}" = "report" ]; then
 fi
 
 if [ "${1:-}" = "free" ]; then
+    DRY_RUN=false
+    _free_restart_ui=false
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            --restart-ui) _free_restart_ui=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     echo -e "\033[1;34m  meister FREE — Free up RAM & reset UI\033[0m"
     echo ""
+    if $DRY_RUN; then
+        echo "  [DRY-RUN MODE — no changes]"
+        run_or_dry sudo purge
+        $_free_restart_ui && run_or_dry killall Finder Dock SystemUIServer
+        exit 0
+    fi
     _ram_before=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
     echo "  RAM free before: ${_ram_before} MB"
     echo "  Running sudo purge (may take 10-30s)..."
@@ -9902,7 +9932,7 @@ if [ "${1:-}" = "free" ]; then
     else
         echo "  Purge needs sudo"
     fi
-    if [ "${2:-}" = "--restart-ui" ]; then
+    if $_free_restart_ui; then
         echo "  Restarting Finder + Dock..."
         killall Finder 2>/dev/null
         killall Dock 2>/dev/null
@@ -9913,10 +9943,16 @@ fi
 
 # ── Healer (meister heal) ──
 if [ "${1:-}" = "heal" ]; then
+    DRY_RUN=false
+    for _arg in "${@:2}"; do
+        case "$_arg" in
+            -n|--dry-run) DRY_RUN=true ;;
+            -y|--yes) MEISTER_ALWAYS_YES=true ;;
+            *) printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$_arg" >&2; exit 64 ;;
+        esac
+    done
     echo -e "\033[1;34m  meister HEAL — Auto-Healing\033[0m"
     echo ""
-    DRY_RUN=false
-    [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
     start_run_report heal || exit 1
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
     # One sudo auth (or reuse ticket) — no mid-run prompts
@@ -10015,7 +10051,7 @@ for arg in "$@"; do
                 bloatware|kill-bloat|bloat|remove|uninstall|orphans|report|doctor|watch|clip|keys|ai|heal|free)
                     _NEW_ARGS+=("$arg") ;;
                 *)
-                    echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
+                    printf '[ERROR] Unknown command or argument: %s (see meister -h)\n' "$arg" >&2; exit 64 ;;
             esac
             ;;
         *)         _NEW_ARGS+=("$arg") ;;
@@ -10171,7 +10207,7 @@ Docs: docs/PRODUCT.md  docs/GUI.md
   Tip: meister --quick daily · meister --deep weekly
 HELPEOF
        exit 0 ;;
-    \?) log ERROR "Unknown option: -$OPTARG"; exit 1 ;;
+    \?) printf '[ERROR] Unknown command or argument: -%s (see meister -h)\n' "$OPTARG" >&2; exit 64 ;;
   esac
 done
 
