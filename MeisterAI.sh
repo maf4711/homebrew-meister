@@ -423,6 +423,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
         meister_configure_timeout
     fi
     # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/core/process_swarm.sh" ] && . "$MEISTER_LIB_DIR/core/process_swarm.sh"
+    # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/learned_fixes.sh" ] && . "$MEISTER_LIB_DIR/core/learned_fixes.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/core/brew_upgrade.sh" ] && . "$MEISTER_LIB_DIR/core/brew_upgrade.sh"
@@ -518,6 +520,7 @@ CLEAN_FONT_CACHE=true         # Font cache + QuickLook cache
 # Fix #93: macOS Performance-Optimization (via ~/.meister/config steuerbar)
 PERF_SPOTLIGHT_EXCLUDE=true    # Exclude dev directories from Spotlight
 PERF_DISABLE_AGENTS=true       # Disable unnecessary user LaunchAgents
+PROCESS_SWARM_WARN_COUNT=20    # WARN when a command runs this many times (report-only)
 
 # Spotlight Fix (automatic on every run)
 SPOTLIGHT_FIX_ENABLED=true         # Spotlight diagnosis and repair
@@ -588,7 +591,7 @@ MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
     _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
-    _NUM_KEYS=" BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB "
+    _NUM_KEYS=" BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB PROCESS_SWARM_WARN_COUNT "
     _STR_KEYS=" FM_HEAL_MODEL FM_DIAGNOSE_MODEL RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP "
 
     while IFS='=' read -r key value; do
@@ -4395,6 +4398,20 @@ module_performance() {
         }
     else
         log STEP "   [7/8] LaunchAgents: skipped (Config)"
+    fi
+
+    # ── [8/8] Load & process swarm (report-only, never signals) ──
+    if command -v meister_load_check >/dev/null 2>&1; then
+        log STEP "   [8/8] Load & process swarm..."
+        local _ps_swarm_cache _load1
+        _ps_swarm_cache=$(ps -axo pid=,uid=,stat=,comm= 2>/dev/null)
+        _load1=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print $1}')
+        # Here-strings, not pipes: report_add must run in this shell to keep its arrays.
+        meister_load_check "$_load1" "$(sysctl -n hw.ncpu 2>/dev/null)" <<<"$_ps_swarm_cache"
+        meister_proc_swarm_counts "${PROCESS_SWARM_WARN_COUNT:-20}" <<<"$_ps_swarm_cache"
+        meister_fsmonitor_report "${PROCESS_SWARM_WARN_COUNT:-20}"
+    else
+        log STEP "   [8/8] Load & process swarm: skipped (lib missing)"
     fi
 
     # ── Summary ──
