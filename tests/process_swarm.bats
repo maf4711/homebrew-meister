@@ -10,7 +10,17 @@ setup() {
   # ps answers the fsmonitor query from a fixture file (pid command).
   cat > "$STUB/ps" <<'EOF'
 #!/bin/sh
-cat "$PS_FIXTURE" 2>/dev/null
+case "$*" in
+  *comm=*) cat "$PS_COMM_FIXTURE" 2>/dev/null ;;
+  *) cat "$PS_FIXTURE" 2>/dev/null ;;
+esac
+EOF
+  cat > "$STUB/sysctl" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *vm.loadavg*) echo '{ 172.91 171.95 188.17 }' ;;
+  *hw.ncpu*) echo 14 ;;
+esac
 EOF
   # lsof prints a fixture in -Fpn format, or fails when LSOF_FAIL=1.
   cat > "$STUB/lsof" <<'EOF'
@@ -18,10 +28,13 @@ EOF
 [ "${LSOF_FAIL:-0}" = 1 ] && exit 1
 cat "$LSOF_FIXTURE" 2>/dev/null
 EOF
-  chmod +x "$STUB/ps" "$STUB/lsof"
+  chmod +x "$STUB/ps" "$STUB/lsof" "$STUB/sysctl"
   PS_FIXTURE="$BATS_TEST_TMPDIR/ps.txt"
   LSOF_FIXTURE="$BATS_TEST_TMPDIR/lsof.txt"
-  export PS_FIXTURE LSOF_FIXTURE
+  PS_COMM_FIXTURE="$BATS_TEST_TMPDIR/ps_comm.txt"
+  REPORT="$BATS_TEST_TMPDIR/report"
+  export PS_FIXTURE LSOF_FIXTURE PS_COMM_FIXTURE
+  : > "$REPORT"
   : > "$PS_FIXTURE"
   : > "$LSOF_FIXTURE"
   source "$BATS_TEST_DIRNAME/../lib/core/process_swarm.sh"
@@ -58,6 +71,7 @@ fsmonitor_ps() {
   [[ "$output" == *"CGPDFService (3)"* ]]
   [[ "$output" != *"mdworker_shared"* ]]
   [ "$(grep -c . <<<"$output")" -eq 1 ]
+  [ "$(grep -c '^WARN Load 172.91' "$REPORT")" -eq 1 ]
 }
 
 @test "load above twice the cores: lists at most the top 5 runnable commands" {
@@ -85,6 +99,7 @@ fsmonitor_ps() {
   [[ "$output" == WARN* ]]
   [[ "$output" == *"Some Helper (25), mdworker_shared (20)"* ]]
   [[ "$output" != *launchd* ]]
+  [ "$(grep -c '^WARN Process swarm' "$REPORT")" -eq 1 ]
 }
 
 @test "instance threshold: defaults to 20 when the threshold is not numeric" {
@@ -115,6 +130,22 @@ fsmonitor_ps() {
   [[ "$output" == *"21 daemons"* ]]
   [[ "$output" == *"15/4/1/1"* ]]
   [[ "$output" == *"core.fsmonitor=false for batch git runs"* ]]
+  [ "$(grep -c '^WARN git fsmonitor' "$REPORT")" -eq 1 ]
+}
+
+@test "fsmonitor fleet: a daemon with several sockets is counted once" {
+  fsmonitor_ps 20 > "$PS_FIXTURE"
+  {
+    i=0
+    while [ "$i" -lt 20 ]; do
+      printf 'p%s\nn/Users/u/r%s/.git/fsmonitor--daemon.ipc\n' "$((5000 + i))" "$i"
+      i=$((i + 1))
+    done
+    printf 'p5000\nn/Users/u/r0/.git/worktrees/x/fsmonitor--daemon.ipc\nn/Users/u/r0/.git/fsmonitor--daemon.ipc\n'
+  } > "$LSOF_FIXTURE"
+  run meister_fsmonitor_report 20
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"20 daemons (20/0/0/0"* ]]
 }
 
 @test "fsmonitor fleet: below the threshold stays silent" {
@@ -128,6 +159,10 @@ fsmonitor_ps() {
   run meister_load_check 3.0 14 <<<""
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+  run meister_load_check 172.91 14 <<<""
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"12.4x) — runnable: none"* ]]
+  [[ "$output" != *FIX* ]]
   run meister_proc_swarm_counts 20 <<<""
   [ "$status" -eq 0 ]
   [ -z "$output" ]
@@ -195,4 +230,27 @@ fsmonitor_ps() {
   [[ "$output" == *"260 daemons (260/0/0/0"* ]]
   unset -f kill
   [ ! -s "$rec" ]
+}
+
+@test "never signals: module_performance step [8/8] keeps all three WARNs in the report arrays" {
+  fsmonitor_ps 260 > "$PS_FIXTURE"
+  i=0
+  while [ "$i" -lt 260 ]; do
+    printf 'p%s\nn/Users/u/r%s/.git/fsmonitor--daemon.ipc\n' "$((5000 + i))" "$i"
+    i=$((i + 1))
+  done > "$LSOF_FIXTURE"
+  snapshot 260 R /opt/homebrew/opt/git/libexec/git-core/git 5000 > "$PS_COMM_FIXTURE"
+  REPORT_WARNINGS=()
+  report_add() { [ "$1" = WARN ] && REPORT_WARNINGS+=("$2"); }
+  PROCESS_SWARM_WARN_COUNT=20
+  step=$(awk '/# ── \[8\/8\]/ {on=1} /# ── Summary/ {exit} on' "$BATS_TEST_DIRNAME/../MeisterAI.sh")
+  [ -n "$step" ]
+  eval "perf_step_8() {
+$step
+}"
+  perf_step_8 > /dev/null
+  [ "${#REPORT_WARNINGS[@]}" -eq 3 ]
+  [[ "${REPORT_WARNINGS[0]}" == "Load 172.91 on 14 cores (12.4x)"* ]]
+  [[ "${REPORT_WARNINGS[1]}" == "Process swarm: git (260)"* ]]
+  [[ "${REPORT_WARNINGS[2]}" == "git fsmonitor: 260 daemons (260/0/0/0"* ]]
 }
