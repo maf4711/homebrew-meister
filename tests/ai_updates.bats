@@ -537,10 +537,52 @@ orphaned_cask_fixture() {
   orphaned_cask_fixture
   mkdir -p "$T/Caskroom/ollama-app/0.9"
   run ai_update_unmanaged_app "$APP" ollama-app
-  [[ "$output" == *'has no verified unattended updater'* ]]
+  [[ "$output" != *'repaired'* ]]
   rmdir "$T/Caskroom/ollama-app/0.9"
   OTHER="$T/Applications/Copy.app"; mkdir -p "$OTHER/Contents"; touch "$OTHER/Contents/Info.plist"
   run ai_update_unmanaged_app "$OTHER" ollama-app
   [[ "$output" == *'has no verified unattended updater'* ]]
   ! grep -q '^reinstall' "$CALLS"
+}
+
+@test "idle AI app without updater is adopted by its official cask and verified" {
+  orphaned_cask_fixture
+  rm -rf "$T/Caskroom/ollama-app" "$T/Caskroom/ollama"
+  brew() {
+    echo "$*" >> "$CALLS"
+    case "$*" in
+      'info --cask --json=v2 ollama-app') printf '{"casks":[{"artifacts":[{"app":["Ollama.app"],"target":"%s"}]}]}\n' "$(realpath "$APP")" ;;
+      'install --cask --adopt ollama-app') [ "${ADOPT_OK:-true}" = true ] || return 1; mkdir -p "$T/adopted" ;;
+      'install --cask --force ollama-app') mkdir -p "$T/adopted" ;;
+      'list --cask ollama-app') [ -d "$T/adopted" ] && echo "$APP" ;;
+      *) return 1 ;;
+    esac
+  }
+  run ai_update_unmanaged_app "$APP" ''
+  [ "$status" = 0 ]
+  [[ "$output" == *'FIX AI Updates: Ollama.app now updated by Homebrew cask ollama-app'* ]]
+  [[ "$output" != *WARN* ]]
+  ! grep -q -- '--force' "$CALLS"
+  rm -rf "$T/adopted"; : > "$CALLS"
+  ADOPT_OK=false run ai_update_unmanaged_app "$APP" ''
+  [ "$status" = 0 ]
+  grep -q '^install --cask --force ollama-app$' "$CALLS"
+}
+
+@test "AI app in use or without a matching cask is never adopted" {
+  orphaned_cask_fixture
+  rm -rf "$T/Caskroom/ollama-app" "$T/Caskroom/ollama"
+  touch "$T/running"
+  mkdir -p "$APP/Contents/Resources"
+  printf '#!/bin/sh\nprintf "NAME ID\\nqwen3 abc\\n"\n' > "$APP/Contents/Resources/ollama"; chmod +x "$APP/Contents/Resources/ollama"
+  run ai_update_unmanaged_app "$APP" ''
+  [ "$status" = 1 ]
+  [[ "$output" == *'handover to Homebrew cask ollama-app deferred'* ]]
+  ! grep -q '^install' "$CALLS"
+  rm "$T/running"
+  brew() { echo "$*" >> "$CALLS"; return 1; }
+  run ai_update_unmanaged_app "$APP" ''
+  [ "$status" = 1 ]
+  [[ "$output" == *'has no verified unattended updater'* ]]
+  ! grep -q '^install' "$CALLS"
 }

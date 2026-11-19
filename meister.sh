@@ -541,6 +541,7 @@ ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
 DOCS_ORDER_ENABLED=true            # Order check for DOCS_ORDER_ROOT
 DOCS_ORDER_ROOT="$HOME/Documents"  # Directory to check
 DOCS_ORDER_KNOWN=""                # Extra allowed top-level entries ("|"-separated), on top of learned baseline
+DOCS_ORDER_AUTO_ACCEPT=true        # Autoheal: report new root entries once by name, then accept them (backup kept)
 DOCS_ORDER_GHOST_CLEAN=true        # Remove EMPTY "X 2"/"X 3" ghost folders at root
 DOCS_ORDER_DATALESS_SCAN=false     # heavy — --deep
 DOCS_ORDER_DATALESS_WARN_GB=5      # WARN when more than X GB exist only in iCloud
@@ -4349,7 +4350,7 @@ module_performance() {
         log STEP "   [7/8] LaunchAgents: skipped (Config)"
     fi
 
-    # ── [8/8] Load & process swarm (report-only, never signals) ──
+    # ── [8/8] Load & process swarm (report-only, never signals; fsmonitor autoheal) ──
     if command -v meister_load_check >/dev/null 2>&1; then
         log STEP "   [8/8] Load & process swarm..."
         local _ps_swarm_cache _load1
@@ -4358,7 +4359,8 @@ module_performance() {
         # Here-strings, not pipes: report_add must run in this shell to keep its arrays.
         meister_load_check "$_load1" "$(sysctl -n hw.ncpu 2>/dev/null)" <<<"$_ps_swarm_cache"
         meister_proc_swarm_counts "${PROCESS_SWARM_WARN_COUNT:-20}" <<<"$_ps_swarm_cache"
-        meister_fsmonitor_report "${PROCESS_SWARM_WARN_COUNT:-20}"
+        meister_fsmonitor_heal "${PROCESS_SWARM_WARN_COUNT:-20}" \
+            || meister_fsmonitor_report "${PROCESS_SWARM_WARN_COUNT:-20}"
     else
         log STEP "   [8/8] Load & process swarm: skipped (lib missing)"
     fi
@@ -5063,11 +5065,22 @@ module_tm_health() {
     if ! command_exists tmutil; then log STEP "   tmutil not available"; return 0; fi
     # Backup monitoring is opt-in through an already configured destination.
     # An absent destination is not a maintenance finding.
-    tmutil destinationinfo 2>/dev/null | grep -q 'Name' || return 0
+    local dest; dest=$(tmutil destinationinfo 2>/dev/null)
+    grep -q 'Name' <<< "$dest" || return 0
     local latest; latest=$(tmutil latestbackup 2>/dev/null | tail -1)
     if [ -z "$latest" ]; then
-        log WARN "   No Time Machine backups found"
-        report_add WARN "Time Machine: no backups → meister backup"
+        # Autoheal: start the first backup when the destination is connected.
+        # A disconnected destination is like a missing one: no finding.
+        if ! grep -q 'Mount Point' <<< "$dest"; then
+            log STEP "   No backups yet; destination not connected"
+        elif $DRY_RUN; then
+            report_add WOULD "Time Machine: start first backup"
+        elif tmutil startbackup --auto >/dev/null 2>&1; then
+            log HEAL "   No backups yet — first backup started"
+            report_add FIX "Time Machine: first backup started"
+        else
+            report_add WARN "Time Machine: no backups and the backup could not be started → meister backup"
+        fi
     else
         local bkup_date; bkup_date=$(basename "$latest" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
         if [ -n "$bkup_date" ]; then
@@ -5624,7 +5637,8 @@ docs_order_accept_baseline() {
 }
 
 # `meister docs accept`: the explicit, user-invoked acceptance. Lists what is
-# new, then accepts exactly the listing it showed. Maintenance never calls this.
+# new, then accepts exactly the listing it showed. Maintenance auto-accepts only
+# with DOCS_ORDER_AUTO_ACCEPT=true, after naming the new entries in the report.
 docs_order_accept_current() {
     local baseline="$MEISTER_DIR/docs_order.baseline" entries known="" new="" e reviewed rc
     entries=$(docs_order_root_entries "$DOCS_ORDER_ROOT") || { log WARN "Docs baseline: root entries could not be checked in $DOCS_ORDER_ROOT"; return 1; }
@@ -5718,8 +5732,21 @@ module_docs_order() {
             local ncount; ncount=$(printf '%s\n' "$new_entries" | wc -l | tr -d ' ')
             log WARN "   ${ncount} new top-level entries (not in baseline):"
             printf '%s\n' "$new_entries" | head -10 | while IFS= read -r e; do log STEP "     + $e"; done
-            log STEP "   Review them, then accept with: meister docs accept (or add names to DOCS_ORDER_KNOWN)"
-            report_add WARN "${ncount} new entries in $(basename "$root") root"
+            local names backup
+            names=$(printf '%s\n' "$new_entries" | head -5 | paste -sd, - | sed 's/,/, /g')
+            [ "$ncount" -gt 5 ] && names="$names, …"
+            if ${DOCS_ORDER_AUTO_ACCEPT:-true} && ! $DRY_RUN; then
+                # Backup first, then accept exactly the listing named in the report.
+                if backup=$(mktemp "${baseline}.backup.XXXXXX") && cp -p "$baseline" "$backup" \
+                    && docs_order_write_baseline "$entries" "$baseline"; then
+                    report_add FIX "Docs order: ${ncount} new $(basename "$root") root entries accepted into baseline: ${names}"
+                else
+                    report_add WARN "${ncount} new entries in $(basename "$root") root (auto-accept failed): ${names}"
+                fi
+            else
+                log STEP "   Review them, then accept with: meister docs accept (or add names to DOCS_ORDER_KNOWN)"
+                report_add WARN "${ncount} new entries in $(basename "$root") root"
+            fi
         else
             log STEP "   Root entries match baseline"
         fi

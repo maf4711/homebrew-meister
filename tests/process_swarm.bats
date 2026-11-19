@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Report-only load / process-swarm / fsmonitor checks (lib/core/process_swarm.sh).
+# Load / process-swarm / fsmonitor checks and fsmonitor autoheal (lib/core/process_swarm.sh).
 
 setup() {
   log() { printf '%s %s\n' "$1" "$2"; }
@@ -33,6 +33,9 @@ EOF
   LSOF_FIXTURE="$BATS_TEST_TMPDIR/lsof.txt"
   PS_COMM_FIXTURE="$BATS_TEST_TMPDIR/ps_comm.txt"
   REPORT="$BATS_TEST_TMPDIR/report"
+  # Never read or write the developer's real global git config.
+  GIT_CONFIG_GLOBAL="$BATS_TEST_TMPDIR/gitconfig"; : > "$GIT_CONFIG_GLOBAL"
+  export GIT_CONFIG_GLOBAL
   export PS_FIXTURE LSOF_FIXTURE PS_COMM_FIXTURE
   : > "$REPORT"
   : > "$PS_FIXTURE"
@@ -253,4 +256,55 @@ $step
   [[ "${REPORT_WARNINGS[0]}" == "Load 172.91 on 14 cores (12.4x)"* ]]
   [[ "${REPORT_WARNINGS[1]}" == "Process swarm: git (260)"* ]]
   [[ "${REPORT_WARNINGS[2]}" == "git fsmonitor: 260 daemons (260/0/0/0"* ]]
+}
+
+# git stub: global core.fsmonitor read/write from a file; records stop calls.
+fsmonitor_git_stub() {
+  GIT_CALLS="$BATS_TEST_TMPDIR/git_calls"; GIT_FSM="$BATS_TEST_TMPDIR/fsm"
+  export GIT_CALLS GIT_FSM
+  echo "${1:-true}" > "$GIT_FSM"; : > "$GIT_CALLS"
+  cat > "$STUB/git" <<'G'
+#!/bin/sh
+echo "$*" >> "$GIT_CALLS"
+case "$*" in
+  'config --global --get core.fsmonitor') cat "$GIT_FSM" ;;
+  'config --global core.fsmonitor false') echo false > "$GIT_FSM" ;;
+esac
+G
+  chmod +x "$STUB/git"
+  timeout() { shift; "$@"; }
+  mkdir -p "$BATS_TEST_TMPDIR/r0/.git" "$BATS_TEST_TMPDIR/r1/.git/worktrees/wt"
+  fsmonitor_ps 21 > "$PS_FIXTURE"
+  printf 'p5000\nn%s/r0/.git/fsmonitor--daemon.ipc\np5001\nn%s/r1/.git/worktrees/wt/fsmonitor--daemon.ipc\np5002\nn%s/gone/.git/fsmonitor--daemon.ipc\n' \
+    "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" > "$LSOF_FIXTURE"
+}
+
+@test "fsmonitor heal: global true + fleet → config false, daemons asked to stop, FIX" {
+  fsmonitor_git_stub true
+  run meister_fsmonitor_heal 20
+  [ "$status" -eq 0 ]
+  [ "$(cat "$GIT_FSM")" = false ]
+  grep -q "^--git-dir=$BATS_TEST_TMPDIR/r0/.git fsmonitor--daemon stop$" "$GIT_CALLS"
+  grep -q "^--git-dir=$BATS_TEST_TMPDIR/r1/.git/worktrees/wt fsmonitor--daemon stop$" "$GIT_CALLS"
+  ! grep -q "gone" "$GIT_CALLS"
+  grep -q '^FIX git fsmonitor: global core.fsmonitor=false set; 2/21 daemons stopped$' "$REPORT"
+  ! grep -q '^WARN' "$REPORT"
+}
+
+@test "fsmonitor heal: not applicable (global false, opt-out, below threshold, dry run) changes nothing" {
+  fsmonitor_git_stub false
+  run meister_fsmonitor_heal 20
+  [ "$status" -eq 1 ]
+  fsmonitor_git_stub true
+  MEISTER_FSMONITOR_HEAL=false run meister_fsmonitor_heal 20
+  [ "$status" -eq 1 ]
+  fsmonitor_ps 19 > "$PS_FIXTURE"
+  run meister_fsmonitor_heal 20
+  [ "$status" -eq 1 ]
+  fsmonitor_ps 21 > "$PS_FIXTURE"
+  DRY_RUN=true run meister_fsmonitor_heal 20
+  [ "$status" -eq 0 ]
+  grep -q '^WOULD git fsmonitor' "$REPORT"
+  [ "$(cat "$GIT_FSM")" = true ]
+  ! grep -q 'stop' "$GIT_CALLS"
 }

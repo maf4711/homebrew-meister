@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # Mandatory maintenance step. Update installed clients through their existing
-# owners; never install absent clients, kill sessions or silently migrate owners.
+# owners; never install absent clients or kill sessions. An idle AI app without
+# any updater is handed to its official Homebrew cask (autoheal, user 2026-11-19)
+# and reported as FIX; ownership never changes silently.
 
 ai_brew_client() {
     case "${1##*/}" in
@@ -309,6 +311,19 @@ except (ValueError, TypeError):
 # metadata", fix `brew reinstall --cask --force`). Ownership already lies with
 # Homebrew, so this repairs it and migrates nothing.
 # stdout: the AI client cask in that state whose declared app target is $1.
+# True when cask $1 installs its app exactly at path $2.
+ai_cask_targets() {
+    timeout 60 brew info --cask --json=v2 "$1" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    cask = json.load(sys.stdin)["casks"][0]
+    hit = any(isinstance(a, dict) and "app" in a and a.get("target") == sys.argv[1] for a in cask["artifacts"])
+except (ValueError, KeyError, IndexError, TypeError):
+    hit = False
+sys.exit(0 if hit else 1)
+' "$2"
+}
+
 ai_brew_orphaned_cask_for() {
     local app="$1" installed="$2" prefix target token dir
     prefix=$(brew --prefix 2>/dev/null) && [ -n "$prefix" ] || return 1
@@ -318,15 +333,7 @@ ai_brew_orphaned_cask_for() {
         dir="$prefix/Caskroom/$token"
         [ -d "$dir" ] && [ ! -L "$dir" ] || continue
         [ -z "$(find "$dir" -mindepth 1 -maxdepth 1 ! -name '.*' 2>/dev/null | head -1)" ] || continue
-        timeout 60 brew info --cask --json=v2 "$token" 2>/dev/null | python3 -c '
-import json, sys
-try:
-    cask = json.load(sys.stdin)["casks"][0]
-    hit = any(isinstance(a, dict) and "app" in a and a.get("target") == sys.argv[1] for a in cask["artifacts"])
-except (ValueError, KeyError, IndexError, TypeError):
-    hit = False
-sys.exit(0 if hit else 1)
-' "$target" || continue
+        ai_cask_targets "$token" "$target" || continue
         printf '%s\n' "$token"
         return 0
     done <<< "$installed"
@@ -367,6 +374,45 @@ ai_repair_orphaned_cask() {
     return 1
 }
 
+# Official casks per bundle; the one whose app target is this path is adopted.
+ai_adoptable_casks() {
+    case "$1" in
+        com.electron.ollama) echo ollama-app ;;
+        com.openai.chat|com.openai.codex) printf 'chatgpt\ncodex-app\n' ;;
+        com.todesktop.230313mzl4w4u92) echo cursor ;;
+    esac
+}
+
+# Hand an idle app without an updater to its official cask: --adopt keeps an
+# identical build; otherwise the cask installs its current release over it.
+ai_adopt_unmanaged_app() {
+    local app="$1" bundle="$2" label="${1##*/}" target token found="" was_running=false ok=false
+    target=$(realpath "$app" 2>/dev/null) || return 1
+    while IFS= read -r token; do
+        [ -n "$token" ] && ai_cask_targets "$token" "$target" && { found=$token; break; }
+    done <<< "$(ai_adoptable_casks "$bundle")"
+    [ -n "$found" ] || return 1
+    if ai_app_in_use "$app" "$bundle"; then
+        report_add WARN "AI Updates: $label has no updater; handover to Homebrew cask $found deferred while the app is in use"
+        return 2
+    fi
+    ai_app_running "$app" && was_running=true
+    log HEAL "AI Updates: $label has no updater — handing it to Homebrew cask $found"
+    if timeout 300 brew install --cask --adopt "$found" </dev/null >/dev/null 2>&1 \
+        || timeout 300 brew install --cask --force "$found" </dev/null >/dev/null 2>&1; then
+        ok=true
+    fi
+    if $was_running && ! ai_app_running "$app"; then
+        open -g -a "$app" >/dev/null 2>&1 || log WARN "AI Updates: $label could not be started again"
+    fi
+    if $ok && ai_brew_owns_app "$found" "$app"; then
+        report_add FIX "AI Updates: $label now updated by Homebrew cask $found (adopted and verified)"
+        return 0
+    fi
+    report_add WARN "AI Updates: $label handover to Homebrew cask $found failed; run: brew install --cask --adopt $found"
+    return 2
+}
+
 # Identify bundles, not display names (a renamed Codex app can be ChatGPT.app).
 ai_update_unmanaged_app() {
     local app="$1" installed="$2" bundle token
@@ -386,6 +432,8 @@ ai_update_unmanaged_app() {
         ai_check_claude_desktop "$app"
         return $?
     fi
+    ai_adopt_unmanaged_app "$app" "$bundle"
+    case $? in 0) return 0 ;; 2) return 1 ;; esac
     report_add WARN "AI Updates: ${app##*/} ($bundle) has no verified unattended updater; update in the app"
     return 1
 }

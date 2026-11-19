@@ -1,7 +1,9 @@
 # shellcheck shell=bash
-# Report-only load / process-swarm / fsmonitor checks for module_performance.
-# Never signals, stops or unloads anything: the user decided (2026-11-18) that
-# Meister only reports these; producers are fixed at their source.
+# Load / process-swarm / fsmonitor checks for module_performance.
+# Load and swarm checks are report-only and never signal (user, 2026-11-18).
+# The fsmonitor fleet has one known source, a global core.fsmonitor=true:
+# meister_fsmonitor_heal (user, 2026-11-19: autoheal) turns that off and asks
+# each daemon to stop through git's own IPC. It never sends signals.
 # Snapshot input on stdin: "pid uid stat comm" (ps -axo pid=,uid=,stat=,comm=),
 # where comm may be a full path and may contain spaces.
 
@@ -78,4 +80,32 @@ meister_fsmonitor_report() {
         END { printf "%d/%d/%d/%d", m, w, s, total - m - w - s }
     ')
     _meister_proc_warn "git fsmonitor: ${total} daemons (${split} main/worktree/submodule/unresolved) — set core.fsmonitor=false for batch git runs"
+}
+
+# Autoheal for the fsmonitor fleet: at least $1 (default 20) daemons and a
+# global core.fsmonitor=true. Sets it false, then asks every daemon to stop via
+# `git fsmonitor--daemon stop`. Returns 1 when it did not apply (then the caller
+# reports instead). MEISTER_FSMONITOR_HEAL=false keeps report-only.
+meister_fsmonitor_heal() {
+    local threshold="$1" pids total gitdirs gitdir stopped=0
+    case "$threshold" in ''|*[!0-9]*) threshold=20 ;; esac
+    [ "${MEISTER_FSMONITOR_HEAL:-true}" = true ] || return 1
+    pids=$(ps -axo pid=,command= 2>/dev/null | awk '/fsmonitor--daemon run/ && $2 !~ /awk$/ { print $1 }')
+    total=$(printf '%s\n' "$pids" | grep -c '[0-9]')
+    [ "$total" -ge "$threshold" ] || return 1
+    [ "$(git config --global --get core.fsmonitor 2>/dev/null)" = true ] || return 1
+    if ${DRY_RUN:-false}; then
+        report_add WOULD "git fsmonitor: set global core.fsmonitor=false and stop ${total} daemons"
+        return 0
+    fi
+    git config --global core.fsmonitor false 2>/dev/null || return 1
+    gitdirs=$( { lsof -a -p "$(printf '%s\n' "$pids" | paste -sd, -)" -U -Fn 2>/dev/null || true; } \
+        | sed -n 's|^n\(/.*\)/fsmonitor--daemon\.ipc$|\1|p' | sort -u)
+    while IFS= read -r gitdir; do
+        [ -d "$gitdir" ] || continue
+        timeout 10 git --git-dir="$gitdir" fsmonitor--daemon stop >/dev/null 2>&1 && stopped=$((stopped + 1))
+    done <<< "$gitdirs"
+    log HEAL "   git fsmonitor: global core.fsmonitor=false, ${stopped}/${total} daemons stopped"
+    report_add FIX "git fsmonitor: global core.fsmonitor=false set; ${stopped}/${total} daemons stopped"
+    return 0
 }

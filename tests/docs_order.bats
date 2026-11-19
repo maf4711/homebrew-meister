@@ -7,6 +7,7 @@ setup() {
   DOCS_ORDER_GHOST_CLEAN=false
   DOCS_ORDER_DATALESS_SCAN=false
   DOCS_ORDER_KNOWN=""
+  DOCS_ORDER_AUTO_ACCEPT=false
   DRY_RUN=false
   log() { printf '%s %s\n' "$1" "$2"; }
   report_add() { log "$@"; }
@@ -180,4 +181,21 @@ setup() {
   run docs_order_accept_current
   [[ "$output" == *'nothing to accept'* ]]
   [ "$(find "$MEISTER_DIR" -name '*.backup.*' | wc -l | tr -d ' ')" = 1 ]
+}
+
+@test "auto-accept names new root entries once, keeps a backup and moves nothing" {
+  DOCS_ORDER_AUTO_ACCEPT=true
+  touch "$DOCS_ORDER_ROOT/old" "$DOCS_ORDER_ROOT/new one"
+  printf 'old\n' > "$MEISTER_DIR/docs_order.baseline"
+  run module_docs_order
+  [[ "$output" == *'FIX Docs order: 1 new Documents root entries accepted into baseline: new one'* ]]
+  [[ "$output" != *'WARN 1 new entries'* ]]
+  [ -f "$DOCS_ORDER_ROOT/new one" ]
+  [ "$(find "$MEISTER_DIR" -name '*.backup.*' | wc -l | tr -d ' ')" = 1 ]
+  run module_docs_order
+  [[ "$output" == *'Root entries match baseline'* ]]
+  DRY_RUN=true; touch "$DOCS_ORDER_ROOT/later"
+  run module_docs_order
+  [[ "$output" == *'WARN 1 new entries in Documents root'* ]]
+  ! grep -qx later "$MEISTER_DIR/docs_order.baseline"
 }
