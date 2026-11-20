@@ -9,7 +9,7 @@ setup() {
   log() { printf '%s %s\n' "$1" "$2"; }
   bw_phase() { :; }
   report_add() { printf '%s %s\n' "$1" "$2"; }
-  for fn in log_analysis sleep_intentional_caffeinate module_sleep_blockers module_system_maintenance; do
+  for fn in log_analysis sleep_intentional_caffeinate sleep_timed_caffeinate module_sleep_blockers module_system_maintenance; do
     eval "$(awk -v name="$fn" '$0==name"() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")"
   done
 }
@@ -319,4 +319,57 @@ load_preference_inspector() {
     [[ "$output" == *'1 sleep blocker(s) active: runningboardd'* ]]
     [[ "$output" != *'brief Apple account storage activity'* ]]
   done
+}
+
+@test "short caffeinate is informational only with a system binary and matching live expiry" {
+  pmset() {
+    printf '%s\n' \
+      ' pid 2295(caffeinate): [0x000] 00:00:30 PreventSystemSleep named: "caffeinate command-line tool"' \
+      ' Details: caffeinate asserting for 300 secs' \
+      ' Timeout will fire in 270 secs Action=TimeoutActionRelease'
+  }
+  ps() { echo 'caffeinate -i -t 300'; }
+  timeout() { shift; "$@"; }
+  lsof() { printf '%s\n' 'p2295' 'n/usr/bin/caffeinate'; }
+  launchctl() { return 1; }
+  run module_sleep_blockers
+  [ "$status" = 0 ]
+  [[ "$output" == *'verified caffeinate timeout in 270s'* ]]
+  [[ "$output" != *WARN* ]]
+  lsof() { printf '%s\n' 'p2295' 'n/tmp/caffeinate'; }
+  run module_sleep_blockers
+  [[ "$output" == *'1 sleep blocker(s) active: caffeinate'* ]]
+}
+
+@test "unbounded long or mismatching caffeinate timeouts remain warnings" {
+  timeout() { shift; "$@"; }
+  lsof() { printf '%s\n' 'p2295' 'n/usr/bin/caffeinate'; }
+  launchctl() { return 1; }
+  pmset() {
+    printf '%s\n' \
+      ' pid 2295(caffeinate): [0x000] 00:00:30 PreventSystemSleep named: "caffeinate command-line tool"' \
+      ' Details: caffeinate asserting for 300 secs' \
+      ' Timeout will fire in 270 secs Action=TimeoutActionRelease'
+  }
+  for arguments in 'caffeinate -i' 'caffeinate -t 999999' 'caffeinate -t 120' 'caffeinate -t 300 -t 300' 'caffeinate -t 300 /tmp/worker'; do
+    ps() { echo "$arguments"; }
+    run module_sleep_blockers
+    [[ "$output" == *'1 sleep blocker(s) active: caffeinate'* ]]
+  done
+}
+
+@test "another process expiry cannot hide an unbounded caffeinate assertion" {
+  ps() { echo 'caffeinate -i -t 300'; }
+  timeout() { shift; "$@"; }
+  lsof() { printf '%s\n' 'p2295' 'n/usr/bin/caffeinate'; }
+  launchctl() { return 1; }
+  pmset() {
+    printf '%s\n' \
+      ' pid 2295(caffeinate): [0x000] 00:00:30 PreventSystemSleep named: "caffeinate command-line tool"' \
+      ' pid 2296(other): [0x001] 00:00:30 PreventSystemSleep named: "other"' \
+      ' Details: caffeinate asserting for 300 secs' \
+      ' Timeout will fire in 270 secs Action=TimeoutActionRelease'
+  }
+  run module_sleep_blockers
+  [[ "$output" == *'2 sleep blocker(s) active: caffeinate, other'* ]]
 }

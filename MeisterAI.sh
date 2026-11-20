@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterAI - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.49
+# Version: 6.50
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -3373,22 +3373,10 @@ module_cleanup() {
     if $CLEAN_CACHES; then
         local cache_size=$(du -sh "$HOME/Library/Caches" 2>/dev/null | awk '{print $1}')
         log INFO "   Cleaning User Caches ($cache_size total; keeping Homebrew downloads)..."
-        if cleanup_cache_root "$HOME/Library/Caches"; then
-            report_add FIX "Cleaned User Caches (Homebrew downloads preserved)"
-        else
-            report_add WARN "User cache cleanup incomplete; Homebrew downloads preserved"
-        fi
+        cleanup_cache_report "$HOME/Library/Caches" "" User
         if $NEEDS_SUDO; then
-            log INFO "   Deleting System Caches (sudo)..."
-            local cache_failed=false cache_root
-            for cache_root in /Library/Caches /System/Library/Caches /private/var/tmp; do
-                cleanup_cache_root "$cache_root" sudo || cache_failed=true
-            done
-            if $cache_failed; then
-                report_add WARN "System cache cleanup incomplete; Homebrew downloads preserved"
-            else
-                report_add FIX "Cleaned System Caches"
-            fi
+            log INFO "   Cleaning eligible stale system caches..."
+            cleanup_cache_report /Library/Caches sudo System
         fi
     else
         log STEP "   Cache clean: not needed (< ${AUTO_CACHE_THRESHOLD_MB}MB)"
@@ -5539,6 +5527,47 @@ sleep_intentional_caffeinate() {
         END {exit !(pid_ok && program_ok && running && keepalive)}'
 }
 
+# A short, expiring assertion is useful work, not a stuck wake lock. Require
+# the system binary, a bounded command and the matching assertion's own timeout.
+sleep_timed_caffeinate() {
+    local pid="$1" assertion="$2" raw="$3" process executable seconds remaining token
+    process=$(ps -ww -p "$pid" -o args= 2>/dev/null) || return 1
+    case "$process" in caffeinate\ *|/usr/bin/caffeinate\ *) ;; *) return 1 ;; esac
+    local -a args=()
+    read -r -a args <<< "$process"
+    local i=1
+    seconds=""
+    while [ "$i" -lt "${#args[@]}" ]; do
+        token="${args[$i]}"
+        case "$token" in
+            -t)
+                [ -z "$seconds" ] || return 1
+                i=$((i + 1)); seconds="${args[$i]:-}"
+                [[ "$seconds" =~ ^[1-9][0-9]{0,3}$ ]] || return 1
+                [ "$seconds" -le 1800 ] || return 1 ;;
+            -[dimsu]) ;;
+            *) return 1 ;;
+        esac
+        i=$((i + 1))
+    done
+    [ -n "$seconds" ] || return 1
+    executable=$(timeout 5 lsof -a -p "$pid" -d txt -Fn 2>/dev/null) || return 1
+    printf '%s\n' "$executable" | grep -Fxq 'n/usr/bin/caffeinate' || return 1
+    remaining=$(printf '%s\n' "$raw" | awk -v assertion="$assertion" -v seconds="$seconds" '
+        $0 == assertion {matched=1; next}
+        matched && /pid [0-9]+\(/ {exit}
+        matched && /Details: caffeinate asserting for [0-9]+ secs/ {
+            for(i=1;i<=NF;i++) if($i=="for" && $(i+1)==seconds) details=1
+        }
+        matched && /Timeout will fire in [0-9]+ secs Action=TimeoutActionRelease/ {
+            for(i=1;i<=NF;i++) if($i=="in" && $(i+1)>0 && $(i+1)<=seconds && details) {
+                print $(i+1); exit
+            }
+        }')
+    [[ "$remaining" =~ ^[1-9][0-9]{0,3}$ ]] || return 1
+    printf '%s\n' "$remaining"
+}
+
 module_sleep_blockers() {
     log INFO "Sleep assertions (what keeps Mac awake)..."
     bw_phase "Sleep: querying assertions"
@@ -5553,7 +5582,7 @@ module_sleep_blockers() {
         log STEP "   No processes blocking sleep"
         return 0
     fi
-    local n=0 names="" seen_names="|" pid name line duration seconds reason intentional_pid=""
+    local n=0 names="" seen_names="|" pid name line duration seconds reason remaining intentional_pid=""
     while IFS= read -r line; do
         [ -z "$line" ] && continue
         pid=$(printf '%s\n' "$line" | grep -oE 'pid [0-9]+' | awk '{print $2}')
@@ -5577,7 +5606,9 @@ module_sleep_blockers() {
                     reason="brief Apple account storage activity ($duration; warning at 30 minutes)"
                 fi ;;
             caffeinate:*)
-                if [ "$intentional_pid" = "$pid" ] || sleep_intentional_caffeinate "$pid"; then
+                if remaining=$(sleep_timed_caffeinate "$pid" "$line" "$raw"); then
+                    reason="temporary work: verified caffeinate timeout in ${remaining}s"
+                elif [ "$intentional_pid" = "$pid" ] || sleep_intentional_caffeinate "$pid"; then
                     intentional_pid="$pid"
                     reason="intentional awake state: ai.openclaw.caffeinate (KeepAlive verified)"
                 fi ;;
