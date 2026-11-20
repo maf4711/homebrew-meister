@@ -87,3 +87,14 @@ setup() {
   [[ "$output" != *"Deep Clean"* ]]
   [[ "$output" != *"iCloud Fix"* ]]
 }
+
+@test "Time Machine opt-out wins over every profile" {
+  TM_MONITOR_ENABLED=false
+  for RUN_PROFILE in quick auto deep all; do
+    run module_in_profile 'Time Machine'
+    [ "$status" = 1 ]
+    module_in_profile 'AI Updates'
+  done
+  TM_MONITOR_ENABLED=true
+  module_in_profile 'Time Machine'
+}

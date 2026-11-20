@@ -71,3 +71,7 @@ MEISTER_OLLAMA_NUM_PREDICT=1024
 
 # Bounded diagnostics need the final answer, not an internal reasoning trace.
 MEISTER_OLLAMA_THINK="false"
+
+# Permanently exclude Time Machine from maintenance, doctor and briefings.
+# Set false to ignore it, including --deep and -a. Explicit backup/purge stay available.
+TM_MONITOR_ENABLED=true

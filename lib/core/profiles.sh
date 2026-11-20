@@ -10,6 +10,7 @@ PROFILE_QUICK_MODULES="AI Updates|Healer|Homebrew|App Store|macOS System|Cleanup
 # Returns 0 if module $1 should run under current RUN_PROFILE
 module_in_profile() {
     local name="$1"
+    [ "$name" != "Time Machine" ] || [ "${TM_MONITOR_ENABLED:-true}" = true ] || return 1
     case "${RUN_PROFILE:-auto}" in
         quick)
             case "|$PROFILE_QUICK_MODULES|" in

@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # Meister - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.48
+# Version: 6.49
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -538,6 +538,7 @@ ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
 ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
 
 # Docs Order check v5.21 (automatic on every run if root exists)
+TM_MONITOR_ENABLED=true           # false: ignore Time Machine in every automatic profile/report
 DOCS_ORDER_ENABLED=true            # Order check for DOCS_ORDER_ROOT
 DOCS_ORDER_ROOT="$HOME/Documents"  # Directory to check
 DOCS_ORDER_KNOWN=""                # Extra allowed top-level entries ("|"-separated), on top of learned baseline
@@ -593,7 +594,7 @@ AUTO_PERIODIC_INTERVAL_DAYS=7          # Run periodic scripts if last run > X da
 MEISTER_CONFIG="$MEISTER_DIR/config"
 if [ -f "$MEISTER_CONFIG" ]; then
     # Allowed config keys by type
-    _BOOL_KEYS=" AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
+    _BOOL_KEYS=" TM_MONITOR_ENABLED AUTOFIX_ON_RUN AUTOFIX_OLD_BOTTLES AUTOFIX_ORPHAN_LAUNCHD AUTOFIX_GIT_PUSH AUTOFIX_FIREWALL UNIVERSAL_UPDATES CLEAN_PKG_CACHES CLEAN_DEV_CACHES CLEAN_PARALLELS_LOGS CLEAN_FONT_CACHE CLEAN_DOCKER PERF_SPOTLIGHT_EXCLUDE PERF_DISABLE_AGENTS SPOTLIGHT_FIX_ENABLED SPOTLIGHT_REINDEX_ON_ERROR ICLOUD_FIX_ENABLED ICLOUD_GHOST_DIRS_CLEAN ICLOUD_STUBS_SCAN ICLOUD_STUBS_DELETE ICLOUD_RESTART_BIRD ICLOUD_ORPHAN_CONTAINERS_WARN SELFHEAL_APPSTORE_OPEN SELFHEAL_FDA_OPEN SELFHEAL_ORPHAN_PREFS SELFHEAL_ICLOUD_CONTAINERS SELFHEAL_GIT_AUTOCOMMIT SELFHEAL_PERF_AUTO SECURITY_PERSISTENCE_AUDIT SECURITY_TCC_AUDIT AUTO_DETECT GIT_AUTO_PUSH DOCS_ORDER_ENABLED DOCS_ORDER_GHOST_CLEAN DOCS_ORDER_DATALESS_SCAN UNIVERSAL_UPDATES UPDATE_GCLOUD UPDATE_CONDA AI_TRACE AI_HEAL_EXECUTE TOUCHID_SUDO BREW_CASK_GREEDY "
     _NUM_KEYS=" BREW_UPDATE_MAX_AGE_SEC BREW_UPDATE_TIMEOUT_SEC BREW_UPGRADE_TIMEOUT_SEC BREW_CASK_TIMEOUT_SEC BREW_PKG_TIMEOUT_SEC FIND_TIMEOUT_SEC DISK_USAGE_THRESHOLD LARGE_FILE_SIZE_MB SPOTLIGHT_MDS_CPU_THRESHOLD AUTO_XCODE_THRESHOLD_MB AUTO_TRASH_THRESHOLD_ITEMS AUTO_TRASH_THRESHOLD_MB AUTO_CACHE_THRESHOLD_MB AUTO_PERIODIC_INTERVAL_DAYS GIT_REPO_MAXDEPTH DOCS_ORDER_DATALESS_WARN_GB PROCESS_SWARM_WARN_COUNT "
     _STR_KEYS=" FM_HEAL_MODEL FM_DIAGNOSE_MODEL RUN_PROFILE NET_CHECK_HOSTS PERF_DISABLE_AGENT_PATTERNS GIT_REPO_SEARCH_PATHS LAUNCHAGENT_SCHEDULE DOCS_ORDER_ROOT DOCS_ORDER_KNOWN FLEET_HOSTS BREW_CASK_SKIP "
 
@@ -774,6 +775,10 @@ module_timer_stop() {
 
 report_add() {
     local type="$1"; local msg="$2"
+    # Time Machine opt-out (user, 2026-11-15): no Time Machine finding at all.
+    if [ "${TM_MONITOR_ENABLED:-true}" != true ]; then
+        case "$msg" in *"Time Machine"*) return 0 ;; esac
+    fi
     # Dry-run honesty: never claim a real FIX; park in WOULD_FIX instead.
     if $DRY_RUN && [ "$type" = "FIX" ]; then
         type="WOULD"
@@ -5061,6 +5066,7 @@ tm_candidate_volumes() {
 }
 
 module_tm_health() {
+    [ "${TM_MONITOR_ENABLED:-true}" = true ] || return 0
     log INFO "Checking Time Machine..."
     if ! command_exists tmutil; then log STEP "   tmutil not available"; return 0; fi
     # Backup monitoring is opt-in through an already configured destination.
@@ -6368,7 +6374,8 @@ log_analysis() {
     [ -f "$LOGFILE" ] && log_files+=("$LOGFILE")
     recent_warns=""
     if [ "${#log_files[@]}" -gt 0 ]; then
-        recent_warns=$(awk -v cutoff="$cutoff" '
+        recent_warns=$(awk -v cutoff="$cutoff" -v tm_enabled="${TM_MONITOR_ENABLED:-true}" '
+            tm_enabled != "true" && tolower($0) ~ /time machine|last backup [0-9]+d ago/ {next}
             substr($0, 1, 10) < cutoff {next}
             / - INFO - [Mm]eister(AI|Siri)? v[^ ]+ started / {run++; next}
             run && /^[0-9-]+ [0-9:]+ - (WARN|ERROR) - / {
@@ -8505,7 +8512,7 @@ if [ "${1:-}" = "today" ] || [ "${1:-}" = "brief" ]; then
         echo "  Last run:  $(tail -1 "$MEISTER_DIR/history.log")"
     fi
     # Time Machine
-    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
+    if [ "${TM_MONITOR_ENABLED:-true}" = true ] && tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
         echo "  Backup:    Time Machine configured"
     fi
     # Pending brew outdated (fast, no upgrade)
@@ -8518,7 +8525,9 @@ if [ "${1:-}" = "today" ] || [ "${1:-}" = "brief" ]; then
     echo ""
     echo -e "  \033[1mTop warnings (log):\033[0m"
     if [ -f "$LOGFILE" ]; then
-        grep -E '^[0-9-]+ [0-9:]+ - WARN - ' "$LOGFILE" 2>/dev/null | tail -5 | sed 's/^.\{19\} - WARN - /    • /' || echo "    (none)"
+        grep -E '^[0-9-]+ [0-9:]+ - WARN - ' "$LOGFILE" 2>/dev/null \
+            | awk -v tm="${TM_MONITOR_ENABLED:-true}" 'tm == "true" || tolower($0) !~ /time machine|last backup [0-9]+d ago/' \
+            | tail -5 | sed 's/^.\{19\} - WARN - /    • /' || echo "    (none)"
     else
         echo "    (no log yet)"
     fi
@@ -8585,7 +8594,7 @@ if [ "${1:-}" = "doctor" ]; then
         _check warn "Homebrew" "not installed"
     fi
     # Time Machine
-    if tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
+    if [ "${TM_MONITOR_ENABLED:-true}" = true ] && tmutil destinationinfo 2>/dev/null | grep -q 'Name'; then
         _check ok "Time Machine" "destination set"
     fi
     # Touch ID sudo (v6.17: auto-enable on next ensure_sudo when TOUCHID_SUDO=true)
@@ -10539,6 +10548,7 @@ apply_run_profile() {
 if ! command -v module_in_profile >/dev/null 2>&1; then
 module_in_profile() {
     local name="$1"
+    [ "$name" != "Time Machine" ] || [ "${TM_MONITOR_ENABLED:-true}" = true ] || return 1
     case "${RUN_PROFILE:-auto}" in
         quick)
             case "$name" in
@@ -10575,6 +10585,7 @@ fi
 
 run_module_if() {
     local name="$1" func="$2"
+    [ "$name" != "Time Machine" ] || [ "${TM_MONITOR_ENABLED:-true}" = true ] || return 0
     # v6.13: soft wall-clock budget for the whole run
     if [ "${RUN_MAX_SEC:-0}" -gt 0 ] 2>/dev/null; then
         local _elapsed=$(( $(date +%s) - SCRIPT_START_TIME ))
