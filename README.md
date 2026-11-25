@@ -18,7 +18,7 @@ Meister runs in three modes:
 
 1. **Auto-Detect** (default) — analyzes your Mac and enables only the modules that are needed
 2. **Manual Flags** — force specific modules with `-X`, `-T`, `-C`, etc.
-3. **Interactive Tools** — standalone commands like `meister sniff`, `meister speed`, `meister wifi`
+3. **Interactive Tools** — standalone commands like `meister sniff`, `meister speed`, `meister netcheck`, `meister wifi`
 
 Every maintenance run produces a summary report with SUCCESS, FIXED, WARN, and ERROR counts. All output is logged to `~/.meister/meister.log`.
 
@@ -267,6 +267,17 @@ Network speed test using Cloudflare endpoints.
 - Download: 3 runs of 10 MB, reports best result
 - Upload: 10 MB to Cloudflare
 - Summary in Mbps
+
+### `meister netcheck [--quick]`
+
+Read-only network path check with one fixed method, so runs compare.
+
+- Gateway ping series (100 pings, 0.2 s apart): p95, jitter, share of pings above 20 ms, loss
+- 3 `networkQuality` runs: median download/upload (Mbit/s) and responsiveness (RPM)
+- Verdict: names AWDL as the likely cause only when Wi-Fi is primary, `awdl0` is up and pings spike (p95 > 20 ms or ≥ 10 % above 20 ms)
+- Recommends an idle wired `Ethernet` port (no cable) when Wi-Fi is primary
+- Saves each full run as JSON in `~/.meister/netcheck/` (`latest.json`) and prints a previous/now table on the next run
+- `--quick`: 20 pings + 1 `networkQuality` run, not saved
 
 ---
 
