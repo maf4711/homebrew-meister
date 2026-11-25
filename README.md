@@ -18,7 +18,7 @@ Meister runs in three modes:
 
 1. **Auto-Detect** (default) — analyzes your Mac and enables only the modules that are needed
 2. **Manual Flags** — force specific modules with `-X`, `-T`, `-C`, etc.
-3. **Interactive Tools** — standalone commands like `meister sniff`, `meister speed`, `meister netcheck`, `meister wifi`
+3. **Interactive Tools** — standalone commands like `meister sniff`, `meister speed`, `meister netcheck`, `meister awdl`, `meister wifi`
 
 Every maintenance run produces a summary report with SUCCESS, FIXED, WARN, and ERROR counts. All output is logged to `~/.meister/meister.log`.
 
@@ -278,6 +278,16 @@ Read-only network path check with one fixed method, so runs compare.
 - Recommends an idle wired `Ethernet` port (no cable) when Wi-Fi is primary
 - Saves each full run as JSON in `~/.meister/netcheck/` (`latest.json`) and prints a previous/now table on the next run
 - `--quick`: 20 pings + 1 `networkQuality` run, not saved
+
+### `meister awdl status|off|on|guard on|guard off [--yes]`
+
+Turns AWDL (`awdl0`, the cause of the `awdl_spikes` verdict) off, opt-in only.
+
+- `off` / `guard on` stop AirDrop, AirPlay, Handoff, Universal Control and Apple Watch unlock; they print that, plus `Better fix: connect a LAN cable to <device>` when netcheck found an idle Ethernet port, and proceed only with `--yes` or a `y` typed in the terminal (exit 3 otherwise)
+- `off`: `ifconfig awdl0 down` once and verified — macOS turns it back on within minutes
+- `guard on`: LaunchDaemon `com.meister.awdl-guard` re-applies `ifconfig awdl0 down` every 30 s; `guard off` removes it and brings AWDL back up; both are idempotent
+- `status`: AWDL state, guard state, last netcheck verdict (no sudo)
+- `meister heal` reloads an installed guard that is no longer loaded, and without a guard reports a netcheck `awdl_spikes` verdict younger than 7 days with both fixes; it never installs the guard itself
 
 ---
 
