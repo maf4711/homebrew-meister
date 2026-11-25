@@ -28,7 +28,9 @@ setup() {
       echo "route: writing to routing socket: not in table" >&2
       return 1
     fi
-    printf '   route to: default\ndestination: default\n    gateway: 192.168.178.1\n  interface: %s\n' "$NC_IFACE"
+    printf '   route to: default\ndestination: default\n'
+    [ "${NC_GW-192.168.178.1}" = "" ] || printf '    gateway: %s\n' "${NC_GW-192.168.178.1}"
+    printf '  interface: %s\n' "$NC_IFACE"
   }
   networksetup() {
     printf '\nHardware Port: Ethernet\nDevice: en0\nEthernet Address: aa:bb:cc:dd:ee:00\n'
@@ -258,4 +260,56 @@ json_get() { # json key
   grep -q '"verdict": "no_gateway_reply"' "$MEISTER_DIR/netcheck/latest.json"
   grep -q '"loss_pct": 100.0' "$MEISTER_DIR/netcheck/latest.json"
   [[ "$output" != *"OK:"* ]]
+}
+
+@test "recommends ethernet without Fallback line when Wi-Fi has no spikes" {
+  run cmd_netcheck
+  [ "$status" = 0 ]
+  [[ "$output" == *"OK: no latency spikes on Wi-Fi"* ]]
+  [[ "$output" == *"Fix: connect a LAN cable to en0"* ]]
+  [[ "$output" != *"Fallback:"* ]]
+}
+
+@test "verdict wifi_spikes prints no Fallback line" {
+  NC_RTTS="$(rtts_spiky)"
+  NC_AWDL=down
+  run cmd_netcheck
+  [ "$status" = 0 ]
+  [[ "$output" == *"Cause unknown: Wi-Fi latency spikes"* ]]
+  [[ "$output" != *"Fallback:"* ]]
+}
+
+@test "verdict on other interface (utun4) never says wired connection" {
+  NC_IFACE=utun4
+  run cmd_netcheck
+  [ "$status" = 0 ]
+  [[ "$output" == *"OK: no latency spikes on utun4"* ]]
+  [[ "$output" != *"wired connection"* ]]
+  grep -q '"interface_type": "other"' "$MEISTER_DIR/netcheck/latest.json"
+  grep -q '"verdict": "ok_wired"' "$MEISTER_DIR/netcheck/latest.json"
+  NC_RTTS="$(rtts_spiky)"
+  run cmd_netcheck
+  [[ "$output" == *"Latency spikes on utun4 (VPN/tunnel)"* ]]
+  [[ "$output" != *"wired connection"* ]]
+  grep -q '"verdict": "wired_spikes"' "$MEISTER_DIR/netcheck/latest.json"
+}
+
+@test "failure paths: default route without gateway is not a failure" {
+  NC_IFACE=utun4
+  NC_GW=""
+  : > "$STUB/ping_called"
+  ping() { echo called >> "$STUB/ping_called"; return 1; }
+  run cmd_netcheck
+  [ "$status" = 0 ]
+  [[ "$output" == *"no gateway to ping on utun4"* ]]
+  [[ "$output" != *"No reply from gateway"* ]]
+  [[ "$output" != *"wired connection"* ]]
+  [ ! -s "$STUB/ping_called" ]
+  run netcheck_measure
+  [ "$(json_get "$output" verdict)" = ok_wired ]
+  [ "$(json_get "$output" gateway)" = null ]
+  [ "$(json_get "$output" ping_p95_ms)" = null ]
+  [ "$(json_get "$output" jitter_ms)" = null ]
+  [ "$(json_get "$output" over20_pct)" = null ]
+  [ "$(json_get "$output" loss_pct)" = null ]
 }

@@ -114,11 +114,20 @@ print(" ".join([
 }
 
 # netcheck_verdict iface_type awdl p95_ms over20_pct received
+# received "-" = the default route has no gateway (point-to-point VPN/tunnel),
+# so nothing was pinged. That is not a failure: with no measurable spikes the
+# verdict falls back to the no-spike value of the enum (ok on Wi-Fi, ok_wired
+# otherwise); the rendered text explains that no gateway was pinged.
 netcheck_verdict() {
     local type="$1" awdl="$2" p95="$3" over="$4" received="${5:-0}" spikes
-    if [ "$received" = 0 ] || [ "$p95" = null ]; then echo no_gateway_reply; return; fi
-    spikes=$(awk -v p="$p95" -v o="$over" -v t="$NETCHECK_SPIKE_MS" \
-        'BEGIN { print ((p + 0 > t || o + 0 >= 10) ? 1 : 0) }')
+    if [ "$received" = - ]; then
+        spikes=0
+    elif [ "$received" = 0 ] || [ "$p95" = null ]; then
+        echo no_gateway_reply; return
+    else
+        spikes=$(awk -v p="$p95" -v o="$over" -v t="$NETCHECK_SPIKE_MS" \
+            'BEGIN { print ((p + 0 > t || o + 0 >= 10) ? 1 : 0) }')
+    fi
     if [ "$type" = wifi ]; then
         if [ "$spikes" = 0 ]; then echo ok
         elif [ "$awdl" = up ]; then echo awdl_spikes
@@ -144,7 +153,9 @@ netcheck_measure() {
     idle=$(_netcheck_idle_ethernet "$ports")
 
     local p95=null jitter=null over20=0.0 loss=100.0 received=0
-    if [ "$gateway" != - ]; then
+    if [ "$gateway" = - ]; then
+        over20=null; loss=null; received=-
+    else
         # -t: overall deadline on macOS so a silent gateway cannot hang the run
         ping_out=$(ping -n -c "$pings" -i 0.2 -t $((pings / 5 + 5)) "$gateway" 2>/dev/null)
         # shellcheck disable=SC2034
@@ -202,7 +213,10 @@ if prev_file:
         prev = None
         print("  previous result unreadable")
 ifc_label = {"wifi": "Wi-Fi", "ethernet": "Ethernet"}.get(now["interface_type"], now["interface_type"])
-print("  gateway %s via %s (%s), AWDL: %s" % (now["gateway"] or "?", now["interface"], ifc_label, now["awdl"]))
+if now["gateway"]:
+    print("  gateway %s via %s (%s), AWDL: %s" % (now["gateway"], now["interface"], ifc_label, now["awdl"]))
+else:
+    print("  no gateway to ping on %s (%s), AWDL: %s" % (now["interface"], ifc_label, now["awdl"]))
 rows = [("Download, median", "dl_mbps", "Mbit/s", "%.0f"), ("Upload, median", "ul_mbps", "Mbit/s", "%.0f"),
         ("Responsiveness", "rpm", "RPM", "%.0f"), ("Gateway ping p95", "ping_p95_ms", "ms", "%.1f"),
         ("Jitter", "jitter_ms", "ms", "%.1f"), ("Pings over 20 ms", "over20_pct", "%", "%.0f"),
@@ -219,19 +233,23 @@ for label, key, unit, fmt in rows:
         print("  %-18s  %s" % (label, cell(now, key, unit, fmt)))
 print("")
 v = now["verdict"]
+ifc, kind = now["interface"], now["interface_type"]
+nogw = " (no gateway to ping)" if not now["gateway"] else ""
 msg = {
     "awdl_spikes": "Likely cause: AWDL latency spikes on Wi-Fi",
     "wifi_spikes": "Cause unknown: Wi-Fi latency spikes",
-    "ok": "OK: no latency spikes on Wi-Fi",
-    "ok_wired": "OK: wired connection without latency spikes",
-    "wired_spikes": "Latency spikes on the wired connection (router or LAN)",
+    "ok": "OK: no latency spikes on Wi-Fi%s" % nogw,
+    "ok_wired": ("OK: wired connection without latency spikes" if kind == "ethernet"
+                 else "OK: no latency spikes on %s%s" % (ifc, nogw)),
+    "wired_spikes": ("Latency spikes on the wired connection (router or LAN)" if kind == "ethernet"
+                     else "Latency spikes on %s (VPN/tunnel)" % ifc),
     "no_gateway_reply": "No reply from gateway %s" % (now["gateway"] or "?"),
 }[v]
 print("  " + msg)
 idle = now.get("idle_ethernet") or []
 if now["interface_type"] == "wifi" and idle:
     print("  Fix: connect a LAN cable to %s" % idle[0])
-if (now["interface_type"] == "wifi" and idle) or v == "awdl_spikes":
+if v == "awdl_spikes":
     print("  Fallback: %s awdl guard on — AirDrop, AirPlay, Handoff, Universal Control and Apple Watch unlock stop working" % cmd)
 ' "$1" "$2" "$3"
 }
