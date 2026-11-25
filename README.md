@@ -185,6 +185,17 @@ Disk space analyzer with proportional bar chart. Defaults to `$HOME`.
 - Visual bar chart scaled relative to the largest entry
 - Total disk usage summary
 
+### `meister sysdata [--do] [--review]`
+
+Measures and slims macOS "System Data" (the opaque bar in Storage settings), CleanMyMac-style.
+
+- Measures each contributor, largest first: local Time Machine snapshots, Xcode DerivedData, simulator devices/caches/runtimes, Colima/OrbStack/Docker Desktop, LLM models (ollama, LM Studio, Hugging Face, exo, Whisper), uv/npm/user caches, app containers, swap
+- Accurate: `du -x` never counts mounted simulator runtimes twice; runtime sizes come from `xcrun simctl runtime list -j`; nested folders are subtracted from their parents
+- Default is a read-only preview with the exact command for every review candidate
+- `--do` runs only safe steps: thin local snapshots, empty DerivedData, delete unavailable simulators, `uv cache prune`, `npm cache clean`, `docker system prune -f` (never `-a` or volumes) and `fstrim` inside Colima so freed VM blocks return to macOS
+- `--do --review` additionally asks per item, default **no**, terminal only: ollama models (tags sharing data are marked), older simulator runtimes (the newest per platform stays), LM Studio / Hugging Face / exo models and Xcode device support of at least 500 MB
+- Not part of the automatic maintenance run
+
 ### `meister ports`
 
 Lists all open ports with the process that owns them.

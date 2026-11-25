@@ -6,7 +6,7 @@
 # GUI-Execution-Contract: 1
 #
 # MeisterAI - macOS Maintenance, Update & Self-Healing (Apple Intelligence)
-# Version: 6.50
+# Version: 6.51
 # NEW in v6.32 — Homebrew shared by every admin user:
 #  - module_homebrew shares the prefix before brew update: group admin,
 #    setgid, inherited ACL, git safe.directory for /usr/bin/git and
@@ -443,6 +443,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     [ -f "$MEISTER_LIB_DIR/commands/extras.sh" ] && . "$MEISTER_LIB_DIR/commands/extras.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/purge.sh" ] && . "$MEISTER_LIB_DIR/commands/purge.sh"
+    # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/commands/sysdata.sh" ] && . "$MEISTER_LIB_DIR/commands/sysdata.sh"
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
     MEISTER_LIB_LOADED=true
@@ -9985,6 +9987,19 @@ if [ "${1:-}" = "purge" ]; then
     exit 1
 fi
 
+# ── System Data (meister sysdata — lib/commands/sysdata.sh) ──
+if [ "${1:-}" = "sysdata" ]; then
+    echo -e "\033[1;34m  MeisterAI SYSDATA — measure and slim System Data\033[0m"
+    echo ""
+    if command -v cmd_sysdata >/dev/null 2>&1; then
+        shift
+        SYSDATA_CMD=MeisterAI cmd_sysdata "$@"
+        exit $?
+    fi
+    echo "  lib/commands/sysdata.sh not loaded (MEISTER_LIB missing)"
+    exit 1
+fi
+
 if [ "${1:-}" = "contacts" ]; then
     echo -e "\033[1;34m  MeisterAI CONTACTS\033[0m"
     echo ""
@@ -10306,6 +10321,7 @@ TOOLS:
   MeisterAI why <x>      Why a module runs/skips, or explain a warn (profile|Homebrew|…)
   MeisterAI storage      Safe-to-delete size candidates (DerivedData, caches, …)
   MeisterAI purge [--do]  Free Finder "purgeable": thin snapshots, cloud-only old iCloud files
+  MeisterAI sysdata [--do] [--review]  Measure/slim System Data: snapshots, Xcode, Docker/Colima, LLM models, caches
   MeisterAI contacts doctor  AddressBook size / bloat risk (read-only)
   MeisterAI score        Maintenance score 0-100 + trend history
   MeisterAI diff         What changed since the last run (apps/autostart/brew)
