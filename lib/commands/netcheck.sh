@@ -42,8 +42,7 @@ _netcheck_iface_type() { # iface ports
 
 _netcheck_awdl() {
     local out
-    out=$(ifconfig awdl0 2>/dev/null) || { echo absent; return; }
-    [ -n "$out" ] || { echo absent; return; }
+    out=$(ifconfig awdl0 2>/dev/null) && [ -n "$out" ] || { echo absent; return; }
     if printf '%s\n' "$out" | head -1 | grep -Eq '[<,]UP[,>]'; then echo up; else echo down; fi
 }
 
@@ -140,8 +139,8 @@ netcheck_verdict() {
 
 # netcheck_measure [--quick] → one JSON object on stdout; exit 2 without default route.
 netcheck_measure() {
-    local quick=false pings="${NETCHECK_PINGS:-100}" runs="${NETCHECK_NQ_RUNS:-3}" secs=20
-    [ "${1:-}" = --quick ] && { quick=true; pings=20; runs=1; secs=10; }
+    local pings="${NETCHECK_PINGS:-100}" runs="${NETCHECK_NQ_RUNS:-3}" secs=20
+    [ "${1:-}" = --quick ] && { pings=20; runs=1; secs=10; }
     local route gateway iface ports type awdl idle ping_out nq_out i verdict
     route=$(_netcheck_route)
     [ -n "$route" ] || return 2
@@ -152,13 +151,11 @@ netcheck_measure() {
     awdl=$(_netcheck_awdl)
     idle=$(_netcheck_idle_ethernet "$ports")
 
-    local p95=null jitter=null over20=0.0 loss=100.0 received=0
-    if [ "$gateway" = - ]; then
-        over20=null; loss=null; received=-
-    else
+    # received "-": no gateway on the default route, so nothing is pinged
+    local p95=null jitter=null over20=null loss=null received=-
+    if [ "$gateway" != - ]; then
         # -t: overall deadline on macOS so a silent gateway cannot hang the run
         ping_out=$(ping -n -c "$pings" -i 0.2 -t $((pings / 5 + 5)) "$gateway" 2>/dev/null)
-        # shellcheck disable=SC2034
         read -r p95 jitter over20 loss received <<EOF
 $(printf '%s\n' "$ping_out" | _netcheck_ping_stats "$pings")
 EOF
@@ -173,7 +170,7 @@ EOF
             i=$((i + 1))
         done
     fi
-    local dl=null ul=null rpm=null
+    local dl ul rpm
     read -r dl ul rpm <<EOF
 $(printf '%s' "$nq_out" | _netcheck_nq_stats)
 EOF
@@ -212,11 +209,12 @@ if prev_file:
     except (OSError, ValueError):
         prev = None
         print("  previous result unreadable")
-ifc_label = {"wifi": "Wi-Fi", "ethernet": "Ethernet"}.get(now["interface_type"], now["interface_type"])
+ifc, kind = now["interface"], now["interface_type"]
+ifc_label = {"wifi": "Wi-Fi", "ethernet": "Ethernet"}.get(kind, kind)
 if now["gateway"]:
-    print("  gateway %s via %s (%s), AWDL: %s" % (now["gateway"], now["interface"], ifc_label, now["awdl"]))
+    print("  gateway %s via %s (%s), AWDL: %s" % (now["gateway"], ifc, ifc_label, now["awdl"]))
 else:
-    print("  no gateway to ping on %s (%s), AWDL: %s" % (now["interface"], ifc_label, now["awdl"]))
+    print("  no gateway to ping on %s (%s), AWDL: %s" % (ifc, ifc_label, now["awdl"]))
 rows = [("Download, median", "dl_mbps", "Mbit/s", "%.0f"), ("Upload, median", "ul_mbps", "Mbit/s", "%.0f"),
         ("Responsiveness", "rpm", "RPM", "%.0f"), ("Gateway ping p95", "ping_p95_ms", "ms", "%.1f"),
         ("Jitter", "jitter_ms", "ms", "%.1f"), ("Pings over 20 ms", "over20_pct", "%", "%.0f"),
@@ -233,7 +231,6 @@ for label, key, unit, fmt in rows:
         print("  %-18s  %s" % (label, cell(now, key, unit, fmt)))
 print("")
 v = now["verdict"]
-ifc, kind = now["interface"], now["interface_type"]
 nogw = " (no gateway to ping)" if not now["gateway"] else ""
 msg = {
     "awdl_spikes": "Likely cause: AWDL latency spikes on Wi-Fi",
@@ -247,7 +244,7 @@ msg = {
 }[v]
 print("  " + msg)
 idle = now.get("idle_ethernet") or []
-if now["interface_type"] == "wifi" and idle:
+if kind == "wifi" and idle:
     print("  Fix: connect a LAN cable to %s" % idle[0])
 if v == "awdl_spikes":
     print("  Fallback: %s awdl guard on — AirDrop, AirPlay, Handoff, Universal Control and Apple Watch unlock stop working" % cmd)
