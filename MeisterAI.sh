@@ -444,6 +444,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/purge.sh" ] && . "$MEISTER_LIB_DIR/commands/purge.sh"
     # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/commands/netcheck.sh" ] && . "$MEISTER_LIB_DIR/commands/netcheck.sh"
+    # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
     MEISTER_LIB_LOADED=true
 fi
@@ -6730,6 +6732,7 @@ BANNER
         "SSL Certificates|certs"
         "Thermal Monitor|thermal"
         "Speed Test|speed"
+        "Network Check (AWDL)|netcheck"
         "─── Modules ───|separator"
         "Xcode Clean|xcode"
         "Empty Trash|trash"
@@ -6814,6 +6817,7 @@ BANNER
             certs)     exec bash "$self" certs ;;
             thermal)   exec bash "$self" thermal ;;
             speed)     exec bash "$self" speed ;;
+            netcheck)  exec bash "$self" netcheck ;;
             xcode)     exec bash "$self" -X ;;
             trash)     exec bash "$self" -T ;;
             caches)    exec bash "$self" -C ;;
@@ -9985,6 +9989,19 @@ if [ "${1:-}" = "purge" ]; then
     exit 1
 fi
 
+# ── Network path check (meister netcheck — lib/commands/netcheck.sh) ──
+if [ "${1:-}" = "netcheck" ]; then
+    echo -e "\033[1;34m  MeisterAI NETCHECK — gateway latency, throughput, AWDL\033[0m"
+    echo ""
+    if command -v cmd_netcheck >/dev/null 2>&1; then
+        shift
+        NETCHECK_CMD=MeisterAI cmd_netcheck "$@"
+        exit $?
+    fi
+    echo "  lib/commands/netcheck.sh not loaded (MEISTER_LIB missing)"
+    exit 1
+fi
+
 if [ "${1:-}" = "contacts" ]; then
     echo -e "\033[1;34m  MeisterAI CONTACTS\033[0m"
     echo ""
@@ -10300,6 +10317,7 @@ TOOLS:
   MeisterAI certs [host] SSL certificate checker
   MeisterAI thermal [N]  Live temperature & fan monitor (default: 2s)
   MeisterAI speed        Download/upload speed test
+  MeisterAI netcheck [--quick]  Gateway p95/jitter + networkQuality, AWDL verdict, before/after
   MeisterAI report [N]   Run-history report from history.log (default: last 10)
   MeisterAI report --diff  Delta between last two runs (OK/FIX/WARN/ERR/SCORE)
   MeisterAI report --json [N]  History as JSON array
