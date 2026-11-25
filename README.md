@@ -279,7 +279,7 @@ Read-only network path check with one fixed method, so runs compare.
 - Saves each full run as JSON in `~/.meister/netcheck/` (`latest.json`) and prints a previous/now table on the next run
 - `--quick`: 20 pings + 1 `networkQuality` run, not saved
 
-### `meister awdl status|off|on|guard on|guard off [--yes]`
+### `meister awdl status|off|on|guard on|guard off [--yes] [--dry-run]`
 
 Turns AWDL (`awdl0`, the cause of the `awdl_spikes` verdict) off, opt-in only.
 
@@ -287,6 +287,7 @@ Turns AWDL (`awdl0`, the cause of the `awdl_spikes` verdict) off, opt-in only.
 - `off`: `ifconfig awdl0 down` once and verified — macOS turns it back on within minutes
 - `guard on`: LaunchDaemon `com.meister.awdl-guard` re-applies `ifconfig awdl0 down` every 30 s; `guard off` removes it and brings AWDL back up; both are idempotent
 - `status`: AWDL state, guard state, last netcheck verdict (no sudo)
+- `--dry-run` / `-n`: prints what would happen; no prompt, no sudo, no change
 - `meister heal` reloads an installed guard that is no longer loaded, and without a guard reports a netcheck `awdl_spikes` verdict younger than 7 days with both fixes; it never installs the guard itself
 
 ---

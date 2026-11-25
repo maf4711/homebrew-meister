@@ -295,6 +295,9 @@ PY
   awdl_heal_step
   [ "$(sudo_calls)" = 0 ]
   [ "${#REPORT_FIXED[@]}" = 0 ]
+  [ "${#REPORT_WOULD_FIX[@]}" = 1 ]
+  [[ "${REPORT_WOULD_FIX[0]}" == *"would reload"* ]]
+  [[ "${REPORT_WOULD_FIX[0]}" != *"reloaded"* ]]
   [ ! -e "$STUB/loaded" ]
 }
 
@@ -302,6 +305,33 @@ PY
   body=$(awk '$0=="module_healer() {" {on=1} on {print} on && /^}$/ {exit}' "$BATS_TEST_DIRNAME/../MeisterAI.sh")
   [ -n "$body" ]
   [[ "$body" == *"awdl_heal_step"* ]]
+}
+
+# ── dry run ──
+
+@test "dry run: guard on --yes --dry-run makes no sudo calls and writes no plist" {
+  run cmd_awdl guard on --yes --dry-run < /dev/null
+  [ "$status" = 0 ]
+  [[ "$output" == *"DRY-RUN"* ]]
+  [[ "$output" == *"Would install"* ]]
+  [ "$(sudo_calls)" = 0 ]
+  [ "$(count "$STUB/ensure" ensure)" = 0 ]
+  [ ! -e "$PLIST" ]
+  [ ! -e "$STUB/loaded" ]
+}
+
+@test "dry run: off -n and guard off --dry-run change nothing" {
+  run cmd_awdl off -n < /dev/null
+  [ "$status" = 0 ]
+  [[ "$output" == *"Would run: sudo -n ifconfig awdl0 down"* ]]
+  awdl_guard_plist_xml > "$PLIST"
+  echo "$PLIST" > "$STUB/loaded"
+  run cmd_awdl guard off --dry-run
+  [ "$status" = 0 ]
+  [ "$(sudo_calls)" = 0 ]
+  [ "$(cat "$STUB/awdl")" = up ]
+  [ -e "$PLIST" ]
+  [ -e "$STUB/loaded" ]
 }
 
 # ── (e) status ──

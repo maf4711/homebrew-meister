@@ -10339,7 +10339,7 @@ TOOLS:
   MeisterAI thermal [N]  Live temperature & fan monitor (default: 2s)
   MeisterAI speed        Download/upload speed test
   MeisterAI netcheck [--quick]  Gateway p95/jitter + networkQuality, AWDL verdict, before/after
-  MeisterAI awdl status|off|on|guard on|guard off [--yes]  AWDL off (opt-in; stops AirDrop/Handoff) + 30 s guard
+  MeisterAI awdl status|off|on|guard on|guard off [--yes] [--dry-run]  AWDL off (opt-in; stops AirDrop/Handoff) + 30 s guard
   MeisterAI report [N]   Run-history report from history.log (default: last 10)
   MeisterAI report --diff  Delta between last two runs (OK/FIX/WARN/ERR/SCORE)
   MeisterAI report --json [N]  History as JSON array

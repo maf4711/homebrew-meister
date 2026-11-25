@@ -81,6 +81,7 @@ $(_awdl_netcheck)
 EOF
     [ -n "$idle" ] && [ "$idle" != - ] && echo "  Better fix: connect a LAN cable to ${idle}"
     [ "$yes" = 1 ] && return 0
+    # AWDL_TTY is a test hook (file holding the answer); unset in real use → /dev/tty.
     tty="${AWDL_TTY:-}"
     if [ -z "$tty" ]; then
         [ -t 0 ] && tty=/dev/tty
@@ -177,7 +178,7 @@ awdl_heal_step() {
     if [ -e "$plist" ]; then
         _awdl_guard_loaded && return 0
         if [ "${DRY_RUN:-false}" = true ]; then
-            report_add FIX "AWDL guard reloaded"
+            report_add WOULD "AWDL guard not loaded — would reload it"
         elif sudo -n true 2>/dev/null && sudo -n launchctl bootstrap system "$plist" >/dev/null 2>&1; then
             report_add FIX "AWDL guard reloaded"
         else
@@ -203,22 +204,51 @@ _awdl_usage() {
     on                  ifconfig awdl0 up
     guard on [--yes]    LaunchDaemon com.meister.awdl-guard: AWDL down every 30 s
     guard off           Remove the guard and bring AWDL back up
+    --dry-run, -n       Show what would happen; no sudo, no change
   off / guard on stop AirDrop, AirPlay, Handoff, Universal Control, Apple Watch unlock
 USAGE
 }
 
+# --dry-run: say what would happen; no prompt, no sudo, no change.
+_awdl_dry_run() { # "sub arg"
+    local plist
+    plist=$(_awdl_plist)
+    if [ "$1" != "status " ] && [ "$(awdl_state)" = absent ]; then
+        echo "  AWDL: absent, nothing to do"
+        return 0
+    fi
+    echo "  [DRY-RUN — no changes, no sudo]"
+    case "$1" in
+        "status ") _awdl_status ;;
+        "off ") echo "  Would run: sudo -n ifconfig awdl0 down (stops ${AWDL_LOST})" ;;
+        "on ") echo "  Would run: sudo -n ifconfig awdl0 up" ;;
+        "guard on")
+            echo "  Would install ${plist} (ifconfig awdl0 down every 30 s) and bootstrap ${AWDL_GUARD_LABEL}"
+            echo "  Would stop: ${AWDL_LOST}" ;;
+        "guard off") echo "  Would boot out ${AWDL_GUARD_LABEL}, remove ${plist} and run ifconfig awdl0 up" ;;
+        *) echo "  Unknown awdl command: $1"; _awdl_usage; return 2 ;;
+    esac
+    return 0
+}
+
 cmd_awdl() {
-    local yes=0 args="" arg cmd state rc
+    local yes=0 dry=0 args="" arg cmd state rc
     cmd=$(_awdl_cmd)
+    [ "${DRY_RUN:-false}" = true ] && dry=1
     for arg in "$@"; do
         case "$arg" in
             --yes|-y) yes=1 ;;
+            --dry-run|-n) dry=1 ;;
             -h|--help) _awdl_usage; return 0 ;;
             *) args="$args $arg" ;;
         esac
     done
     # shellcheck disable=SC2086
     set -- $args
+    if [ "$dry" = 1 ]; then
+        _awdl_dry_run "${1:-status} ${2:-}"
+        return
+    fi
     case "${1:-status} ${2:-}" in
         "status ")
             _awdl_status ;;

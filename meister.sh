@@ -10288,7 +10288,7 @@ TOOLS:
   meister thermal [N]  Live temperature & fan monitor (default: 2s)
   meister speed        Download/upload speed test
   meister netcheck [--quick]  Gateway p95/jitter + networkQuality, AWDL verdict, before/after
-  meister awdl status|off|on|guard on|guard off [--yes]  AWDL off (opt-in; stops AirDrop/Handoff) + 30 s guard
+  meister awdl status|off|on|guard on|guard off [--yes] [--dry-run]  AWDL off (opt-in; stops AirDrop/Handoff) + 30 s guard
   meister report [N]   Run-history report from history.log (default: last 10)
   meister report --diff  Delta between last two runs (OK/FIX/WARN/ERR/SCORE)
   meister report --json [N]  History as JSON array
