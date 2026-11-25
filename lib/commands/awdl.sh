@@ -18,6 +18,7 @@ AWDL_LOST="AirDrop, AirPlay, Handoff, Universal Control, Apple Watch unlock"
 _awdl_plist() { printf '%s\n' "${MEISTER_LAUNCHD_DIR:-/Library/LaunchDaemons}/${AWDL_GUARD_LABEL}.plist"; }
 _awdl_cmd() { printf '%s\n' "${AWDL_CMD:-MeisterAI}"; }
 _awdl_guard_loaded() { launchctl print "system/${AWDL_GUARD_LABEL}" >/dev/null 2>&1; }
+_awdl_absent() { [ "$(awdl_state)" = absent ] && echo "  AWDL: absent, nothing to do"; }
 
 # Prints exactly one of: up, down, absent.
 awdl_state() {
@@ -117,9 +118,7 @@ awdl_guard_install() {
     plist=$(_awdl_plist)
     tmp=$(mktemp "${TMPDIR:-/tmp}/awdl-guard.XXXXXX") || return 1
     awdl_guard_plist_xml > "$tmp"
-    if [ -e "$plist" ] && cmp -s "$tmp" "$plist"; then
-        :
-    else
+    if ! { [ -e "$plist" ] && cmp -s "$tmp" "$plist"; }; then
         [ -e "$plist" ] && replaced=1
         sudo -n install -o root -g wheel -m 644 "$tmp" "$plist" || rc=1
         [ "$replaced" = 1 ] && [ "$rc" = 0 ] && echo "  replaced existing guard plist"
@@ -172,9 +171,8 @@ EOF
 
 # Healer step: never installs, never measures; reports only via report_add.
 awdl_heal_step() {
-    local plist verdict ts age idle msg cmd
+    local plist verdict ts age idle msg
     plist=$(_awdl_plist)
-    cmd=$(_awdl_cmd)
     if [ -e "$plist" ]; then
         _awdl_guard_loaded && return 0
         if [ "${DRY_RUN:-false}" = true ]; then
@@ -192,7 +190,7 @@ EOF
     [ "$verdict" = awdl_spikes ] && [ "${age:-9999}" -lt 7 ] 2>/dev/null || return 0
     msg="AWDL latency spikes on Wi-Fi (netcheck ${ts}): "
     [ -n "$idle" ] && [ "$idle" != - ] && msg="${msg}connect a LAN cable to ${idle}, or "
-    msg="${msg}run ${cmd} awdl guard on (stops ${AWDL_LOST})"
+    msg="${msg}run $(_awdl_cmd) awdl guard on (stops ${AWDL_LOST})"
     report_add WARN "$msg"
     return 0
 }
@@ -213,10 +211,7 @@ USAGE
 _awdl_dry_run() { # "sub arg"
     local plist
     plist=$(_awdl_plist)
-    if [ "$1" != "status " ] && [ "$(awdl_state)" = absent ]; then
-        echo "  AWDL: absent, nothing to do"
-        return 0
-    fi
+    [ "$1" != "status " ] && _awdl_absent && return 0
     echo "  [DRY-RUN — no changes, no sudo]"
     case "$1" in
         "status ") _awdl_status ;;
@@ -232,7 +227,7 @@ _awdl_dry_run() { # "sub arg"
 }
 
 cmd_awdl() {
-    local yes=0 dry=0 args="" arg cmd state rc
+    local yes=0 dry=0 args="" arg cmd rc
     cmd=$(_awdl_cmd)
     [ "${DRY_RUN:-false}" = true ] && dry=1
     for arg in "$@"; do
@@ -253,8 +248,7 @@ cmd_awdl() {
         "status ")
             _awdl_status ;;
         "off ")
-            state=$(awdl_state)
-            [ "$state" = absent ] && { echo "  AWDL: absent, nothing to do"; return 0; }
+            _awdl_absent && return 0
             _awdl_opt_in "Disable AWDL now (macOS may re-enable it)?" "$yes" || return
             _awdl_sudo || return
             sudo -n ifconfig awdl0 down
@@ -262,14 +256,14 @@ cmd_awdl() {
             echo "  Undo: $cmd awdl on"
             return "$rc" ;;
         "on ")
-            [ "$(awdl_state)" = absent ] && { echo "  AWDL: absent, nothing to do"; return 0; }
+            _awdl_absent && return 0
             _awdl_sudo || return
             sudo -n ifconfig awdl0 up
             _awdl_verify up; rc=$?
             _awdl_guard_loaded && echo "  Guard still loaded — run $cmd awdl guard off"
             return "$rc" ;;
         "guard on")
-            [ "$(awdl_state)" = absent ] && { echo "  AWDL: absent, nothing to do"; return 0; }
+            _awdl_absent && return 0
             _awdl_opt_in "Keep AWDL off with a guard every 30 s?" "$yes" || return
             _awdl_sudo || return
             rc=0
