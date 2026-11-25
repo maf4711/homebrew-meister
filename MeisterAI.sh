@@ -446,6 +446,8 @@ if _meister_lib_ok "${MEISTER_LIB_DIR:-}"; then
     # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/netcheck.sh" ] && . "$MEISTER_LIB_DIR/commands/netcheck.sh"
     # shellcheck source=/dev/null
+    [ -f "$MEISTER_LIB_DIR/commands/awdl.sh" ] && . "$MEISTER_LIB_DIR/commands/awdl.sh"
+    # shellcheck source=/dev/null
     [ -f "$MEISTER_LIB_DIR/commands/bloatware.sh" ] && . "$MEISTER_LIB_DIR/commands/bloatware.sh"
     MEISTER_LIB_LOADED=true
 fi
@@ -4973,6 +4975,10 @@ module_healer() {
         fi
     fi
 
+    # 5b. AWDL guard reload / netcheck AWDL verdict (lib/commands/awdl.sh; no measurement)
+    bw_phase "Healer: AWDL"
+    declare -F awdl_heal_step >/dev/null && AWDL_CMD=MeisterAI awdl_heal_step
+
     # 6. Stale Xcode DerivedData locks (>24h old)
     bw_phase "Healer: Xcode locks"
     local dd_dir="$HOME/Library/Developer/Xcode/DerivedData"
@@ -6733,6 +6739,7 @@ BANNER
         "Thermal Monitor|thermal"
         "Speed Test|speed"
         "Network Check (AWDL)|netcheck"
+        "AWDL Status / Guard|awdl"
         "─── Modules ───|separator"
         "Xcode Clean|xcode"
         "Empty Trash|trash"
@@ -6818,6 +6825,7 @@ BANNER
             thermal)   exec bash "$self" thermal ;;
             speed)     exec bash "$self" speed ;;
             netcheck)  exec bash "$self" netcheck ;;
+            awdl)      exec bash "$self" awdl status ;;
             xcode)     exec bash "$self" -X ;;
             trash)     exec bash "$self" -T ;;
             caches)    exec bash "$self" -C ;;
@@ -10002,6 +10010,19 @@ if [ "${1:-}" = "netcheck" ]; then
     exit 1
 fi
 
+# ── AWDL off/on + launchd guard (meister awdl — lib/commands/awdl.sh) ──
+if [ "${1:-}" = "awdl" ]; then
+    echo -e "\033[1;34m  MeisterAI AWDL — status, off/on, guard\033[0m"
+    echo ""
+    if command -v cmd_awdl >/dev/null 2>&1; then
+        shift
+        AWDL_CMD=MeisterAI cmd_awdl "$@"
+        exit $?
+    fi
+    echo "  lib/commands/awdl.sh not loaded (MEISTER_LIB missing)"
+    exit 1
+fi
+
 if [ "${1:-}" = "contacts" ]; then
     echo -e "\033[1;34m  MeisterAI CONTACTS\033[0m"
     echo ""
@@ -10318,6 +10339,7 @@ TOOLS:
   MeisterAI thermal [N]  Live temperature & fan monitor (default: 2s)
   MeisterAI speed        Download/upload speed test
   MeisterAI netcheck [--quick]  Gateway p95/jitter + networkQuality, AWDL verdict, before/after
+  MeisterAI awdl status|off|on|guard on|guard off [--yes] [--dry-run]  AWDL off (opt-in; stops AirDrop/Handoff) + 30 s guard
   MeisterAI report [N]   Run-history report from history.log (default: last 10)
   MeisterAI report --diff  Delta between last two runs (OK/FIX/WARN/ERR/SCORE)
   MeisterAI report --json [N]  History as JSON array
